@@ -114,6 +114,19 @@ CREATE TABLE IF NOT EXISTS pagos (
     registrado_por INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS avisos_pago (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alumno_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    monto REAL,
+    mes INTEGER NOT NULL,
+    anio INTEGER NOT NULL,
+    nota TEXT,
+    estado TEXT DEFAULT 'pendiente',
+    fecha TEXT,
+    confirmado_por INTEGER,
+    confirmado_fecha TEXT
+);
+
 CREATE TABLE IF NOT EXISTS asistencia (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     clase_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
@@ -519,6 +532,7 @@ def api_me():
     d = user_public(u)
     if u['role'] == 'alumno':
         d['cuota'] = cuota_status(u)
+    d['pago_link'] = get_setting('pago_link', '')
     return jsonify(d)
 
 
@@ -928,7 +942,86 @@ def api_mis_pagos():
         """SELECT p.*, pr.nombre AS profesor_nombre FROM pagos p
            LEFT JOIN users pr ON pr.id=p.profesor_id
            WHERE p.alumno_id=? ORDER BY p.id DESC LIMIT 100""", (u['id'],)).fetchall()
-    return jsonify({'pagos': [dict(r) for r in rows]})
+    aviso = get_db().execute(
+        "SELECT * FROM avisos_pago WHERE alumno_id=? AND estado='pendiente' ORDER BY id DESC LIMIT 1",
+        (u['id'],)).fetchone()
+    return jsonify({'pagos': [dict(r) for r in rows],
+                    'aviso_pendiente': dict(aviso) if aviso else None})
+
+
+@app.route('/api/avisar_pago', methods=['POST'])
+@login_required
+def api_avisar_pago():
+    u = current_user()
+    data = parse_json()
+    hoy = date.today()
+    mes = to_int(data.get('mes')) or hoy.month
+    anio = to_int(data.get('anio')) or hoy.year
+    ex = get_db().execute(
+        "SELECT * FROM avisos_pago WHERE alumno_id=? AND mes=? AND anio=? AND estado='pendiente'",
+        (u['id'], mes, anio)).fetchone()
+    if ex:
+        return jsonify({'error': 'Ya enviaste un aviso para este mes. Esperá la confirmación.'}), 400
+    monto = to_float(data.get('monto'))
+    if not monto:
+        monto = to_float(u['cuota_mensual']) or 0
+    get_db().execute(
+        'INSERT INTO avisos_pago(alumno_id, monto, mes, anio, nota, estado, fecha) VALUES(?,?,?,?,?,?,?)',
+        (u['id'], monto, mes, anio, data.get('nota') or 'Cuota mensual', 'pendiente',
+         datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    get_db().commit()
+    staff = get_db().execute(
+        "SELECT id FROM users WHERE role IN ('admin','profesor') AND activo=1").fetchall()
+    for s in staff:
+        notify(s['id'], 'Aviso de pago',
+               f'{u["nombre"]} avisó que pagó la cuota de {mes}/{anio}. Confirmá el pago.',
+               'pago')
+    return jsonify({'ok': True})
+
+
+@app.route('/api/avisos_pago')
+@role_required('admin', 'profesor')
+def api_avisos_pago():
+    rows = get_db().execute(
+        """SELECT a.*, u.nombre AS alumno_nombre
+           FROM avisos_pago a JOIN users u ON u.id=a.alumno_id
+           ORDER BY a.estado, a.id DESC LIMIT 300""").fetchall()
+    return jsonify({'avisos': [dict(r) for r in rows]})
+
+
+@app.route('/api/avisos_pago/<int:aid>/confirmar', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_avisos_confirmar(aid):
+    a = get_db().execute('SELECT * FROM avisos_pago WHERE id=?', (aid,)).fetchone()
+    if not a:
+        return jsonify({'error': 'Aviso no encontrado'}), 404
+    if a['estado'] == 'confirmado':
+        return jsonify({'error': 'Este aviso ya fue confirmado'}), 400
+    who = current_user()
+    get_db().execute(
+        'INSERT INTO pagos(alumno_id, profesor_id, monto, mes, anio, metodo, concepto, nota, fecha, registrado_por) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        (a['alumno_id'], None, a['monto'] or 0, a['mes'], a['anio'], 'Aviso', 'Cuota mensual',
+         'Confirmado desde aviso de pago', datetime.now().strftime('%Y-%m-%d %H:%M:%S'), who['id']))
+    get_db().execute(
+        "UPDATE avisos_pago SET estado='confirmado', confirmado_por=?, confirmado_fecha=? WHERE id=?",
+        (who['id'], datetime.now().strftime('%Y-%m-%d %H:%M:%S'), aid))
+    get_db().commit()
+    alumno = get_db().execute('SELECT * FROM users WHERE id=?', (a['alumno_id'],)).fetchone()
+    notify(a['alumno_id'], 'Pago confirmado',
+           f'Tu aviso de pago de la cuota {a["mes"]}/{a["anio"]} fue confirmado por {who["nombre"]}.',
+           'pago')
+    return jsonify({'ok': True})
+
+
+@app.route('/api/avisos_pago/<int:aid>', methods=['DELETE'])
+@role_required('admin')
+def api_avisos_delete(aid):
+    a = get_db().execute('SELECT * FROM avisos_pago WHERE id=?', (aid,)).fetchone()
+    if not a:
+        return jsonify({'error': 'Aviso no encontrado'}), 404
+    get_db().execute('DELETE FROM avisos_pago WHERE id=?', (aid,))
+    get_db().commit()
+    return jsonify({'ok': True})
 
 
 @app.route('/api/perfil', methods=['PUT'])
@@ -1217,7 +1310,7 @@ def api_push_subscribe():
 @login_required
 def api_settings_get():
     u = current_user()
-    keys = ['academy_name', 'default_cuota', 'due_day', 'academy_code']
+    keys = ['academy_name', 'default_cuota', 'due_day', 'academy_code', 'pago_link']
     if u['role'] == 'admin':
         keys += ['academy_color']
     return jsonify({k: get_setting(k) for k in keys})
@@ -1227,7 +1320,7 @@ def api_settings_get():
 @role_required('admin')
 def api_settings_put():
     data = parse_json()
-    for k in ['academy_name', 'default_cuota', 'due_day', 'academy_code', 'academy_color']:
+    for k in ['academy_name', 'default_cuota', 'due_day', 'academy_code', 'academy_color', 'pago_link']:
         if k in data and data[k] is not None:
             set_setting(k, data[k])
     return jsonify({'ok': True})

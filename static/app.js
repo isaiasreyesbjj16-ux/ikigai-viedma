@@ -541,7 +541,7 @@ async function renderInicio(el) {
             </div>
             <button class="btn ghost small" onclick="showSec('mispagos')">Ver mi cuenta</button>
           </div>
-          ${estado !== 'al_dia' ? `<p class="small" style="color:#ff9b8f;margin-bottom:0">⚠️ Pagá ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'} y avisá a un profesor para que registre tu pago.</p>` : ''}
+          ${estado !== 'al_dia' ? `<p class="small" style="color:#ff9b8f;margin-bottom:0">⚠️ Pagá ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_link ? ' con el botón de abajo' : ' y avisá a un profesor para que registre tu pago'}.</p>${me.pago_link ? `<button class="btn primary btn-block mt" onclick="window.open('${esc(me.pago_link)}','_blank')">💳 Pagar la cuota</button>` : ''}` : ''}
         </div>
 
         <div class="feed-card">
@@ -783,13 +783,28 @@ let PROFESORES_CACHE = [];
    ===================================================================== */
 async function renderPagos(el) {
   const R = USER.role;
-  const [pagos, alumnos, profesores] = await Promise.all([
+  const [pagos, alumnos, profesores, avisos] = await Promise.all([
     api('/api/pagos'), api('/api/alumnos'),
-    R === 'admin' ? api('/api/profesores') : Promise.resolve({ profesores: [USER] })]);
+    R === 'admin' ? api('/api/profesores') : Promise.resolve({ profesores: [USER] }),
+    api('/api/avisos_pago')]);
   PROFESORES_CACHE = profesores.profesores;
   const mes = new Date().getMonth() + 1, anio = new Date().getFullYear();
+  const pendientes = (avisos.avisos || []).filter(a => a.estado === 'pendiente');
   el.innerHTML = `
     ${secHeader('Registrar pago')}
+    ${pendientes.length ? `
+    <div class="card">
+      <h3>⏳ Avisos de pago pendientes (${pendientes.length})</h3>
+      ${pendientes.map(a => `
+        <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,.08)">
+          <div><b>${esc(a.alumno_nombre)}</b> avisó que pagó la cuota de <b>${a.mes}/${a.anio}</b>${a.monto ? ' por <b>$' + num(a.monto) + '</b>' : ''}</div>
+          <div class="small" style="color:var(--muted)">${esc(a.fecha)}${a.nota && a.nota !== 'Cuota mensual' ? ' · ' + esc(a.nota) : ''}</div>
+          <div class="flex mt" style="gap:8px">
+            <button class="btn primary small" onclick="confirmarAviso(${a.id})">✅ Confirmar y registrar</button>
+            ${R === 'admin' ? `<button class="btn bad small" onclick="descartarAviso(${a.id})">🗑 Descartar</button>` : ''}
+          </div>
+        </div>`).join('')}
+    </div>` : ''}
     <div class="card">
       <form id="pagoForm" class="grid2">
         <div class="field"><label>Alumno</label><select id="pAlumno" required>
@@ -841,6 +856,22 @@ async function borrarPago(id) {
   await api('/api/pagos/' + id, { method: 'DELETE' }).catch(e => toast(e.message));
   renderPagos($('#sec-pagos'));
 }
+async function confirmarAviso(id) {
+  if (!confirm('¿Confirmar este aviso? Se registra el pago de la cuota y se notifica al alumno.')) return;
+  try {
+    await api('/api/avisos_pago/' + id + '/confirmar', { method: 'POST' });
+    toast('Pago confirmado y registrado ✓ El alumno fue notificado.');
+    renderPagos($('#sec-pagos'));
+  } catch (e) { toast(e.message); }
+}
+async function descartarAviso(id) {
+  if (!confirm('¿Descartar este aviso? No se registra ningún pago.')) return;
+  try {
+    await api('/api/avisos_pago/' + id, { method: 'DELETE' });
+    toast('Aviso descartado.');
+    renderPagos($('#sec-pagos'));
+  } catch (e) { toast(e.message); }
+}
 
 /* =====================================================================
    MIS PAGOS (alumno)
@@ -851,6 +882,8 @@ async function renderMisPagos(el) {
   const estado = c.estado;
   const cls = estado === 'al_dia' ? 'tag-al-dia' : estado === 'por_vencer' ? 'tag-por-vencer' : 'tag-deuda';
   const lbl = estado === 'al_dia' ? 'Al día ✓' : estado === 'por_vencer' ? 'Por vencer' : 'Debe la cuota';
+  const aviso = pagos.aviso_pendiente;
+  const link = me.pago_link;
   el.innerHTML = `
     ${secHeader('Mi estado de cuenta')}
     <div class="card">
@@ -861,7 +894,10 @@ async function renderMisPagos(el) {
         </div>
         <div class="tag ${cls}" style="font-size:14px;padding:6px 14px">${lbl}</div>
       </div>
-      <p class="small mt">💰 Para pagar: aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'} en la academia y avisá a un profesor para que registre el pago en la app. Te va a llegar una notificación.</p>
+      <p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${link ? ' y usá el botón de pago en línea' : ' en la academia'}${link ? '' : ' y avisá a un profesor para que registre el pago'}.</p>
+      ${aviso ? `<p class="small mt" style="color:var(--warn)">⏳ Ya avisaste el pago de ${aviso.mes}/${aviso.anio}. Esperá la confirmación.</p>` : ''}
+      ${link ? `<button class="btn primary btn-block" onclick="window.open('${esc(link)}','_blank')">💳 Pagar la cuota</button>` : ''}
+      ${estado !== 'al_dia' && !aviso ? `<button class="btn ghost btn-block" onclick="avisarPago()">✅ Avisar que ya pagué</button>` : ''}
     </div>
     <div class="card"><h3>Mis pagos</h3>
       <div style="overflow:auto"><table>
@@ -872,6 +908,13 @@ async function renderMisPagos(el) {
           : '<tr><td colspan="5" class="empty">Aún no registraste pagos</td></tr>'}
       </table></div>
     </div>`;
+}
+async function avisarPago() {
+  try {
+    await api('/api/avisar_pago', { method: 'POST', body: {} });
+    toast('Aviso enviado ✓ Te avisamos cuando lo confirmen.');
+    renderMisPagos($('#sec-mispagos'));
+  } catch (e) { toast(e.message); }
 }
 
 /* =====================================================================
@@ -1144,6 +1187,7 @@ async function renderConfig(el) {
         <div class="field"><label>Código de la academia (para que los profes se registren)</label><input id="cCodigo" value="${esc(s.academy_code)}"></div>
         <div class="field"><label>Cuota mensual por defecto ($)</label><input id="cCuota" value="${esc(s.default_cuota)}"></div>
         <div class="field"><label>Día de vencimiento (día del mes)</label><input type="number" id="cDue" value="${esc(s.due_day)}"></div>
+        <div class="field" style="grid-column:1/-1"><label>Link de pago en línea (ej: link de MercadoPago)</label><input id="cLink" value="${esc(s.pago_link || '')}" placeholder="https://link.mercadopago.com.ar/... (dejalo vacío para ocultar el botón de pago)"></div>
         <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar configuración</button></div>
       </form>
     </div>
@@ -1158,7 +1202,7 @@ async function renderConfig(el) {
       await api('/api/settings', { method: 'PUT', body: {
         academy_name: $('#cNombre').value, academy_color: $('#cColor').value,
         academy_code: $('#cCodigo').value, default_cuota: $('#cCuota').value,
-        due_day: $('#cDue').value } });
+        due_day: $('#cDue').value, pago_link: $('#cLink').value } });
       toast('Configuración guardada ✓');
       window.ACADEMY_NAME = $('#cNombre').value;
       $('#academyName').textContent = $('#cNombre').value;
