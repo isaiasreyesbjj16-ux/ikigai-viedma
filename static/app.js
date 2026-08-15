@@ -899,6 +899,13 @@ async function renderMisPagos(el) {
       ${link ? `<button class="btn primary btn-block" onclick="window.open('${esc(link)}','_blank')">💳 Pagar la cuota</button>` : ''}
       ${estado !== 'al_dia' && !aviso ? `<button class="btn ghost btn-block" onclick="avisarPago()">✅ Avisar que ya pagué</button>` : ''}
     </div>
+    ${me.pago_alias ? `
+    <div class="card">
+      <h3>🏦 Pagar por transferencia</h3>
+      <p class="small">Págale al alias/CVU de la academia y después tocá "Avisar que ya pagué".</p>
+      <div class="alias-box" id="aliasBox">${esc(me.pago_alias)}</div>
+      <button class="btn ghost btn-block" onclick="copiarAlias()">📋 Copiar alias / CVU</button>
+    </div>` : ''}
     <div class="card"><h3>Mis pagos</h3>
       <div style="overflow:auto"><table>
         <tr><th>Fecha</th><th>Profesor que recibió</th><th>Mes</th><th>Método</th><th>Monto</th></tr>
@@ -915,6 +922,23 @@ async function avisarPago() {
     toast('Aviso enviado ✓ Te avisamos cuando lo confirmen.');
     renderMisPagos($('#sec-mispagos'));
   } catch (e) { toast(e.message); }
+}
+async function copiarAlias() {
+  const box = $('#aliasBox');
+  if (!box) return;
+  const txt = box.textContent.trim();
+  try {
+    await navigator.clipboard.writeText(txt);
+    toast('Alias/CVU copiado ✓');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = txt;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); toast('Alias/CVU copiado ✓'); }
+    catch (e2) { toast('Copialo manualmente'); }
+    document.body.removeChild(ta);
+  }
 }
 
 /* =====================================================================
@@ -1188,6 +1212,7 @@ async function renderConfig(el) {
         <div class="field"><label>Cuota mensual por defecto ($)</label><input id="cCuota" value="${esc(s.default_cuota)}"></div>
         <div class="field"><label>Día de vencimiento (día del mes)</label><input type="number" id="cDue" value="${esc(s.due_day)}"></div>
         <div class="field" style="grid-column:1/-1"><label>Link de pago en línea (ej: link de MercadoPago)</label><input id="cLink" value="${esc(s.pago_link || '')}" placeholder="https://link.mercadopago.com.ar/... (dejalo vacío para ocultar el botón de pago)"></div>
+        <div class="field" style="grid-column:1/-1"><label>Alias o CVU para transferencia</label><input id="cAlias" value="${esc(s.pago_alias || '')}" placeholder="ej: academia.bjj.viedma (dejalo vacío para ocultarlo)"></div>
         <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar configuración</button></div>
       </form>
     </div>
@@ -1202,7 +1227,7 @@ async function renderConfig(el) {
       await api('/api/settings', { method: 'PUT', body: {
         academy_name: $('#cNombre').value, academy_color: $('#cColor').value,
         academy_code: $('#cCodigo').value, default_cuota: $('#cCuota').value,
-        due_day: $('#cDue').value, pago_link: $('#cLink').value } });
+        due_day: $('#cDue').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value } });
       toast('Configuración guardada ✓');
       window.ACADEMY_NAME = $('#cNombre').value;
       $('#academyName').textContent = $('#cNombre').value;

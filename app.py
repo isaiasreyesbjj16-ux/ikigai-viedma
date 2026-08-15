@@ -533,6 +533,7 @@ def api_me():
     if u['role'] == 'alumno':
         d['cuota'] = cuota_status(u)
     d['pago_link'] = get_setting('pago_link', '')
+    d['pago_alias'] = get_setting('pago_alias', '')
     return jsonify(d)
 
 
@@ -1310,7 +1311,7 @@ def api_push_subscribe():
 @login_required
 def api_settings_get():
     u = current_user()
-    keys = ['academy_name', 'default_cuota', 'due_day', 'academy_code', 'pago_link']
+    keys = ['academy_name', 'default_cuota', 'due_day', 'academy_code', 'pago_link', 'pago_alias']
     if u['role'] == 'admin':
         keys += ['academy_color']
     return jsonify({k: get_setting(k) for k in keys})
@@ -1320,7 +1321,7 @@ def api_settings_get():
 @role_required('admin')
 def api_settings_put():
     data = parse_json()
-    for k in ['academy_name', 'default_cuota', 'due_day', 'academy_code', 'academy_color', 'pago_link']:
+    for k in ['academy_name', 'default_cuota', 'due_day', 'academy_code', 'academy_color', 'pago_link', 'pago_alias']:
         if k in data and data[k] is not None:
             set_setting(k, data[k])
     return jsonify({'ok': True})
