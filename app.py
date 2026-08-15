@@ -15,9 +15,9 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.db')
 app.config['MAX_CONTENT_LENGTH'] = 250 * 1024 * 1024
 
-BELTS_ADULT = ['Blanco', 'Azul', 'Rosa', 'Púrpura', 'Marrón', 'Negro']
+BELTS_ADULT = ['Blanco', 'Azul', 'Púrpura', 'Marrón', 'Negro']
 BELTS_KIDS = ['Gris', 'Amarillo', 'Naranja', 'Verde', 'Blanco']
-CATEGORIAS = ['adulto', 'kids']
+CATEGORIAS = ['adulto', 'juveniles', 'kids']
 TIPOS_CLASE = ['Gi', 'NoGi', 'Kids', 'Abierto']
 METODOS_PAGO = ['Efectivo', 'Transferencia', 'Débito', 'Crédito', 'Otro']
 DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']

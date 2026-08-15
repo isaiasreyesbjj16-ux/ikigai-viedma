@@ -7,7 +7,7 @@ echo ============================================
 echo.
 echo  Paso 1 de la subida: creando el commit...
 git add .
-git commit -m "backend con soporte postgres + render"
+git commit -m "actualizacion"
 git branch -M main
 echo.
 echo  Paso 2: conectando con tu repositorio de GitHub...

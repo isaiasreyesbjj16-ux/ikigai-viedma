@@ -1,6 +1,7 @@
 /* Academia BJJ - app.js */
-const BELTS_ADULT = window.BELTS_ADULT || ['Blanco', 'Azul', 'Rosa', 'Púrpura', 'Marrón', 'Negro'];
+const BELTS_ADULT = window.BELTS_ADULT || ['Blanco', 'Azul', 'Púrpura', 'Marrón', 'Negro'];
 const BELTS_KIDS = window.BELTS_KIDS || ['Gris', 'Amarillo', 'Naranja', 'Verde', 'Blanco'];
+const catLabel = (c) => ({ adulto: 'Adulto', juveniles: 'Juveniles', kids: 'Kids' })[c] || c;
 
 const $ = (s, e) => (e || document).querySelector(s);
 const $$ = (s, e) => [...(e || document).querySelectorAll(s)];
@@ -57,7 +58,7 @@ $('#modal') && $('#modal').addEventListener('click', (e) => { if (e.target === $
    ===================================================================== */
 if ($('#tab-login')) initLogin();
 function initLogin() {
-  const cats = ['adulto', 'kids'];
+  const cats = ['adulto', 'juveniles', 'kids'];
   function fillBelts(sel, cat) {
     const opts = cat === 'kids' ? BELTS_KIDS : BELTS_ADULT;
     sel.innerHTML = opts.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
@@ -666,7 +667,7 @@ async function renderPerfil(el) {
           <div class="field"><label>Edad</label><input type="number" id="pEdad" value="${me.edad != null ? me.edad : ''}"></div>
           <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="pPeso" value="${me.peso != null ? me.peso : ''}"></div>
           <div class="field"><label>Categoría</label><select id="pCat">
-            ${CATEGORIAS.map(c => `<option value="${c}" ${c === cat ? 'selected' : ''}>${c === 'kids' ? 'Kids' : 'Adulto'}</option>`).join('')}</select></div>
+            ${CATEGORIAS.map(c => `<option value="${c}" ${c === cat ? 'selected' : ''}>${catLabel(c)}</option>`).join('')}</select></div>
           <div class="field"><label>Cinturón / Faixa</label><select id="pCinturon">
             ${belts.map(b => `<option ${b === me.cinturon ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>
           <div class="field"><label>Modalidad</label><select id="pGi">
@@ -919,7 +920,7 @@ async function formAlumno(id) {
       <div class="field"><label>Nombre y apellido</label><input id="aNombre" value="${esc(a.nombre)}" required></div>
       <div class="field"><label>Edad</label><input type="number" id="aEdad" value="${a.edad != null ? a.edad : ''}"></div>
       <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="aPeso" value="${a.peso != null ? a.peso : ''}"></div>
-      <div class="field"><label>Categoría</label><select id="aCat">${CATEGORIAS.map(c => `<option value="${c}" ${a.categoria === c ? 'selected' : ''}>${c === 'kids' ? 'Kids' : 'Adulto'}</option>`).join('')}</select></div>
+      <div class="field"><label>Categoría</label><select id="aCat">${CATEGORIAS.map(c => `<option value="${c}" ${a.categoria === c ? 'selected' : ''}>${catLabel(c)}</option>`).join('')}</select></div>
       <div class="field"><label>Cinturón</label><select id="aCinturon"></select></div>
       <div class="field"><label>Modalidad</label><select id="aGi">
         ${['Ambas', 'Gi', 'NoGi'].map(g => `<option ${a.gi_pref === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div>
