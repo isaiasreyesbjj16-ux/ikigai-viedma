@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bienvenido - {{ academy_name }}</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#11151c">
+<link rel="icon" href="/static/icons/icon-192.png">
+<link rel="stylesheet" href="/static/style.css?v=6">
+</head>
+<body class="login-body">
+
+<div class="login-wrap">
+  <div class="login-card">
+    <img src="/static/icons/logo.png" alt="Logo" class="login-logo" id="loginLogo">
+    <h1 class="login-title" id="academyTitle">{{ academy_name or 'IKIGAI VIEDMA' }}</h1>
+    <div class="login-slogan">CIENCIA Y ARTE DEL CONOCIMIENTO</div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="login">Ingresar</button>
+      <button class="tab" data-tab="reg-alumno">Soy alumno</button>
+      <button class="tab" data-tab="reg-profesor">Soy profesor</button>
+    </div>
+
+    <!-- LOGIN -->
+    <form class="tabpanel active" id="tab-login">
+      <div class="field"><label>Usuario</label>
+        <input type="text" id="loginUser" placeholder="Tu usuario" autocomplete="username"></div>
+      <div class="field"><label>Contraseña</label>
+        <input type="password" id="loginPass" placeholder="Tu contraseña" autocomplete="current-password"></div>
+      <button type="submit" class="btn primary btn-block">Entrar</button>
+    </form>
+
+    <!-- REGISTRO ALUMNO -->
+    <form class="tabpanel" id="tab-reg-alumno">
+      <div class="field"><label>Nombre y apellido</label>
+        <input type="text" id="regAlumnoNombre" placeholder="Ej: Juan Pérez"></div>
+      <div class="field"><label>Usuario</label>
+        <input type="text" id="regAlumnoUser" placeholder="Elegí tu usuario"></div>
+      <div class="field"><label>Contraseña</label>
+        <input type="password" id="regAlumnoPass" placeholder="Mínimo 4 caracteres"></div>
+      <div class="grid2">
+        <div class="field"><label>Edad</label>
+          <input type="number" id="regAlumnoEdad" placeholder="Ej: 25"></div>
+        <div class="field"><label>Peso (kg)</label>
+          <input type="number" step="0.1" id="regAlumnoPeso" placeholder="Ej: 78.5"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Categoría</label>
+          <select id="regAlumnoCat">
+            <option value="adulto">Adulto</option>
+            <option value="kids">Kids</option>
+          </select></div>
+        <div class="field"><label>Cinturón / Faixa</label>
+          <select id="regAlumnoCinturon"></select></div>
+      </div>
+      <div class="field"><label>Modalidad</label>
+        <select id="regAlumnoGi">
+          <option value="Ambas">Ambas (Gi y NoGi)</option>
+          <option value="Gi">Solo Gi</option>
+          <option value="NoGi">Solo NoGi</option>
+        </select></div>
+      <button type="submit" class="btn primary btn-block">Crear mi cuenta</button>
+    </form>
+
+    <!-- REGISTRO PROFESOR -->
+    <form class="tabpanel" id="tab-reg-profesor">
+      <div class="field"><label>Nombre y apellido</label>
+        <input type="text" id="regProfeNombre" placeholder="Ej: Carlos Rocha"></div>
+      <div class="field"><label>Usuario</label>
+        <input type="text" id="regProfeUser" placeholder="Elegí tu usuario"></div>
+      <div class="field"><label>Contraseña</label>
+        <input type="password" id="regProfePass" placeholder="Mínimo 4 caracteres"></div>
+      <div class="field"><label>Código de la academia</label>
+        <input type="text" id="regProfeCodigo" placeholder="Pedíselo al administrador"></div>
+      <div class="grid2">
+        <div class="field"><label>Edad</label>
+          <input type="number" id="regProfeEdad" placeholder="Ej: 35"></div>
+        <div class="field"><label>Peso (kg)</label>
+          <input type="number" step="0.1" id="regProfePeso" placeholder="Ej: 85"></div>
+      </div>
+      <div class="field"><label>Cinturón / Faixa</label>
+        <select id="regProfeCinturon"></select></div>
+      <button type="submit" class="btn primary btn-block">Crear mi cuenta de profesor</button>
+    </form>
+
+    <div class="msg" id="loginMsg"></div>
+  </div>
+</div>
+
+<script src="/static/app.js?v=6"></script>
+</body>
+</html>

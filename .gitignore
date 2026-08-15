@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+data.db
+vapid_private.pem
+vapid_public.pem
+static/uploads/
+cloudflared.exe
+*.zip
+.DS_Store

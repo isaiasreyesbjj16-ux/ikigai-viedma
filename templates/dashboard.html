@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{ academy_name }}</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#11151c">
+<link rel="icon" href="/static/icons/icon-192.png">
+<link rel="stylesheet" href="/static/style.css?v=6">
+</head>
+<body class="dash-body">
+
+<header class="topbar">
+  <img src="/static/icons/logo.png" alt="Logo" class="top-logo">
+  <div class="top-title">
+    <strong id="academyName">{{ academy_name }}</strong>
+    <small id="userRoleLabel"></small>
+  </div>
+  <div class="top-actions">
+    <button class="icon-btn" id="bellBtn" title="Notificaciones">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5S10.5 3.17 10.5 4v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+      <span class="badge" id="bellBadge" hidden></span>
+    </button>
+    <button class="icon-btn" id="logoutBtn" title="Salir">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- Panel de notificaciones -->
+<div class="notif-panel" id="notifPanel" hidden>
+  <div class="notif-head">
+    <strong>Notificaciones</strong>
+    <button class="link-btn" id="markAllRead">Marcar todas leídas</button>
+  </div>
+  <div id="notifList"></div>
+</div>
+
+<main class="content" id="content">
+  <!-- inyectado por JS -->
+</main>
+
+<!-- Barra de navegación estilo Instagram -->
+<nav class="bottombar" id="bottombar"></nav>
+
+<div id="modal" class="modal" hidden>
+  <div class="modal-box">
+    <button class="modal-close" id="modalClose">×</button>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+window.USER = {{ user | tojson }};
+window.BELTS_ADULT = {{ belts_adult | tojson }};
+window.BELTS_KIDS = {{ belts_kids | tojson }};
+window.CATEGORIAS = {{ categorias | tojson }};
+window.TIPOS_CLASE = {{ tipos_clase | tojson }};
+window.METODOS = {{ metodos | tojson }};
+window.DIAS = {{ dias | tojson }};
+</script>
+<script src="/static/app.js?v=6"></script>
+</body>
+</html>
