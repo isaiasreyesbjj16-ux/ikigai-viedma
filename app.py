@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS avisos_pago (
     mes INTEGER NOT NULL,
     anio INTEGER NOT NULL,
     nota TEXT,
+    comprobante TEXT,
     estado TEXT DEFAULT 'pendiente',
     fecha TEXT,
     confirmado_por INTEGER,
@@ -195,6 +196,16 @@ def init_db():
         cols = [r[1] for r in c.execute('PRAGMA table_info(users)').fetchall()]
     if 'foto' not in cols:
         c.execute('ALTER TABLE users ADD COLUMN foto TEXT')
+    if DB_MODE == 'postgres':
+        ap_cols = [r[0] for r in c.execute(
+            "SELECT column_name AS name FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND table_name='avisos_pago'").fetchall()]
+    elif DB_MODE == 'mysql':
+        ap_cols = [r[0] for r in c.execute('SHOW COLUMNS FROM avisos_pago').fetchall()]
+    else:
+        ap_cols = [r[1] for r in c.execute('PRAGMA table_info(avisos_pago)').fetchall()]
+    if 'comprobante' not in ap_cols:
+        c.execute('ALTER TABLE avisos_pago ADD COLUMN comprobante TEXT')
     defaults = {
         'academy_name': 'IKIGAI VIEDMA',
         'academy_code': 'BJJ2026',
@@ -966,16 +977,21 @@ def api_avisar_pago():
     monto = to_float(data.get('monto'))
     if not monto:
         monto = to_float(u['cuota_mensual']) or 0
+    comp = (data.get('comprobante') or '').strip()
+    if not comp.startswith('data:image/'):
+        return jsonify({'error': 'Tenés que subir el comprobante de pago (foto del recibo)'}), 400
+    if len(comp) > 12 * 1024 * 1024:
+        return jsonify({'error': 'El comprobante es muy grande (máx 12MB)'}), 400
     get_db().execute(
-        'INSERT INTO avisos_pago(alumno_id, monto, mes, anio, nota, estado, fecha) VALUES(?,?,?,?,?,?,?)',
-        (u['id'], monto, mes, anio, data.get('nota') or 'Cuota mensual', 'pendiente',
+        'INSERT INTO avisos_pago(alumno_id, monto, mes, anio, nota, comprobante, estado, fecha) VALUES(?,?,?,?,?,?,?,?)',
+        (u['id'], monto, mes, anio, data.get('nota') or 'Cuota mensual', comp, 'pendiente',
          datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     get_db().commit()
     staff = get_db().execute(
         "SELECT id FROM users WHERE role IN ('admin','profesor') AND activo=1").fetchall()
     for s in staff:
-        notify(s['id'], 'Aviso de pago',
-               f'{u["nombre"]} avisó que pagó la cuota de {mes}/{anio}. Confirmá el pago.',
+        notify(s['id'], 'Aviso de pago con comprobante',
+               f'{u["nombre"]} avisó que pagó la cuota de {mes}/{anio}. Revisá el comprobante y confirmá el pago.',
                'pago')
     return jsonify({'ok': True})
 

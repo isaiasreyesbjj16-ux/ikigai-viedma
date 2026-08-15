@@ -777,6 +777,7 @@ async function borrarHorario(id) {
   toast('Clase eliminada'); renderHorarios($('#sec-horarios'));
 }
 let PROFESORES_CACHE = [];
+let AVISOS_CACHE = {};
 
 /* =====================================================================
    PAGOS (admin / profesor)
@@ -790,6 +791,8 @@ async function renderPagos(el) {
   PROFESORES_CACHE = profesores.profesores;
   const mes = new Date().getMonth() + 1, anio = new Date().getFullYear();
   const pendientes = (avisos.avisos || []).filter(a => a.estado === 'pendiente');
+  AVISOS_CACHE = {};
+  pendientes.forEach(a => { AVISOS_CACHE[a.id] = a; });
   el.innerHTML = `
     ${secHeader('Registrar pago')}
     ${pendientes.length ? `
@@ -799,7 +802,9 @@ async function renderPagos(el) {
         <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,.08)">
           <div><b>${esc(a.alumno_nombre)}</b> avisó que pagó la cuota de <b>${a.mes}/${a.anio}</b>${a.monto ? ' por <b>$' + num(a.monto) + '</b>' : ''}</div>
           <div class="small" style="color:var(--muted)">${esc(a.fecha)}${a.nota && a.nota !== 'Cuota mensual' ? ' · ' + esc(a.nota) : ''}</div>
+          ${a.comprobante ? `<div class="mt"><img src="${a.comprobante}" onclick="verComprobante(${a.id})" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer" title="Ver comprobante"></div>` : ''}
           <div class="flex mt" style="gap:8px">
+            <button class="btn ghost small" onclick="verComprobante(${a.id})">🧾 Ver comprobante</button>
             <button class="btn primary small" onclick="confirmarAviso(${a.id})">✅ Confirmar y registrar</button>
             ${R === 'admin' ? `<button class="btn bad small" onclick="descartarAviso(${a.id})">🗑 Descartar</button>` : ''}
           </div>
@@ -856,8 +861,22 @@ async function borrarPago(id) {
   await api('/api/pagos/' + id, { method: 'DELETE' }).catch(e => toast(e.message));
   renderPagos($('#sec-pagos'));
 }
+function verComprobante(id) {
+  const a = AVISOS_CACHE[id];
+  if (!a || !a.comprobante) { toast('No hay comprobante'); return; }
+  openModal(`
+    <h3>🧾 Comprobante · ${esc(a.alumno_nombre)}</h3>
+    <p class="small">Cuota de <b>${a.mes}/${a.anio}</b> por <b>$${num(a.monto)}</b>${a.nota && a.nota !== 'Cuota mensual' ? ' · ' + esc(a.nota) : ''}</p>
+    <img src="${a.comprobante}" style="width:100%;border-radius:10px;background:#fff">
+    <div class="flex mt" style="gap:8px">
+      <button class="btn primary small" onclick="confirmarAviso(${a.id})">✅ Confirmar y registrar</button>
+      ${USER.role === 'admin' ? `<button class="btn bad small" onclick="descartarAviso(${a.id})">🗑 Descartar</button>` : ''}
+    </div>
+  `);
+}
 async function confirmarAviso(id) {
   if (!confirm('¿Confirmar este aviso? Se registra el pago de la cuota y se notifica al alumno.')) return;
+  closeModal();
   try {
     await api('/api/avisos_pago/' + id + '/confirmar', { method: 'POST' });
     toast('Pago confirmado y registrado ✓ El alumno fue notificado.');
@@ -866,6 +885,7 @@ async function confirmarAviso(id) {
 }
 async function descartarAviso(id) {
   if (!confirm('¿Descartar este aviso? No se registra ningún pago.')) return;
+  closeModal();
   try {
     await api('/api/avisos_pago/' + id, { method: 'DELETE' });
     toast('Aviso descartado.');
@@ -895,7 +915,7 @@ async function renderMisPagos(el) {
         <div class="tag ${cls}" style="font-size:14px;padding:6px 14px">${lbl}</div>
       </div>
       <p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${link ? ' y usá el botón de pago en línea' : ' en la academia'}${link ? '' : ' y avisá a un profesor para que registre el pago'}.</p>
-      ${aviso ? `<p class="small mt" style="color:var(--warn)">⏳ Ya avisaste el pago de ${aviso.mes}/${aviso.anio}. Esperá la confirmación.</p>` : ''}
+      ${aviso ? `<p class="small mt" style="color:var(--warn)">⏳ Ya avisaste el pago de ${aviso.mes}/${aviso.anio} con tu comprobante. Esperá la confirmación.</p>` : ''}
       ${link ? `<button class="btn primary btn-block" onclick="window.open('${esc(link)}','_blank')">💳 Pagar la cuota</button>` : ''}
       ${estado !== 'al_dia' && !aviso ? `<button class="btn ghost btn-block" onclick="avisarPago()">✅ Avisar que ya pagué</button>` : ''}
     </div>
@@ -917,11 +937,43 @@ async function renderMisPagos(el) {
     </div>`;
 }
 async function avisarPago() {
-  try {
-    await api('/api/avisar_pago', { method: 'POST', body: {} });
-    toast('Aviso enviado ✓ Te avisamos cuando lo confirmen.');
-    renderMisPagos($('#sec-mispagos'));
-  } catch (e) { toast(e.message); }
+  openModal(`
+    <h3>✅ Avisar que pagué</h3>
+    <p class="small">Subí una <b>foto o captura del comprobante de pago</b>. El profe/admin lo va a revisar y confirmar tu cuota.</p>
+    <div class="field"><label>Comprobante (JPG o PNG)</label>
+      <input type="file" id="avComprobante" accept="image/*">
+      <div id="avPreview" class="mt" style="display:none"><img id="avPreviewImg" style="max-width:100%;border-radius:10px;background:#fff"></div>
+    </div>
+    <button class="btn primary btn-block" id="avEnviar">📤 Enviar aviso</button>
+    <p class="small" style="color:var(--muted)">No vas a poder volver a avisar hasta que confirmen o descarten tu aviso.</p>
+  `);
+  const input = $('#avComprobante');
+  input.addEventListener('change', () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    if (!/^image\/(png|jpe?g|webp)/.test(f.type)) { toast('Elegí una imagen (JPG o PNG)'); input.value = ''; return; }
+    if (f.size > 8 * 1024 * 1024) { toast('La imagen es muy grande (máx 8MB)'); input.value = ''; return; }
+    const r = new FileReader();
+    r.onload = () => {
+      $('#avPreview').style.display = '';
+      $('#avPreviewImg').src = r.result;
+    };
+    r.readAsDataURL(f);
+  });
+  $('#avEnviar').addEventListener('click', () => {
+    const f = input.files && input.files[0];
+    if (!f) { toast('Elegí el comprobante primero'); return; }
+    const r = new FileReader();
+    r.onload = async () => {
+      try {
+        await api('/api/avisar_pago', { method: 'POST', body: { comprobante: r.result } });
+        closeModal();
+        toast('Aviso enviado ✓ Te avisamos cuando lo confirmen.');
+        renderMisPagos($('#sec-mispagos'));
+      } catch (e) { toast(e.message); }
+    };
+    r.readAsDataURL(f);
+  });
 }
 async function copiarAlias() {
   const box = $('#aliasBox');
