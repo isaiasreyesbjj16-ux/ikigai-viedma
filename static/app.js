@@ -1220,6 +1220,11 @@ async function renderConfig(el) {
       <h3>Probar notificaciones push</h3>
       <p class="small">Enviate una notificación de prueba a este dispositivo.</p>
       <button class="btn ghost" onclick="testPush()">🔔 Probar notificación</button>
+    </div>
+    <div class="card">
+      <h3>Actualizar cuota masiva</h3>
+      <p class="small">Aplica el valor de "Cuota mensual por defecto" a <b>todos los alumnos activos</b> y les manda una notificación a cada uno.</p>
+      <button class="btn warn btn-block" onclick="aplicarCuotaTodos()">🔄 Aplicar cuota a todos los alumnos</button>
     </div>`;
   $('#cfgForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1239,6 +1244,13 @@ async function testPush() {
   try {
     await api('/api/test_push', { method: 'POST' });
     toast('Notificación enviada. Si no llega, revisá los permisos del navegador.');
+  } catch (e) { toast(e.message); }
+}
+async function aplicarCuotaTodos() {
+  if (!confirm('¿Actualizar la cuota de TODOS los alumnos activos al valor de "Cuota mensual por defecto"? Se les notifica a cada uno.')) return;
+  try {
+    const r = await api('/api/settings/aplicar_cuota', { method: 'POST' });
+    toast(`Cuota actualizada en ${r.alumnos} alumnos ✓`);
   } catch (e) { toast(e.message); }
 }
 

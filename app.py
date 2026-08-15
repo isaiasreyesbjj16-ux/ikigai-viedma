@@ -1327,6 +1327,25 @@ def api_settings_put():
     return jsonify({'ok': True})
 
 
+@app.route('/api/settings/aplicar_cuota', methods=['POST'])
+@role_required('admin')
+def api_settings_aplicar_cuota():
+    cuota = to_float(get_setting('default_cuota'))
+    if not cuota or cuota <= 0:
+        return jsonify({'error': 'Configura una cuota mensual valida primero'}), 400
+    alumnos = get_db().execute(
+        "SELECT id, nombre FROM users WHERE role='alumno' AND activo=1").fetchall()
+    for a in alumnos:
+        get_db().execute('UPDATE users SET cuota_mensual=? WHERE id=?', (cuota, a['id']))
+    get_db().commit()
+    who = current_user()['nombre']
+    for a in alumnos:
+        notify(a['id'], 'Tu cuota cambio',
+               f'{who} actualizo tu cuota mensual a ${cuota:,.0f}'.replace(',', '.'),
+               'cuota')
+    return jsonify({'ok': True, 'alumnos': len(alumnos)})
+
+
 # ---------------------------------------------------------------------------
 # Probar push manualmente (para desarrollo)
 # ---------------------------------------------------------------------------
