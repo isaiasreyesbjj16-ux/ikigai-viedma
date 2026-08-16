@@ -86,6 +86,10 @@ CREATE TABLE IF NOT EXISTS users (
     categoria TEXT DEFAULT 'adulto',
     gi_pref TEXT DEFAULT 'Ambas',
     cuota_mensual REAL,
+    tel TEXT,
+    nacimiento TEXT,
+    medic_info TEXT,
+    emergency_contact TEXT,
     activo INTEGER DEFAULT 1,
     creado TEXT
 );
@@ -196,6 +200,9 @@ def init_db():
         cols = [r[1] for r in c.execute('PRAGMA table_info(users)').fetchall()]
     if 'foto' not in cols:
         c.execute('ALTER TABLE users ADD COLUMN foto TEXT')
+    for col, ddl in [('tel', 'TEXT'), ('nacimiento', 'TEXT'), ('medic_info', 'TEXT'), ('emergency_contact', 'TEXT')]:
+        if col not in cols:
+            c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
     if DB_MODE == 'postgres':
         ap_cols = [r[0] for r in c.execute(
             "SELECT column_name AS name FROM information_schema.columns "
@@ -372,6 +379,10 @@ def user_public(u):
         'gi_pref': u['gi_pref'],
         'cuota_mensual': u['cuota_mensual'],
         'foto': u['foto'] if 'foto' in u.keys() else None,
+        'tel': u['tel'] if 'tel' in u.keys() else None,
+        'nacimiento': u['nacimiento'] if 'nacimiento' in u.keys() else None,
+        'medic_info': u['medic_info'] if 'medic_info' in u.keys() else None,
+        'emergency_contact': u['emergency_contact'] if 'emergency_contact' in u.keys() else None,
         'activo': u['activo'],
         'creado': u['creado'],
     }
@@ -452,6 +463,27 @@ def app_page():
                            dias=DIAS, academy_name=get_setting('academy_name'))
 
 
+@app.route('/recibo/<int:pid>')
+@login_required
+def recibo(pid):
+    p = get_db().execute(
+        """SELECT p.*, u.nombre AS alumno_nombre, pr.nombre AS profe_nombre
+           FROM pagos p JOIN users u ON u.id=p.alumno_id
+           LEFT JOIN users pr ON pr.id=p.profesor_id WHERE p.id=?""", (pid,)).fetchone()
+    if not p:
+        return render_template('error.html', message='Recibo no encontrado'), 404
+    u = current_user()
+    if u['role'] not in ('admin', 'profesor') and u['id'] != p['alumno_id']:
+        return render_template('error.html', message='No tenés permiso para ver este recibo'), 403
+    mes = to_int(p['mes'])
+    meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+             'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+    return render_template('recibo.html', p=p,
+                           mes_nombre=meses[mes - 1] if mes and 1 <= mes <= 12 else '',
+                           academy=get_setting('academy_name'),
+                           color=get_setting('academy_color') or '#e05d13')
+
+
 @app.errorhandler(404)
 def not_found(e):
     if request.path.startswith('/api/') or request.path.startswith('/static/'):
@@ -506,13 +538,17 @@ def api_register():
 
     try:
         get_db().execute(
-            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, creado)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, tel, nacimiento, medic_info, emergency_contact, creado)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (username, generate_password_hash(password), role, nombre,
              to_int(data.get('edad')), to_float(data.get('peso')),
              data.get('cinturon'), data.get('categoria') or 'adulto',
              data.get('gi_pref') or 'Ambas',
              to_float(data.get('cuota_mensual')) if role == 'alumno' else None,
+             (data.get('tel') or '').strip() or None,
+             (data.get('nacimiento') or '').strip() or None,
+             (data.get('medic_info') or '').strip() or None,
+             (data.get('emergency_contact') or '').strip() or None,
              datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         get_db().commit()
     except dbadapter.IntegrityError:
@@ -667,11 +703,15 @@ def api_alumnos_update(uid):
     if not u:
         return jsonify({'error': 'Alumno no encontrado'}), 404
     get_db().execute(
-        """UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, activo=? WHERE id=?""",
+        """UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, activo=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=? WHERE id=?""",
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
          data.get('categoria', u['categoria']), data.get('gi_pref', u['gi_pref']),
-         1 if data.get('activo', u['activo']) else 0, uid))
+         1 if data.get('activo', u['activo']) else 0,
+         (data.get('tel', u['tel']) or '').strip() or None,
+         (data.get('nacimiento', u['nacimiento']) or '').strip() or None,
+         data.get('medic_info', u['medic_info']),
+         data.get('emergency_contact', u['emergency_contact']), uid))
     get_db().commit()
     return jsonify({'ok': True})
 
@@ -923,7 +963,11 @@ def api_mi_asistencia():
              'dia': DIAS[r['dia']], 'profesor': r['profesor']} for r in rows]
     total = get_db().execute(
         'SELECT COUNT(*) AS n FROM asistencia WHERE alumno_id=? AND presente=1', (u['id'],)).fetchone()['n']
-    return jsonify({'asistencia': asis, 'total': total})
+    hoy = date.today().strftime('%Y-%m-%d')
+    hoy_ids = [r['clase_id'] for r in get_db().execute(
+        'SELECT clase_id FROM asistencia WHERE alumno_id=? AND fecha=? AND presente=1',
+        (u['id'], hoy)).fetchall()]
+    return jsonify({'asistencia': asis, 'total': total, 'hoy': hoy_ids, 'fecha_hoy': hoy})
 
 
 @app.route('/api/historial_asistencia')
@@ -1041,16 +1085,92 @@ def api_avisos_delete(aid):
     return jsonify({'ok': True})
 
 
+@app.route('/api/asistencia_yo', methods=['POST'])
+@role_required('alumno')
+def api_asistencia_yo():
+    u = current_user()
+    data = parse_json()
+    clase_id = to_int(data.get('clase_id'))
+    fecha = data.get('fecha') or date.today().strftime('%Y-%m-%d')
+    if not clase_id:
+        return jsonify({'error': 'Falta la clase'}), 400
+    c = get_db().execute('SELECT * FROM classes WHERE id=?', (clase_id,)).fetchone()
+    if not c:
+        return jsonify({'error': 'Clase no encontrada'}), 404
+    get_db().execute(
+        'INSERT OR IGNORE INTO asistencia(clase_id, alumno_id, fecha, presente) VALUES(?,?,?,1)',
+        (clase_id, u['id'], fecha))
+    get_db().commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/reporte')
+@role_required('admin', 'profesor')
+def api_reporte():
+    hoy = date.today()
+    mes = to_int(request.args.get('mes')) or hoy.month
+    anio = to_int(request.args.get('anio')) or hoy.year
+    pagos = get_db().execute(
+        """SELECT p.*, u.nombre AS alumno_nombre FROM pagos p
+           JOIN users u ON u.id=p.alumno_id
+           WHERE p.mes=? AND p.anio=? ORDER BY p.fecha DESC""",
+        (mes, anio)).fetchall()
+    total = sum((p['monto'] or 0) for p in pagos)
+    por_metodo = {}
+    for p in pagos:
+        k = p['metodo'] or 'Otro'
+        por_metodo[k] = por_metodo.get(k, 0) + (p['monto'] or 0)
+    deudores = get_db().execute(
+        """SELECT u.id, u.nombre, u.cinturon, u.cuota_mensual FROM users u
+           WHERE u.role='alumno' AND u.activo=1
+           AND NOT EXISTS (SELECT 1 FROM pagos p WHERE p.alumno_id=u.id AND p.mes=? AND p.anio=?)""",
+        (mes, anio)).fetchall()
+    avisos_pend = get_db().execute(
+        "SELECT COUNT(*) AS c FROM avisos_pago WHERE estado='pendiente'").fetchone()['c']
+    return jsonify({'mes': mes, 'anio': anio, 'total': total, 'cantidad': len(pagos),
+                    'por_metodo': por_metodo, 'deudores': [dict(d) for d in deudores],
+                    'avisos_pend': int(avisos_pend)})
+
+
+@app.route('/api/cumpleanios')
+@login_required
+def api_cumpleanios():
+    hoy = date.today()
+    rows = get_db().execute(
+        "SELECT id, nombre, nacimiento FROM users "
+        "WHERE role='alumno' AND activo=1 AND nacimiento IS NOT NULL AND nacimiento != ''"
+    ).fetchall()
+    res = []
+    for r in rows:
+        try:
+            parts = r['nacimiento'].split('-')
+            mes_n = int(parts[1])
+            dia = int(parts[2]) if len(parts) > 2 else 0
+            anio_n = int(parts[0]) if parts[0] else None
+            if mes_n == hoy.month:
+                res.append({'id': r['id'], 'nombre': r['nombre'], 'dia': dia,
+                            'edad': (hoy.year - anio_n) if anio_n else None,
+                            'hoy': dia == hoy.day})
+        except Exception:
+            pass
+    res.sort(key=lambda x: (0 if x['hoy'] else 1, x['dia']))
+    return jsonify({'cumpleanios': res, 'mes': hoy.month})
+
+
 @app.route('/api/perfil', methods=['PUT'])
 @login_required
 def api_perfil_update():
     u = current_user()
     data = parse_json()
     get_db().execute(
-        'UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=? WHERE id=?',
+        'UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=? WHERE id=?',
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
-         data.get('categoria', u['categoria']), data.get('gi_pref', u['gi_pref']), u['id']))
+         data.get('categoria', u['categoria']), data.get('gi_pref', u['gi_pref']),
+         (data.get('tel', u['tel']) or '').strip() or None,
+         (data.get('nacimiento', u['nacimiento']) or '').strip() or None,
+         data.get('medic_info', u['medic_info']),
+         data.get('emergency_contact', u['emergency_contact']), u['id']))
     if data.get('password'):
         if len(data['password']) < 4:
             return jsonify({'error': 'La contrasena debe tener al menos 4 caracteres'}), 400

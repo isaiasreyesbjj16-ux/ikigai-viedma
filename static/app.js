@@ -335,6 +335,15 @@ async function renderMiAsistencia(el) {
     </div>`;
 }
 
+async function marcarAsistencia(claseId) {
+  try {
+    await api('/api/asistencia_yo', { method: 'POST', body: { clase_id: claseId } });
+    toast('¡Asistencia marcada! ✓');
+    renderInicio($('#sec-inicio'));
+    renderMiAsistencia($('#sec-mi_asistencia')).catch(() => {});
+  } catch (err) { toast(err.message); }
+}
+
 /* =====================================================================
    VIDEOS (por cinturón)
    ===================================================================== */
@@ -546,7 +555,11 @@ async function renderInicio(el) {
 
         <div class="feed-card">
           <div class="small mb">📅 Clases de hoy</div>
-          ${hoyClases.length ? hoyClases.map(h => `<div class="clase-item ${h.tipo.toLowerCase()}"><span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span> · <span class="profe">${esc(h.profesor_nombre || 'Sin profesor')}</span></div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas. Mirá la sección Horarios.</div>'}
+          ${hoyClases.length ? hoyClases.map(h => `
+            <div class="clase-item ${h.tipo.toLowerCase()}">
+              <span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span> · <span class="profe">${esc(h.profesor_nombre || 'Sin profesor')}</span>
+              <div style="margin-top:6px">${(asis.hoy || []).includes(h.id) ? '<span class="tag tag-al-dia">✓ Asistencia marcada</span>' : `<button class="btn primary small" onclick="marcarAsistencia(${h.id})">✅ Marcarme presente</button>`}</div>
+            </div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas. Mirá la sección Horarios.</div>'}
         </div>
 
         ${videos.length ? `<div class="post-card" style="padding:0;overflow:hidden">
@@ -563,8 +576,8 @@ async function renderInicio(el) {
         </div>
       </div>`;
   } else {
-    const [stats, horarios, vids] = await Promise.all([
-      api('/api/estadisticas'), api('/api/horarios'), api('/api/videos')]);
+    const [stats, horarios, vids, cums] = await Promise.all([
+      api('/api/estadisticas'), api('/api/horarios'), api('/api/videos'), api('/api/cumpleanios')]);
     const hoyIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
     const hoyClases = horarios.horarios.filter(h => h.dia === hoyIdx);
     const videos = vids.videos.slice(0, 3);
@@ -591,6 +604,10 @@ async function renderInicio(el) {
           <div class="small mb">📅 Clases de hoy</div>
           ${hoyClases.length ? hoyClases.map(h => `<div class="clase-item ${h.tipo.toLowerCase()}"><span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span> · ${esc(h.nivel)} · <span class="profe">${esc(h.profesor_nombre || 'Sin profesor')}</span></div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas.</div>'}
         </div>
+        ${cums.cumpleanios.length ? `<div class="feed-card">
+          <div class="small mb">🎂 Cumpleaños de ${['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][cums.mes - 1]} <span class="small" style="color:var(--muted)">(${cums.cumpleanios.length})</span></div>
+          ${cums.cumpleanios.map(x => `<div class="flex space-between" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${avatarHTML('', x.nombre, 'sm')} ${esc(x.nombre)}</span><b>${x.hoy ? '🎉 Hoy! · ' : ''}${x.dia}/${cums.mes}${x.edad ? ' · ' + x.edad + ' años' : ''}</b></div>`).join('')}
+        </div>` : ''}
         ${videos.length ? `<div class="post-card" style="padding:0;overflow:hidden">
           <div class="post-head" style="padding:10px 14px 0"><b style="color:var(--accent2)">🎥 Últimos videos subidos</b> <button class="btn primary small" onclick="showSec('videos')">Subir video</button></div>
           <div class="feed" style="margin:0;padding:10px 14px 14px">${videos.map(v => videoCardHTML(v, true)).join('')}</div>
@@ -666,6 +683,8 @@ async function renderPerfil(el) {
           <div class="field"><label>Usuario</label><input type="text" value="${esc(me.username)}" disabled></div>
           <div class="field"><label>Edad</label><input type="number" id="pEdad" value="${me.edad != null ? me.edad : ''}"></div>
           <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="pPeso" value="${me.peso != null ? me.peso : ''}"></div>
+          <div class="field"><label>Teléfono</label><input type="tel" id="pTel" value="${esc(me.tel || '')}"></div>
+          <div class="field"><label>Fecha de nacimiento</label><input type="date" id="pNac" value="${me.nacimiento || ''}"></div>
           <div class="field"><label>Categoría</label><select id="pCat">
             ${CATEGORIAS.map(c => `<option value="${c}" ${c === cat ? 'selected' : ''}>${catLabel(c)}</option>`).join('')}</select></div>
           <div class="field"><label>Cinturón / Faixa</label><select id="pCinturon">
@@ -675,9 +694,20 @@ async function renderPerfil(el) {
             <option ${me.gi_pref === 'Gi' ? 'selected' : ''}>Gi</option>
             <option ${me.gi_pref === 'NoGi' ? 'selected' : ''}>NoGi</option></select></div>
           <div class="field"><label>Cambiar contraseña (opcional)</label><input type="password" id="pPass" placeholder="Nueva contraseña"></div>
+          <div class="field" style="grid-column:1/-1"><label>🩺 Ficha médica (opcional)</label><textarea id="pMedic" rows="2" placeholder="Lesiones, alergias, medicación, operaciones...">${esc(me.medic_info || '')}</textarea></div>
+          <div class="field" style="grid-column:1/-1"><label>📞 Contacto de emergencia (opcional)</label><input type="text" id="pEmer" placeholder="Nombre y teléfono" value="${esc(me.emergency_contact || '')}"></div>
           <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar cambios</button></div>
         </form>
       </div>
+
+      ${me.medic_info ? `<div class="feed-card">
+        <div class="small mb">🩺 Mi ficha médica</div>
+        <p class="small" style="white-space:pre-wrap;margin-bottom:0">${esc(me.medic_info)}</p>
+      </div>` : ''}
+      ${me.emergency_contact ? `<div class="feed-card">
+        <div class="small mb">📞 Contacto de emergencia</div>
+        <p class="small" style="margin-bottom:0">${esc(me.emergency_contact)}</p>
+      </div>` : ''}
 
       <div class="feed-card">
         <div class="small mb">📲 ¿Querés la app como si fuera de tu teléfono?</div>
@@ -696,6 +726,8 @@ async function renderPerfil(el) {
         nombre: $('#pNombre').value.trim(), edad: $('#pEdad').value,
         peso: $('#pPeso').value, cinturon: $('#pCinturon').value,
         categoria: $('#pCat').value, gi_pref: $('#pGi').value,
+        tel: $('#pTel').value, nacimiento: $('#pNac').value,
+        medic_info: $('#pMedic').value, emergency_contact: $('#pEmer').value,
         password: $('#pPass').value } });
       toast('Perfil actualizado ✓'); renderPerfil(el);
     } catch (err) { toast(err.message); }
@@ -828,15 +860,22 @@ async function renderPagos(el) {
       </form>
     </div>
     <div class="card">
+      <div class="flex space-between">
+        <div><h3 style="margin:0">📊 Reporte mensual de ingresos</h3><p class="small">Total cobrado, métodos usados y deudores del mes.</p></div>
+        <button class="btn primary small" onclick="abrirReporte()">Ver reporte</button>
+      </div>
+    </div>
+    <div class="card">
       <h3>${R === 'profesor' ? 'Mis pagos recibidos' : 'Historial de pagos'}</h3>
       <div style="overflow:auto"><table>
-        <tr><th>Fecha</th><th>Alumno</th><th>Profesor</th><th>Mes</th><th>Método</th><th>Monto</th>${R === 'admin' ? '<th></th>' : ''}</tr>
+        <tr><th>Fecha</th><th>Alumno</th><th>Profesor</th><th>Mes</th><th>Método</th><th>Monto</th><th>Recibo</th>${R === 'admin' ? '<th></th>' : ''}</tr>
         ${pagos.pagos.length ? pagos.pagos.map(p => `<tr>
           <td>${esc(p.fecha)}</td><td><div class="flex" style="gap:8px">${avatarHTML('', p.alumno_nombre, 'sm')}<span>${esc(p.alumno_nombre)}</span></div></td>
           <td>${esc(p.profesor_nombre || '—')}</td><td>${p.mes}/${p.anio}</td>
           <td>${esc(p.metodo)}</td><td><b>$${num(p.monto)}</b></td>
+          <td><a class="btn ghost small" href="/recibo/${p.id}" target="_blank" rel="noopener">🧾</a></td>
           ${R === 'admin' ? `<td><button class="btn bad small" onclick="borrarPago(${p.id})">🗑</button></td>` : ''}</tr>`).join('')
-          : '<tr><td colspan="6" class="empty">Todavía no hay pagos registrados</td></tr>'}
+          : '<tr><td colspan="7" class="empty">Todavía no hay pagos registrados</td></tr>'}
       </table></div>
     </div>`;
 
@@ -860,6 +899,31 @@ async function borrarPago(id) {
   if (!confirm('¿Eliminar este pago?')) return;
   await api('/api/pagos/' + id, { method: 'DELETE' }).catch(e => toast(e.message));
   renderPagos($('#sec-pagos'));
+}
+const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+function abrirReporte() {
+  const hoy = new Date();
+  openModal(`
+    <h3>📊 Reporte mensual</h3>
+    <div class="grid2">
+      <div class="field"><label>Mes</label><select id="rMes">${MESES.map((m, i) => `<option value="${i + 1}" ${i + 1 === hoy.getMonth() + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+      <div class="field"><label>Año</label><input type="number" id="rAnio" value="${hoy.getFullYear()}"></div>
+    </div>
+    <button class="btn primary btn-block" id="rBtn">Ver reporte</button>`);
+  $('#rBtn').addEventListener('click', async () => {
+    try {
+      const rep = await api('/api/reporte?mes=' + $('#rMes').value + '&anio=' + $('#rAnio').value);
+      const metodos = Object.entries(rep.por_metodo || {}).map(([k, v]) => `<div class="flex space-between" style="padding:6px 0;border-bottom:1px dashed var(--line)"><span>${esc(k)}</span><b>$${num(v)}</b></div>`).join('');
+      $('#modalBody').innerHTML = `
+        <h3>📊 Reporte ${MESES[rep.mes - 1]} ${rep.anio}</h3>
+        <div class="stat-card"><div class="num">$${num(rep.total)}</div><div class="lbl">Total cobrado (${rep.cantidad} pago${rep.cantidad === 1 ? '' : 's'})</div></div>
+        <div class="small mb mt">Por método de pago:</div>${metodos || '<div class="small" style="color:var(--muted)">Sin pagos este mes.</div>'}
+        <div class="small mb mt" style="margin-top:12px">${rep.deudores.length} alumno${rep.deudores.length === 1 ? '' : 's'} debe${rep.deudores.length === 1 ? '' : 'n'} la cuota${rep.deudores.length ? ':' : ''}</div>
+        ${rep.deudores.length ? `<div style="max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px 10px">${rep.deudores.map(d => `<div class="flex space-between" style="padding:5px 0;border-bottom:1px solid var(--line)"><span>${esc(d.nombre)} <span class="small" style="color:var(--muted)">${esc(d.cinturon || '')}</span></span><b>$${num(d.cuota_mensual || 0)}</b></div>`).join('')}</div>` : ''}
+        <p class="small" style="color:var(--warn)">${rep.avisos_pend} aviso(s) de pago pendiente(s) de revisar.</p>
+        <button class="btn ghost btn-block" onclick="closeModal()">Cerrar</button>`;
+    } catch (e) { toast(e.message); }
+  });
 }
 function verComprobante(id) {
   const a = AVISOS_CACHE[id];
@@ -928,11 +992,12 @@ async function renderMisPagos(el) {
     </div>` : ''}
     <div class="card"><h3>Mis pagos</h3>
       <div style="overflow:auto"><table>
-        <tr><th>Fecha</th><th>Profesor que recibió</th><th>Mes</th><th>Método</th><th>Monto</th></tr>
+        <tr><th>Fecha</th><th>Profesor que recibió</th><th>Mes</th><th>Método</th><th>Monto</th><th>Recibo</th></tr>
         ${pagos.pagos.length ? pagos.pagos.map(p => `<tr>
           <td>${esc(p.fecha)}</td><td>${esc(p.profesor_nombre || '—')}</td>
-          <td>${p.mes}/${p.anio}</td><td>${esc(p.metodo)}</td><td><b>$${num(p.monto)}</b></td></tr>`).join('')
-          : '<tr><td colspan="5" class="empty">Aún no registraste pagos</td></tr>'}
+          <td>${p.mes}/${p.anio}</td><td>${esc(p.metodo)}</td><td><b>$${num(p.monto)}</b></td>
+          <td><a class="btn ghost small" href="/recibo/${p.id}" target="_blank" rel="noopener">🧾</a></td></tr>`).join('')
+          : '<tr><td colspan="6" class="empty">Aún no registraste pagos</td></tr>'}
       </table></div>
     </div>`;
 }
@@ -1018,6 +1083,7 @@ async function renderAlumnos(el) {
           <div class="al-actions">
             <button class="btn ghost small" onclick="formAlumno(${a.id})">✏️</button>
             <button class="btn ghost small" onclick="cambiarCuota(${a.id},'${esc(a.nombre)}',${a.cuota_mensual || 0})">💲</button>
+            <button class="btn ghost small" onclick="verFicha(${a.id},'${esc(a.nombre)}')">🩺</button>
             <button class="btn good small" onclick="notificarDeuda(${a.id})">🔔</button>
             ${USER.role === 'admin' ? `<button class="btn bad small" onclick="eliminarAlumno(${a.id},'${esc(a.nombre)}')">🗑</button>` : ''}
           </div>
@@ -1030,6 +1096,16 @@ async function renderAlumnos(el) {
   });
 }
 
+async function verFicha(id, nombre) {
+  const a = (await api('/api/alumnos')).alumnos.find(x => x.id === id);
+  openModal(`
+    <h3>🩺 Ficha de ${esc(nombre)}</h3>
+    ${a.tel ? `<div class="small mb">📱 ${esc(a.tel)}</div>` : ''}
+    ${a.medic_info ? `<p class="small" style="white-space:pre-wrap;background:var(--bg2);border-radius:8px;padding:10px"><b>Ficha médica:</b><br>${esc(a.medic_info)}</p>` : '<div class="empty">Sin ficha médica cargada.</div>'}
+    ${a.emergency_contact ? `<p class="small" style="white-space:pre-wrap;background:var(--bg2);border-radius:8px;padding:10px"><b>📞 Contacto de emergencia:</b> ${esc(a.emergency_contact)}</p>` : ''}
+    <button class="btn ghost btn-block" onclick="closeModal()">Cerrar</button>`);
+}
+
 async function formAlumno(id) {
   if (!id) { toast('Los alumnos se registran solos desde la pantalla de ingreso'); return; }
   const a = (await api('/api/alumnos')).alumnos.find(x => x.id === id);
@@ -1039,11 +1115,15 @@ async function formAlumno(id) {
       <div class="field"><label>Nombre y apellido</label><input id="aNombre" value="${esc(a.nombre)}" required></div>
       <div class="field"><label>Edad</label><input type="number" id="aEdad" value="${a.edad != null ? a.edad : ''}"></div>
       <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="aPeso" value="${a.peso != null ? a.peso : ''}"></div>
+      <div class="field"><label>Teléfono</label><input type="tel" id="aTel" value="${esc(a.tel || '')}"></div>
+      <div class="field"><label>Fecha de nacimiento</label><input type="date" id="aNac" value="${a.nacimiento || ''}"></div>
       <div class="field"><label>Categoría</label><select id="aCat">${CATEGORIAS.map(c => `<option value="${c}" ${a.categoria === c ? 'selected' : ''}>${catLabel(c)}</option>`).join('')}</select></div>
       <div class="field"><label>Cinturón</label><select id="aCinturon"></select></div>
       <div class="field"><label>Modalidad</label><select id="aGi">
         ${['Ambas', 'Gi', 'NoGi'].map(g => `<option ${a.gi_pref === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div>
       <div class="field"><label>Cuota mensual ($)</label><input type="number" step="0.01" id="aCuota" value="${a.cuota_mensual != null ? a.cuota_mensual : ''}" disabled></div>
+      <div class="field" style="grid-column:1/-1"><label>🩺 Ficha médica (opcional)</label><textarea id="aMedic" rows="2" placeholder="Lesiones, alergias, medicación...">${esc(a.medic_info || '')}</textarea></div>
+      <div class="field" style="grid-column:1/-1"><label>📞 Contacto de emergencia (opcional)</label><input type="text" id="aEmer" placeholder="Nombre y teléfono" value="${esc(a.emergency_contact || '')}"></div>
       <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar</button></div>
     </form>`);
   function fillBelt() {
@@ -1056,7 +1136,9 @@ async function formAlumno(id) {
   $('#alForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const body = { nombre: $('#aNombre').value.trim(), edad: $('#aEdad').value, peso: $('#aPeso').value,
-      cinturon: $('#aCinturon').value, categoria: $('#aCat').value, gi_pref: $('#aGi').value };
+      cinturon: $('#aCinturon').value, categoria: $('#aCat').value, gi_pref: $('#aGi').value,
+      tel: $('#aTel').value, nacimiento: $('#aNac').value,
+      medic_info: $('#aMedic').value, emergency_contact: $('#aEmer').value };
     try {
       await api('/api/alumnos/' + a.id, { method: 'PUT', body });
       toast('Alumno actualizado ✓');
