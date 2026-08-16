@@ -1200,16 +1200,15 @@ def api_foto():
         img.load()
         img = img.convert('RGB')
         img.thumbnail((400, 400))
+        buf = io.BytesIO()
+        img.save(buf, 'JPEG', quality=85)
+        data_uri = 'data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode('ascii')
     except Exception:
         return jsonify({'error': 'Formato de imagen invalido (usa JPG o PNG)'}), 400
-    upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads')
-    os.makedirs(upload_dir, exist_ok=True)
     uid = current_user()['id']
-    img.save(os.path.join(upload_dir, 'user%d.jpg' % uid), 'JPEG', quality=85)
-    url = '/static/uploads/user%d.jpg' % uid
-    get_db().execute('UPDATE users SET foto=? WHERE id=?', (url, uid))
+    get_db().execute('UPDATE users SET foto=? WHERE id=?', (data_uri, uid))
     get_db().commit()
-    return jsonify({'ok': True, 'foto': url})
+    return jsonify({'ok': True, 'foto': data_uri})
 
 
 # ---------------------------------------------------------------------------
