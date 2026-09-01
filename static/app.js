@@ -371,6 +371,59 @@ async function marcarAsistenciaQR() {
   } catch (err) { toast('Error al marcar asistencia'); }
 }
 
+/* ---------- ESCÁNER DE QR CON CÁMARA ---------- */
+function abrirScannerQR() {
+  if (typeof jsQR === 'undefined') { toast('El escáner necesita recargar la página (Ctrl+F5)'); return; }
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:#000;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px';
+  overlay.innerHTML = `
+    <video playsinline muted style="width:100%;max-width:420px;border-radius:14px;max-height:65vh"></video>
+    <div style="color:#fff;font-size:14px" id="qrMsg">Apuntá la cámara al código QR del gimnasio</div>
+    <button class="btn" style="background:#d63031;color:#fff;border:none;padding:12px 22px;border-radius:12px" id="qrCerrar">Cerrar</button>`;
+  document.body.appendChild(overlay);
+  let stream = null, timer = null, cerrado = false;
+
+  function cerrar() {
+    if (cerrado) return;
+    cerrado = true;
+    if (timer) clearInterval(timer);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    overlay.remove();
+  }
+  overlay.querySelector('#qrCerrar').onclick = cerrar;
+
+  const video = overlay.querySelector('video');
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(s => {
+      stream = s;
+      video.srcObject = s;
+      video.setAttribute('autoplay', 'true');
+      video.play();
+      timer = setInterval(leer, 250);
+    })
+    .catch(err => {
+      overlay.querySelector('#qrMsg').textContent = 'No se pudo abrir la cámara: ' + err.message;
+    });
+
+  function leer() {
+    const v = video;
+    if (!v.videoWidth) return;
+    const c = document.createElement('canvas');
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    const img = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+    const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+    if (code && code.data && code.data.indexOf('qr=1') !== -1) {
+      clearInterval(timer);
+      timer = null;
+      stream.getTracks().forEach(t => t.stop());
+      overlay.querySelector('#qrMsg').textContent = '✓ QR válido. Marcando asistencia...';
+      marcarAsistenciaQR();
+      setTimeout(cerrar, 1600);
+    }
+  }
+}
+
 /* =====================================================================
    VIDEOS (por cinturón)
    ===================================================================== */
@@ -621,6 +674,7 @@ async function renderInicio(el) {
           <button class="chip" onclick="showSec('mispagos')">🧾 Mi cuota</button>
           <button class="chip" onclick="showSec('perfil')">👤 Mi perfil</button>
           <button class="chip" onclick="showSec('mi_asistencia')">✅ Mi asistencia</button>
+          <button class="chip" onclick="abrirScannerQR()">📷 Escanear QR</button>
         </div>
       </div>`;
   } else {
