@@ -1,10 +1,11 @@
 import os
+import io
 import base64
 import json
 import secrets
 from datetime import datetime, date, timedelta
 
-from flask import Flask, request, jsonify, session, redirect, url_for, render_template, g, send_from_directory
+from flask import Flask, request, jsonify, session, redirect, url_for, render_template, g, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import dbadapter
@@ -18,7 +19,7 @@ app.config['MAX_CONTENT_LENGTH'] = 250 * 1024 * 1024
 BELTS_ADULT = ['Blanco', 'Azul', 'Púrpura', 'Marrón', 'Negro']
 BELTS_KIDS = ['Gris', 'Amarillo', 'Naranja', 'Verde', 'Blanco']
 CATEGORIAS = ['adulto', 'juveniles', 'kids']
-TIPOS_CLASE = ['Gi', 'NoGi', 'Kids', 'Abierto']
+TIPOS_CLASE = ['Gi', 'NoGi', 'Kids', 'Juveniles', 'Abierto']
 METODOS_PAGO = ['Efectivo', 'Transferencia', 'Débito', 'Crédito', 'Otro']
 DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
 
@@ -164,10 +165,12 @@ CREATE TABLE IF NOT EXISTS videos (
     titulo TEXT NOT NULL,
     descripcion TEXT DEFAULT '',
     belt TEXT DEFAULT 'Todos',
+    categoria TEXT DEFAULT 'adulto',
     url TEXT NOT NULL,
     tipo TEXT DEFAULT 'upload',
     subido_por INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    fecha TEXT
+    fecha TEXT,
+    data TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS video_views (
@@ -213,12 +216,29 @@ def init_db():
         ap_cols = [r[1] for r in c.execute('PRAGMA table_info(avisos_pago)').fetchall()]
     if 'comprobante' not in ap_cols:
         c.execute('ALTER TABLE avisos_pago ADD COLUMN comprobante TEXT')
+    if DB_MODE == 'postgres':
+        v_cols = [r[0] for r in c.execute(
+            "SELECT column_name AS name FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND table_name='videos'").fetchall()]
+    elif DB_MODE == 'mysql':
+        v_cols = [r[0] for r in c.execute('SHOW COLUMNS FROM videos').fetchall()]
+    else:
+        v_cols = [r[1] for r in c.execute('PRAGMA table_info(videos)').fetchall()]
+    if 'data' not in v_cols:
+        c.execute('ALTER TABLE videos ADD COLUMN data TEXT')
+    if 'categoria' not in v_cols:
+        c.execute('ALTER TABLE videos ADD COLUMN categoria TEXT DEFAULT \'adulto\'')
     defaults = {
         'academy_name': 'IKIGAI VIEDMA',
         'academy_code': 'BJJ2026',
         'default_cuota': '15000',
         'due_day': '10',
+        'cargo_demora_pct': '10',
         'academy_color': '#e05d13',
+        'auto_mensaje': '',
+        'auto_inact_dias': '15',
+        'auto_deuda_dias': '30',
+        'auto_mensaje_activo': '0',
     }
     for k, v in defaults.items():
         c.execute('INSERT OR IGNORE INTO settings(k, value) VALUES(?,?)', (k, v))
@@ -406,7 +426,36 @@ def cuota_status(alumno):
         'pago': dict(pago) if pago else None,
         'cuota': cuota,
         'due_day': due_day,
+        'cargo_demora_pct': to_float(get_setting('cargo_demora_pct', '10')) or 0,
     }
+
+
+def calcular_demora(monto, mes=None, anio=None, fecha=None):
+    """Aplica el cargo por pago con demora (después del día de vencimiento).
+
+    Devuelve (monto_base, cargo, monto_final). Sin cargo si no corresponde.
+    """
+    base = monto or 0
+    if base <= 0:
+        return base, 0, base
+    hoy = fecha or date.today()
+    due_day = to_int(get_setting('due_day', '10')) or 10
+    pct = to_float(get_setting('cargo_demora_pct', '10')) or 0
+    # Mes objetivo del pago (por defecto el mes actual)
+    tmes = mes or hoy.month
+    tanio = anio or hoy.year
+    # Determinar el vencimiento: el día due_day del mes del pago
+    try:
+        venc = date(tanio, tmes, due_day)
+    except ValueError:
+        # si due_day no existe (ej 31 en feb) usar último día del mes
+        import calendar
+        last = calendar.monthrange(tanio, tmes)[1]
+        venc = date(tanio, tmes, last)
+    if hoy > venc and pct > 0:
+        cargo = round(base * pct / 100)
+        return base, cargo, base + cargo
+    return base, 0, base
 
 
 def dias_deuda(alumno):
@@ -430,6 +479,81 @@ def dias_deuda(alumno):
             pass
     return 0
 
+
+def dias_sin_entrenar(alumno):
+    """Días desde la última asistencia marcada del alumno."""
+    hoy = date.today()
+    row = get_db().execute(
+        "SELECT fecha FROM asistencia WHERE alumno_id=? AND presente=1 ORDER BY fecha DESC LIMIT 1",
+        (alumno['id'],)).fetchone()
+    if row and row['fecha']:
+        try:
+            last = datetime.strptime(row['fecha'], '%Y-%m-%d').date()
+            return (hoy - last).days
+        except Exception:
+            pass
+    # si nunca entrenó, usar fecha de creación
+    if alumno['creado']:
+        try:
+            last = datetime.strptime(alumno['creado'][:10], '%Y-%m-%d').date()
+            return (hoy - last).days
+        except Exception:
+            pass
+    return 0
+
+
+def run_auto_mensajes():
+    """Dispara mensajes automáticos por inactividad y por deuda (una vez por alumno).
+
+    Controla el envío con notificaciones tipo 'auto' para evitar duplicados.
+    Devuelve lista de (alumno_nombre, motivo).
+    """
+    if not (get_setting('auto_mensaje_activo', '0') == '1'):
+        return []
+    texto = (get_setting('auto_mensaje', '') or '').strip()
+    if not texto:
+        return []
+    inact_dias = to_int(get_setting('auto_inact_dias', '15')) or 15
+    deuda_dias = to_int(get_setting('auto_deuda_dias', '30')) or 30
+    alumnos = get_db().execute(
+        "SELECT * FROM users WHERE role='alumno' AND activo=1").fetchall()
+    enviados = []
+    for a in alumnos:
+        motivo = None
+        if dias_sin_entrenar(a) >= inact_dias:
+            motivo = 'inactividad'
+        elif dias_deuda(a) >= deuda_dias:
+            motivo = 'deuda'
+        if not motivo:
+            continue
+        # verificar que no se le haya enviado ya el mensaje automático (tipo 'auto')
+        ya = get_db().execute(
+            "SELECT 1 FROM notificaciones WHERE user_id=? AND tipo='auto' AND fecha LIKE ? LIMIT 1",
+            (a['id'], date.today().strftime('%Y-%m-%d') + '%')).fetchone()
+        if ya:
+            continue
+        notify(a['id'], '📣 Mensaje de la academia', texto, tipo='auto', push=True)
+        enviados.append((a['nombre'], motivo))
+    return enviados
+
+
+@app.route('/api/mensajes/auto', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_mensajes_auto():
+    enviados = run_auto_mensajes()
+    return jsonify({'ok': True, 'enviados': [{'nombre': n, 'motivo': m} for n, m in enviados]})
+
+
+@app.route('/api/perfil/desactivar', methods=['POST'])
+@login_required
+def api_perfil_desactivar():
+    u = current_user()
+    if u['role'] != 'alumno':
+        return jsonify({'error': 'Solo los alumnos pueden desactivar su cuenta'}), 403
+    get_db().execute('UPDATE users SET activo=0 WHERE id=?', (u['id'],))
+    get_db().commit()
+    session.clear()
+    return jsonify({'ok': True})
 
 # ---------------------------------------------------------------------------
 # Paginas
@@ -837,6 +961,8 @@ def api_pagos_create():
         return jsonify({'error': 'Alumno y monto son obligatorios'}), 400
     if profesor_id == -1 or (profesor_id is None and (data.get('profesor_id') == -1)):
         profesor_id = None
+    base, cargo, final = calcular_demora(monto, mes, anio)
+    monto = final if (data.get('aplicar_cargo', True)) else monto
     get_db().execute(
         """INSERT INTO pagos(alumno_id, profesor_id, monto, mes, anio, metodo, concepto, nota, fecha, registrado_por)
            VALUES(?,?,?,?,?,?,?,?,?,?)""",
@@ -847,9 +973,10 @@ def api_pagos_create():
     get_db().commit()
     alumno = get_db().execute('SELECT * FROM users WHERE id=?', (alumno_id,)).fetchone()
     who = current_user()
+    nota_extra = f' (incluye ${cargo:,.0f} de recargo por demora).'.replace(',', '.') if cargo else '.'
     # notificaciones: al alumno
     notify(alumno_id, 'Pago registrado',
-           f'Tu pago de ${monto:,.0f} por {mes}/{anio} fue registrado por {who["nombre"]}.'.replace(',', '.'),
+           f'Tu pago de ${monto:,.0f} por {mes}/{anio} fue registrado por {who["nombre"]}{nota_extra}'.replace(',', '.'),
            'pago')
     # al profesor que recibio el pago
     if profesor_id and profesor_id != who['id']:
@@ -865,7 +992,7 @@ def api_pagos_create():
             notify(a['id'], 'Nuevo pago registrado',
                    f'{alumno["nombre"]} pago ${monto:,.0f} registrado por {who["nombre"]}.'.replace(',', '.'),
                    'pago')
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'base': base, 'cargo': cargo, 'monto': monto})
 
 
 @app.route('/api/pagos/<int:pid>', methods=['DELETE'])
@@ -1059,17 +1186,20 @@ def api_avisos_confirmar(aid):
     if a['estado'] == 'confirmado':
         return jsonify({'error': 'Este aviso ya fue confirmado'}), 400
     who = current_user()
+    base, cargo, final = calcular_demora(a['monto'] or 0, a['mes'], a['anio'])
     get_db().execute(
         'INSERT INTO pagos(alumno_id, profesor_id, monto, mes, anio, metodo, concepto, nota, fecha, registrado_por) VALUES(?,?,?,?,?,?,?,?,?,?)',
-        (a['alumno_id'], None, a['monto'] or 0, a['mes'], a['anio'], 'Aviso', 'Cuota mensual',
-         'Confirmado desde aviso de pago', datetime.now().strftime('%Y-%m-%d %H:%M:%S'), who['id']))
+        (a['alumno_id'], None, final, a['mes'], a['anio'], 'Aviso', 'Cuota mensual',
+         'Confirmado desde aviso de pago' + (f' (recargo por demora ${cargo:,.0f})'.replace(',', '.') if cargo else ''),
+         datetime.now().strftime('%Y-%m-%d %H:%M:%S'), who['id']))
     get_db().execute(
         "UPDATE avisos_pago SET estado='confirmado', confirmado_por=?, confirmado_fecha=? WHERE id=?",
         (who['id'], datetime.now().strftime('%Y-%m-%d %H:%M:%S'), aid))
     get_db().commit()
     alumno = get_db().execute('SELECT * FROM users WHERE id=?', (a['alumno_id'],)).fetchone()
+    nota = f' (incluye ${cargo:,.0f} de recargo por demora)'.replace(',', '.') if cargo else ''
     notify(a['alumno_id'], 'Pago confirmado',
-           f'Tu aviso de pago de la cuota {a["mes"]}/{a["anio"]} fue confirmado por {who["nombre"]}.',
+           f'Tu aviso de pago de la cuota {a["mes"]}/{a["anio"]} por ${final:,.0f} fue confirmado por {who["nombre"]}{nota}.'.replace(',', '.'),
            'pago')
     return jsonify({'ok': True})
 
@@ -1127,9 +1257,53 @@ def api_reporte():
         (mes, anio)).fetchall()
     avisos_pend = get_db().execute(
         "SELECT COUNT(*) AS c FROM avisos_pago WHERE estado='pendiente'").fetchone()['c']
+    # Porcentajes de alumnos
+    total_alumnos = get_db().execute(
+        "SELECT COUNT(*) AS c FROM users WHERE role='alumno' AND activo=1").fetchone()['c']
+    pagaron_ids = [p['alumno_id'] for p in pagos]
+    cant_pagaron = len(set(pagaron_ids))
+    cant_no_pagaron = len(deudores)
+    pct_pagaron = round(cant_pagaron * 100 / total_alumnos) if total_alumnos else 0
+    pct_no_pagaron = round(cant_no_pagaron * 100 / total_alumnos) if total_alumnos else 0
+    # Alumnos que pagaron (detalle)
+    alumnos_que_pagaron = get_db().execute(
+        """SELECT DISTINCT u.id, u.nombre, u.cinturon, p.monto, p.metodo, p.fecha
+           FROM pagos p JOIN users u ON u.id=p.alumno_id
+           WHERE p.mes=? AND p.anio=? ORDER BY u.nombre""",
+        (mes, anio)).fetchall()
+    # Asistencia del mes (primer y último día del mes)
+    primer_dia = f'{anio}-{mes:02d}-01'
+    if mes == 12:
+        ultimo_dia = f'{anio + 1}-01-01'
+    else:
+        ultimo_dia = f'{anio}-{mes + 1:02d}-01'
+    asistieron = get_db().execute(
+        """SELECT DISTINCT u.id, u.nombre, u.cinturon, COUNT(*) AS clases
+           FROM asistencia a JOIN users u ON u.id=a.alumno_id
+           WHERE a.presente=1 AND a.fecha>=? AND a.fecha<?
+           GROUP BY u.id ORDER BY u.nombre""",
+        (primer_dia, ultimo_dia)).fetchall()
+    no_asistieron = get_db().execute(
+        """SELECT u.id, u.nombre, u.cinturon FROM users u
+           WHERE u.role='alumno' AND u.activo=1
+           AND NOT EXISTS (SELECT 1 FROM asistencia a WHERE a.alumno_id=u.id
+                           AND a.presente=1 AND a.fecha>=? AND a.fecha<?)""",
+        (primer_dia, ultimo_dia)).fetchall()
+    cant_asistieron = len(asistieron)
+    cant_no_asistieron = len(no_asistieron)
+    pct_asistieron = round(cant_asistieron * 100 / total_alumnos) if total_alumnos else 0
+    pct_no_asistieron = round(cant_no_asistieron * 100 / total_alumnos) if total_alumnos else 0
     return jsonify({'mes': mes, 'anio': anio, 'total': total, 'cantidad': len(pagos),
                     'por_metodo': por_metodo, 'deudores': [dict(d) for d in deudores],
-                    'avisos_pend': int(avisos_pend)})
+                    'avisos_pend': int(avisos_pend),
+                    'total_alumnos': total_alumnos,
+                    'cant_pagaron': cant_pagaron, 'pct_pagaron': pct_pagaron,
+                    'cant_no_pagaron': cant_no_pagaron, 'pct_no_pagaron': pct_no_pagaron,
+                    'alumnos_que_pagaron': [dict(a) for a in alumnos_que_pagaron],
+                    'cant_asistieron': cant_asistieron, 'pct_asistieron': pct_asistieron,
+                    'cant_no_asistieron': cant_no_asistieron, 'pct_no_asistieron': pct_no_asistieron,
+                    'alumnos_que_asistieron': [{'nombre': a['nombre'], 'cinturon': a['cinturon'], 'clases': a['clases']} for a in asistieron],
+                    'alumnos_que_no_asistieron': [{'nombre': a['nombre'], 'cinturon': a['cinturon']} for a in no_asistieron]})
 
 
 @app.route('/api/cumpleanios')
@@ -1224,24 +1398,31 @@ def _video_public(v, u):
         (v['id'], u['id'])).fetchone())
     return {
         'id': v['id'], 'titulo': v['titulo'], 'descripcion': v['descripcion'],
-        'belt': v['belt'], 'url': v['url'], 'tipo': v['tipo'],
+        'belt': v['belt'], 'categoria': v['categoria'], 'url': v['url'], 'tipo': v['tipo'],
         'subido_por': v['subido_por'], 'fecha': v['fecha'],
         'subidor_nombre': v['subidor_nombre'], 'vistas': vistas, 'visto': visto,
     }
 
 
-def _list_videos(u, belt=None):
+def _list_videos(u, belt=None, categoria=None):
     db = get_db()
-    q = ('SELECT v.*, s.nombre AS subidor_nombre FROM videos v '
+    q = ('SELECT v.id, v.titulo, v.descripcion, v.belt, v.categoria, v.url, v.tipo, v.subido_por, v.fecha, '
+         's.nombre AS subidor_nombre FROM videos v '
          'LEFT JOIN users s ON s.id = v.subido_por ')
     args = []
     where = []
     if u['role'] == 'alumno':
+        where.append("v.categoria = ?")
+        args.append(u['categoria'])
         where.append("(v.belt = 'Todos' OR v.belt = ?)")
         args.append(u['cinturon'])
-    elif belt and belt != 'Todos':
-        where.append('v.belt = ?')
-        args.append(belt)
+    else:
+        if belt and belt != 'Todos':
+            where.append('v.belt = ?')
+            args.append(belt)
+        if categoria and categoria != 'Todas':
+            where.append('v.categoria = ?')
+            args.append(categoria)
     if where:
         q += ' WHERE ' + ' AND '.join(where)
     q += ' ORDER BY v.id DESC'
@@ -1253,7 +1434,7 @@ def _list_videos(u, belt=None):
 @login_required
 def api_videos_list():
     u = current_user()
-    return jsonify({'videos': _list_videos(u, request.args.get('belt'))})
+    return jsonify({'videos': _list_videos(u, request.args.get('belt'), request.args.get('categoria'))})
 
 
 @app.route('/api/videos', methods=['POST'])
@@ -1270,9 +1451,9 @@ def api_videos_create():
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     db = get_db()
     cur = db.execute(
-        'INSERT INTO videos(titulo, descripcion, belt, url, tipo, subido_por, fecha) VALUES(?,?,?,?,?,?,?)',
+        'INSERT INTO videos(titulo, descripcion, belt, categoria, url, tipo, subido_por, fecha) VALUES(?,?,?,?,?,?,?,?)',
         (titulo, (data.get('descripcion') or '').strip(), (data.get('belt') or 'Todos'),
-         url, 'link', u['id'], now))
+         (data.get('categoria') or 'adulto'), url, 'link', u['id'], now))
     db.commit()
     return jsonify({'ok': True, 'id': cur.lastrowid})
 
@@ -1287,20 +1468,39 @@ def api_videos_upload():
     ext = os.path.splitext(f.filename)[1].lower()
     if ext not in ('.mp4', '.webm', '.ogg', '.mov'):
         return jsonify({'error': 'Formato no permitido (usa MP4, WebM o MOV)'}), 400
+    raw = f.read()
+    if not raw:
+        return jsonify({'error': 'El archivo está vacío'}), 400
+    if len(raw) > 25 * 1024 * 1024:
+        return jsonify({'error': 'El video es muy grande (máx 25MB). Para videos largos usá un link de YouTube.'}), 400
     titulo = (request.form.get('titulo') or '').strip() or os.path.splitext(f.filename)[0]
     belt = (request.form.get('belt') or 'Todos').strip()
+    categoria = (request.form.get('categoria') or 'adulto').strip()
     desc = (request.form.get('descripcion') or '').strip()
-    video_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'videos')
-    os.makedirs(video_dir, exist_ok=True)
-    name = 'v%d_%d%s' % (u['id'], int(datetime.now().timestamp()), ext)
-    f.save(os.path.join(video_dir, name))
+    data_b64 = base64.b64encode(raw).decode('ascii')
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     db = get_db()
     cur = db.execute(
-        'INSERT INTO videos(titulo, descripcion, belt, url, tipo, subido_por, fecha) VALUES(?,?,?,?,?,?,?)',
-        (titulo, desc, belt, '/static/uploads/videos/' + name, 'upload', u['id'], now))
+        'INSERT INTO videos(titulo, descripcion, belt, categoria, url, tipo, subido_por, fecha, data) VALUES(?,?,?,?,?,?,?,?,?)',
+        (titulo, desc, belt, categoria, '/api/video/0/archivo', 'upload', u['id'], now, data_b64))
+    vid = cur.lastrowid
+    db.execute('UPDATE videos SET url=? WHERE id=?', ('/api/video/%d/archivo' % vid, vid))
     db.commit()
-    return jsonify({'ok': True, 'id': cur.lastrowid})
+    return jsonify({'ok': True, 'id': vid})
+
+
+@app.route('/api/video/<int:vid>/archivo')
+def api_video_archivo(vid):
+    v = get_db().execute('SELECT url, data FROM videos WHERE id=?', (vid,)).fetchone()
+    if not v or not v['data']:
+        return jsonify({'error': 'Video no encontrado'}), 404
+    ext = os.path.splitext(v['url'])[1].lower()
+    mime = {'.mp4': 'video/mp4', '.webm': 'video/webm', '.ogg': 'video/ogg', '.mov': 'video/quicktime'}.get(ext, 'video/mp4')
+    try:
+        raw = base64.b64decode(v['data'])
+    except Exception:
+        return jsonify({'error': 'Video dañado'}), 500
+    return Response(raw, mimetype=mime, headers={'Accept-Ranges': 'bytes'})
 
 
 @app.route('/api/videos/<int:vid>/view', methods=['POST'])
@@ -1343,13 +1543,6 @@ def api_videos_delete(vid):
         return jsonify({'error': 'Video no encontrado'}), 404
     if u['role'] != 'admin' and v['subido_por'] != u['id']:
         return jsonify({'error': 'Solo el profesor que lo subió o el admin pueden borrarlo'}), 403
-    if v['tipo'] == 'upload':
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), v['url'].lstrip('/'))
-        if os.path.exists(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
     db.execute('DELETE FROM videos WHERE id=?', (vid,))
     db.commit()
     return jsonify({'ok': True})
@@ -1414,6 +1607,32 @@ def api_notificaciones_leer_todas():
     return jsonify({'ok': True})
 
 
+@app.route('/api/mensajes/broadcast', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_mensajes_broadcast():
+    data = parse_json()
+    texto = (data.get('texto') or '').strip()
+    if not texto:
+        return jsonify({'error': 'Escribe el mensaje para los alumnos'}), 400
+    if len(texto) > 500:
+        return jsonify({'error': 'El mensaje es muy largo (máx 500 caracteres)'}), 400
+    titulo = data.get('titulo') or '📣 Mensaje de la academia'
+    quienes = data.get('quienes') or 'alumnos'
+    envio = data.get('push', True)
+    who = current_user()['nombre']
+    alumno_id = to_int(data.get('alumno_id'))
+    if alumno_id:
+        rows = get_db().execute("SELECT id, nombre FROM users WHERE id=? AND activo=1", (alumno_id,)).fetchall()
+    elif quienes == 'todos':
+        rows = get_db().execute("SELECT id, nombre FROM users WHERE activo=1").fetchall()
+    else:
+        rows = get_db().execute("SELECT id, nombre FROM users WHERE role='alumno' AND activo=1").fetchall()
+    for r in rows:
+        notify(r['id'], titulo, f'{texto}',
+               tipo='mensaje', push=envio)
+    return jsonify({'ok': True, 'destinatarios': len(rows)})
+
+
 @app.route('/api/vapid_public_key')
 def api_vapid_key():
     return jsonify({'key': ensure_vapid()})
@@ -1446,7 +1665,8 @@ def api_push_subscribe():
 @login_required
 def api_settings_get():
     u = current_user()
-    keys = ['academy_name', 'default_cuota', 'due_day', 'academy_code', 'pago_link', 'pago_alias']
+    keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_link', 'pago_alias',
+            'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo']
     if u['role'] == 'admin':
         keys += ['academy_color']
     return jsonify({k: get_setting(k) for k in keys})
@@ -1456,7 +1676,8 @@ def api_settings_get():
 @role_required('admin')
 def api_settings_put():
     data = parse_json()
-    for k in ['academy_name', 'default_cuota', 'due_day', 'academy_code', 'academy_color', 'pago_link', 'pago_alias']:
+    for k in ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'academy_color', 'pago_link', 'pago_alias',
+              'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo']:
         if k in data and data[k] is not None:
             set_setting(k, data[k])
     return jsonify({'ok': True})
@@ -1491,6 +1712,27 @@ def api_test_push():
     send_push(current_user()['id'], 'Prueba de notificacion',
               'Si ves esto, las notificaciones push funcionan.')
     return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# QR de asistencia imprimible
+# ---------------------------------------------------------------------------
+
+@app.route('/qr_print')
+def qr_print():
+    return render_template('qr_print.html')
+
+
+@app.route('/qr_print.png')
+def qr_print_png():
+    import qrcode
+    url = request.host_url + '?qr=1'
+    img = qrcode.make(url)
+    buf = io.BytesIO()
+    img.save(buf, 'PNG')
+    buf.seek(0)
+    return Response(buf.getvalue(), mimetype='image/png',
+                    headers={'Cache-Control': 'no-cache'})
 
 
 # ---------------------------------------------------------------------------

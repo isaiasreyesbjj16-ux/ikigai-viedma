@@ -253,6 +253,7 @@ tr:hover td { background: rgba(255,255,255,.02); }
 .tag.gi { background: rgba(58,160,255,.2); color: #7cc8ff; }
 .tag.nogi { background: rgba(224,46,46,.22); color: var(--accent2); }
 .tag.kids { background: rgba(241,196,15,.2); color: var(--warn); }
+.tag.juveniles { background: rgba(46,204,113,.2); color: #7be3a8; }
 .tag.al-dia { background: rgba(46,204,113,.2); color: #7be3a8; }
 .tag.deuda { background: rgba(231,76,60,.2); color: #ff9b8f; }
 .tag.por-vencer { background: rgba(241,196,15,.2); color: var(--warn); }
@@ -306,6 +307,7 @@ tr:hover td { background: rgba(255,255,255,.02); }
 .clase-item.gi { border-left-color: var(--blue); }
 .clase-item.nogi { border-left-color: var(--accent); }
 .clase-item.kids { border-left-color: var(--warn); }
+.clase-item.juveniles { border-left-color: var(--good); }
 .clase-item .hora { font-weight: 800; color: var(--accent2); }
 .clase-item .profe { color: var(--muted); font-size: 12px; }
 
