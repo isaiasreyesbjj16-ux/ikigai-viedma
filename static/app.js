@@ -425,7 +425,7 @@ async function renderVideos(el) {
     <div class="flex space-between mb" style="gap:6px">
       <select id="videoCat" class="search" style="max-width:130px;padding:9px">
         <option value="Todas">Todas</option>
-        ${CATS_VIDEOS.map(c => `<option ${qCat === c ? 'selected' : ''}>${catLabel(c)}</option>`).join('')}
+        ${CATS_VIDEOS.map(c => `<option value="${c}" ${qCat === c ? 'selected' : ''}>${catLabel(c)}</option>`).join('')}
       </select>
       <select id="videoBelt" class="search" style="max-width:180px;padding:9px">
         <option value="Todos">Todos los cinturones</option>
