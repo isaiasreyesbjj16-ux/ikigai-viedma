@@ -4,3 +4,4 @@ pillow
 pywebpush
 psycopg[binary]
 gunicorn
+qrcode

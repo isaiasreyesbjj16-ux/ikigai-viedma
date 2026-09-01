@@ -1,7 +1,14 @@
 /* Academia BJJ - app.js */
 const BELTS_ADULT = window.BELTS_ADULT || ['Blanco', 'Azul', 'Púrpura', 'Marrón', 'Negro'];
 const BELTS_KIDS = window.BELTS_KIDS || ['Gris', 'Amarillo', 'Naranja', 'Verde', 'Blanco'];
+const BELTS_JUV = window.BELTS_JUV || ['Blanco', 'Gris', 'Amarillo', 'Naranja', 'Verde'];
 const catLabel = (c) => ({ adulto: 'Adulto', juveniles: 'Juveniles', kids: 'Kids' })[c] || c;
+const BELTS_POR_CAT = { kids: BELTS_KIDS, juveniles: BELTS_JUV, adulto: BELTS_ADULT };
+const CATS_VIDEOS = ['kids', 'juveniles', 'adulto']; // todas las categorías para staff
+function beltOptionsPorCategoriaConTodos(catSeleccionada, beltSel) {
+  const opts = BELTS_POR_CAT[catSeleccionada] || BELTS_ADULT;
+  return `<option value="Todos">Todos</option>` + opts.map(b => `<option ${b === beltSel ? 'selected' : ''}>${esc(b)}</option>`).join('');
+}
 
 const $ = (s, e) => (e || document).querySelector(s);
 const $$ = (s, e) => [...(e || document).querySelectorAll(s)];
@@ -60,7 +67,7 @@ if ($('#tab-login')) initLogin();
 function initLogin() {
   const cats = ['adulto', 'juveniles', 'kids'];
   function fillBelts(sel, cat) {
-    const opts = cat === 'kids' ? BELTS_KIDS : BELTS_ADULT;
+    const opts = BELTS_POR_CAT[cat === 'adulto' ? 'adulto' : (cat === 'juveniles' ? 'juveniles' : 'kids')] || BELTS_ADULT;
     sel.innerHTML = opts.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
   }
   fillBelts($('#regAlumnoCinturon'), 'adulto');
@@ -197,6 +204,11 @@ function initDashboard() {
   setupInstall();
 
   showSec('inicio');
+
+  // QR auto-asistencia: si la URL tiene ?qr=1, marcar presente automáticamente
+  if (new URLSearchParams(location.search).get('qr') === '1' && R === 'alumno') {
+    marcarAsistenciaQR();
+  }
 }
 
 function showSec(name) {
@@ -344,6 +356,21 @@ async function marcarAsistencia(claseId) {
   } catch (err) { toast(err.message); }
 }
 
+async function marcarAsistenciaQR() {
+  try {
+    const [horarios] = await Promise.all([api('/api/horarios')]);
+    const hoyIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
+    const hoyClases = horarios.horarios.filter(h => h.dia === hoyIdx);
+    if (hoyClases.length === 0) { toast('No hay clases programadas para hoy'); return; }
+    let marcadas = 0;
+    for (const c of hoyClases) {
+      try { await api('/api/asistencia_yo', { method: 'POST', body: { clase_id: c.id } }); marcadas++; } catch(e) {}
+    }
+    toast(marcadas > 0 ? `Asistencia marcada ✓ (${marcadas} clase${marcadas > 1 ? 's' : ''})` : 'Ya tenías asistencia marcada');
+    renderInicio($('#sec-inicio'));
+  } catch (err) { toast('Error al marcar asistencia'); }
+}
+
 /* =====================================================================
    VIDEOS (por cinturón)
    ===================================================================== */
@@ -370,7 +397,7 @@ function videoCardHTML(v, isStaff) {
       ${avatarHTML('', v.subidor_nombre || 'Profesor', 'sm')}
       <div style="flex:1">
         <b>${esc(v.subidor_nombre || 'Profesor')}</b>
-        <div class="small">${esc(v.fecha || '')} · <span class="${beltCls}">${esc(v.belt)}</span></div>
+        <div class="small">${esc(v.fecha || '')} · <span class="${beltCls}">${esc(v.belt)}</span> ${v.categoria ? '<span class="tag alumno">' + catLabel(v.categoria) + '</span>' : ''}</div>
       </div>
       ${isStaff && v.subido_por === USER.id || USER.role === 'admin' ? `<button class="btn bad small" onclick="borrarVideo(${v.id})">🗑</button>` : ''}
     </div>
@@ -390,23 +417,38 @@ function videoCardHTML(v, isStaff) {
 async function renderVideos(el) {
   const R = USER.role;
   const isStaff = R !== 'alumno';
-  const all = await api('/api/videos' + (isStaff ? '?belt=' + encodeURIComponent($('#videoBelt') && $('#videoBelt').value || 'Todos') : ''));
+  const qCat = isStaff ? (($('#videoCat') && $('#videoCat').value) || 'Todas') : '';
+  const qBelt = isStaff ? (($('#videoBelt') && $('#videoBelt').value) || 'Todos') : '';
+  const all = await api('/api/videos' + (isStaff ? '?categoria=' + encodeURIComponent(qCat) + '&belt=' + encodeURIComponent(qBelt) : ''));
   const videos = all.videos;
-  const belts = R === 'kids' ? BELTS_KIDS : BELTS_ADULT;
+  const filtros = isStaff ? `
+    <div class="flex space-between mb" style="gap:6px">
+      <select id="videoCat" class="search" style="max-width:130px;padding:9px">
+        <option value="Todas">Todas</option>
+        ${CATS_VIDEOS.map(c => `<option ${qCat === c ? 'selected' : ''}>${catLabel(c)}</option>`).join('')}
+      </select>
+      <select id="videoBelt" class="search" style="max-width:180px;padding:9px">
+        <option value="Todos">Todos los cinturones</option>
+        ${(BELTS_POR_CAT[qCat] || []).map(b => `<option ${b === qBelt ? 'selected' : ''}>${esc(b)}</option>`).join('')}
+      </select>
+      <button class="btn primary small" onclick="subirVideo()">＋ Subir video</button>
+    </div>` : '<span></span>';
   el.innerHTML = `
     ${secHeader('Videos', isStaff ? 'Subí técnicas para cada cinturón y mirá quién las vio.' : 'Técnicas para tu cinturón. Mirá y marcá las que viste.')}
-    <div class="flex space-between mb">
-      ${isStaff ? `<select id="videoBelt" class="search" style="max-width:200px;padding:9px">
-        <option value="Todos">Todos los cinturones</option>
-        ${belts.map(b => `<option>${esc(b)}</option>`).join('')}
-      </select>` : '<span></span>'}
-      ${isStaff ? `<button class="btn primary small" onclick="subirVideo()">＋ Subir video</button>` : ''}
-    </div>
+    ${filtros}
     <div class="feed" id="videoFeed">
       ${videos.length ? videos.map(v => videoCardHTML(v, isStaff)).join('') : '<div class="feed-card empty">Todavía no hay videos para esta categoría.</div>'}
     </div>`;
   if (isStaff) {
-    $('#videoBelt').addEventListener('change', () => renderVideos(el));
+    const catSel = $('#videoCat'), beltSel = $('#videoBelt');
+    catSel.addEventListener('change', () => {
+      const c = catSel.value;
+      beltSel.innerHTML = `<option value="Todos">Todos los cinturones</option>` +
+        (BELTS_POR_CAT[c] || []).map(b => `<option>${esc(b)}</option>`).join('');
+      beltSel.value = 'Todos';
+      renderVideos(el);
+    });
+    beltSel.addEventListener('change', () => renderVideos(el));
     videos.forEach(v => cargarVistos(v.id));
   }
 }
@@ -439,25 +481,31 @@ async function marcarVisto(vid, btn) {
 }
 
 function subirVideo() {
-  const belts = USER.role === 'kids' ? BELTS_KIDS : BELTS_ADULT;
   openModal(`
     <h3>Subir video</h3>
     <form id="vForm" class="grid2">
       <div class="field" style="grid-column:1/-1"><label>Título</label><input id="vTitulo" required placeholder="Ej: Armbar desde guardia"></div>
       <div class="field" style="grid-column:1/-1"><label>Descripción (opcional)</label><input id="vDesc" placeholder="Qué técnica es, nivel, consejos..."></div>
-      <div class="field"><label>Cinturón para el que es</label><select id="vBelt">
-        <option value="Todos">Todos</option>
-        ${belts.map(b => `<option>${esc(b)}</option>`).join('')}</select></div>
-      <div class="field"><label>O link de YouTube</label><input id="vLink" placeholder="https://youtube.com/watch?v=..."></div>
+      <div class="field"><label>Categoría</label><select id="vCat">
+        ${CATS_VIDEOS.map(c => `<option value="${c}">${catLabel(c)}</option>`).join('')}</select></div>
+      <div class="field"><label>Cinturón para el que es</label><select id="vBelt"></select></div>
+      <div class="field" style="grid-column:1/-1"><label>O link de YouTube</label><input id="vLink" placeholder="https://youtube.com/watch?v=..."></div>
       <div class="field" style="grid-column:1/-1"><label>O subí un archivo (MP4)</label>
         <input type="file" id="vFile" accept="video/mp4,video/webm,video/ogg,video/quicktime"></div>
       <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Publicar video</button></div>
     </form>`);
+  function fillBelt() {
+    const cat = $('#vCat').value;
+    $('#vBelt').innerHTML = beltOptionsPorCategoriaConTodos(cat, 'Todos');
+  }
+  fillBelt();
+  $('#vCat').addEventListener('change', fillBelt);
   $('#vForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const titulo = $('#vTitulo').value.trim();
     const desc = $('#vDesc').value.trim();
     const belt = $('#vBelt').value;
+    const categoria = $('#vCat').value;
     const file = $('#vFile').files && $('#vFile').files[0];
     const link = $('#vLink').value.trim();
     if (!file && !link) { toast('Subí un archivo o pegá un link'); return; }
@@ -466,12 +514,12 @@ function subirVideo() {
     try {
       if (file) {
         const fd = new FormData();
-        fd.append('video', file); fd.append('titulo', titulo); fd.append('descripcion', desc); fd.append('belt', belt);
+        fd.append('video', file); fd.append('titulo', titulo); fd.append('descripcion', desc); fd.append('belt', belt); fd.append('categoria', categoria);
         const res = await fetch('/api/videos/upload', { method: 'POST', body: fd });
         const d = await res.json();
         if (!res.ok) throw new Error(d.error || 'Error al subir');
       } else {
-        await api('/api/videos', { method: 'POST', body: { titulo, descripcion, belt, url: link } });
+        await api('/api/videos', { method: 'POST', body: { titulo, descripcion, belt, categoria, url: link } });
       }
       closeModal(); toast('Video publicado ✓');
       renderVideos($('#sec-videos'));
@@ -589,6 +637,8 @@ async function renderInicio(el) {
       `<button class="chip" onclick="showSec('deudores')">⚠️ Deudas</button>`,
       `<button class="chip" onclick="showSec('videos')">🎥 Videos</button>`];
     if (R === 'admin') chips.push(`<button class="chip" onclick="showSec('profesores')">🧑‍🏫 Profesores</button>`, `<button class="chip" onclick="showSec('config')">⚙️ Configuración</button>`);
+    chips.push(`<button class="chip" onclick="abrirMensajeMasivo()">📣 Mandar mensaje</button>`);
+    chips.push(`<button class="chip" onclick="window.open('/qr_print','_blank')">📱 QR de asistencia</button>`);
     el.innerHTML = `
       <div class="feed">
         ${secHeader('Inicio')}
@@ -622,7 +672,7 @@ async function renderInicio(el) {
 async function renderPerfil(el) {
   const me = await api('/api/me');
   const cat = me.categoria || 'adulto';
-  const belts = cat === 'kids' ? BELTS_KIDS : BELTS_ADULT;
+  const belts = BELTS_POR_CAT[cat] || BELTS_ADULT;
   const vids = await api('/api/videos').catch(() => ({ videos: [] }));
   let stats = '';
   if (me.role === 'alumno') {
@@ -714,9 +764,16 @@ async function renderPerfil(el) {
         <button class="btn ghost" onclick="instalarManual()">📲 Instalar la app</button>
         <p class="small" style="margin-bottom:0">Se instala en tu pantalla de inicio sin pasar por Google. (En el celular: menú → "Agregar a pantalla de inicio".)</p>
       </div>
+
+      ${me.role === 'alumno' ? `
+      <div class="feed-card">
+        <div class="small mb" style="color:var(--bad)">¿No vas a seguir entrenando?</div>
+        <button class="btn bad btn-block" onclick="desactivarMiCuenta()">🚫 Desactivar mi cuenta</button>
+        <p class="small" style="margin-bottom:0">Tus datos se guardan; si algún día volvés, el administrador puede reactivarte.</p>
+      </div>` : ''}
     </div>`;
   $('#pCat').addEventListener('change', (e) => {
-    const b = e.target.value === 'kids' ? BELTS_KIDS : BELTS_ADULT;
+    const b = BELTS_POR_CAT[e.target.value] || BELTS_ADULT;
     $('#pCinturon').innerHTML = b.map(x => `<option>${esc(x)}</option>`).join('');
   });
   $('#perfilForm').addEventListener('submit', async (e) => {
@@ -738,6 +795,15 @@ async function renderPerfil(el) {
 function instalarManual() {
   if (deferredPrompt) { deferredPrompt.prompt(); return; }
   toast('En el navegador: mirá el ícono de instalación (🚀) en la barra de direcciones, o menú → "Instalar". En el celular: menú → "Agregar a pantalla de inicio".');
+}
+
+async function desactivarMiCuenta() {
+  if (!confirm('¿Seguro que querés desactivar tu cuenta?\n\nNo vas a poder entrar hasta que el administrador te reactive.')) return;
+  try {
+    await api('/api/perfil/desactivar', { method: 'POST' });
+    toast('Tu cuenta fue desactivada. ¡Esperamos verte pronto!');
+    setTimeout(() => { location.href = '/'; }, 800);
+  } catch (e) { toast(e.message); }
 }
 
 /* =====================================================================
@@ -889,8 +955,8 @@ async function renderPagos(el) {
       monto: +$('#pMonto').value, metodo: $('#pMetodo').value, mes: +$('#pMes').value,
       anio: +$('#pAnio').value, nota: $('#pNota').value };
     try {
-      await api('/api/pagos', { method: 'POST', body });
-      toast('Pago registrado. Notificaciones enviadas ✓');
+      const res = await api('/api/pagos', { method: 'POST', body });
+      toast(res.cargo ? `Pago registrado ✓ (incluye $${num(res.cargo)} de recargo por demora)` : 'Pago registrado. Notificaciones enviadas ✓');
       renderPagos($('#sec-pagos'));
     } catch (err) { toast(err.message); }
   });
@@ -901,6 +967,44 @@ async function borrarPago(id) {
   renderPagos($('#sec-pagos'));
 }
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+function abrirMensajeMasivo() {
+  openModal(`
+    <h3>📣 Mandar mensaje</h3>
+    <p class="small">Les llega como notificación (app + push si tienen permisos).</p>
+    <div class="field"><label>Mensaje</label><textarea id="mMsg" rows="3" maxlength="500" placeholder='Ej: HOY A ENTRENAR 🥋'></textarea></div>
+    <div class="field"><label>Título (opcional)</label><input id="mTit" value="📣 Mensaje de la academia"></div>
+    <div class="field"><label>Enviar a</label><select id="mDesti">
+      <option value="alumnos">A todos los alumnos</option>
+      <option value="especifico">A un alumno específico...</option>
+    </select></div>
+    <div class="field" id="mEspecificoWrap" style="display:none"><label>Alumno</label><select id="mEspecifico"></select></div>
+    <button class="btn primary btn-block" id="mBtn">Enviar</button>`);
+  $('#mDesti').addEventListener('change', async (e) => {
+    const w = $('#mEspecificoWrap');
+    w.style.display = e.target.value === 'especifico' ? '' : 'none';
+    if (e.target.value === 'especifico' && $('#mEspecifico').options.length === 0) {
+      try {
+        const d = await api('/api/alumnos');
+        $('#mEspecifico').innerHTML = d.alumnos.filter(a => a.activo).map(a => `<option value="${a.id}">${esc(a.nombre)}</option>`).join('');
+      } catch (err) {}
+    }
+  });
+  $('#mBtn').addEventListener('click', async () => {
+    const texto = $('#mMsg').value.trim();
+    if (!texto) { toast('Escribí el mensaje'); return; }
+    const body = { texto, titulo: $('#mTit').value };
+    if ($('#mDesti').value === 'especifico') {
+      const aid = +$('#mEspecifico').value;
+      if (!aid) { toast('Elegí un alumno'); return; }
+      body.alumno_id = aid;
+    }
+    closeModal();
+    try {
+      const r = await api('/api/mensajes/broadcast', { method: 'POST', body });
+      toast('Mensaje enviado ✓');
+    } catch (err) { toast(err.message); }
+  });
+}
 function abrirReporte() {
   const hoy = new Date();
   openModal(`
@@ -914,10 +1018,28 @@ function abrirReporte() {
     try {
       const rep = await api('/api/reporte?mes=' + $('#rMes').value + '&anio=' + $('#rAnio').value);
       const metodos = Object.entries(rep.por_metodo || {}).map(([k, v]) => `<div class="flex space-between" style="padding:6px 0;border-bottom:1px dashed var(--line)"><span>${esc(k)}</span><b>$${num(v)}</b></div>`).join('');
+      const pctBar = (pct, color) => `<div style="background:${color};width:${pct}%;height:8px;border-radius:4px;min-width:${pct > 0 ? '8px' : '0'}"></div>`;
       $('#modalBody').innerHTML = `
         <h3>📊 Reporte ${MESES[rep.mes - 1]} ${rep.anio}</h3>
         <div class="stat-card"><div class="num">$${num(rep.total)}</div><div class="lbl">Total cobrado (${rep.cantidad} pago${rep.cantidad === 1 ? '' : 's'})</div></div>
-        <div class="small mb mt">Por método de pago:</div>${metodos || '<div class="small" style="color:var(--muted)">Sin pagos este mes.</div>'}
+
+        <div class="small mb mt" style="margin-top:14px"><b>💳 Pagos</b></div>
+        <div style="display:flex;gap:4px;height:8px;border-radius:4px;overflow:hidden;margin-bottom:6px">
+          ${pctBar(rep.pct_pagaron, 'var(--good)')}${pctBar(rep.pct_no_pagaron, 'var(--bad)')}
+        </div>
+        <div class="flex space-between small" style="margin-bottom:4px"><span style="color:var(--good)">✅ Pagaron: ${rep.cant_pagaron}/${rep.total_alumnos} (${rep.pct_pagaron}%)</span></div>
+        <div class="flex space-between small" style="margin-bottom:8px"><span style="color:var(--bad)">❌ No pagaron: ${rep.cant_no_pagaron}/${rep.total_alumnos} (${rep.pct_no_pagaron}%)</span></div>
+        ${rep.alumnos_que_pagaron && rep.alumnos_que_pagaron.length ? `<div style="max-height:120px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px 10px;margin-bottom:8px">${rep.alumnos_que_pagaron.map(a => `<div class="flex space-between" style="padding:3px 0;border-bottom:1px solid var(--line)"><span class="small">${esc(a.nombre)} <span style="color:var(--muted)">${esc(a.cinturon || '')}</span></span><span class="small">$${num(a.monto)} · ${esc(a.metodo)}</span></div>`).join('')}</div>` : ''}
+
+        <div class="small mb mt" style="margin-top:14px"><b>✅ Asistencia</b></div>
+        <div style="display:flex;gap:4px;height:8px;border-radius:4px;overflow:hidden;margin-bottom:6px">
+          ${pctBar(rep.pct_asistieron, 'var(--accent2)')}${pctBar(rep.pct_no_asistieron, '#888')}
+        </div>
+        <div class="flex space-between small" style="margin-bottom:4px"><span style="color:var(--accent2)">🏃 Entrenaron: ${rep.cant_asistieron}/${rep.total_alumnos} (${rep.pct_asistieron}%)</span></div>
+        <div class="flex space-between small" style="margin-bottom:8px"><span>💤 No entrenaron: ${rep.cant_no_asistieron}/${rep.total_alumnos} (${rep.pct_no_asistieron}%)</span></div>
+        ${rep.alumnos_que_asistieron && rep.alumnos_que_asistieron.length ? `<div style="max-height:120px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px 10px;margin-bottom:8px">${rep.alumnos_que_asistieron.map(a => `<div class="flex space-between" style="padding:3px 0;border-bottom:1px solid var(--line)"><span class="small">${esc(a.nombre)} <span style="color:var(--muted)">${esc(a.cinturon || '')}</span></span><span class="small">${a.clases} clase${a.clases === 1 ? '' : 's'}</span></div>`).join('')}</div>` : ''}
+
+        <div class="small mb mt" style="margin-top:14px"><b>💰 Por método de pago:</b></div>${metodos || '<div class="small" style="color:var(--muted)">Sin pagos este mes.</div>'}
         <div class="small mb mt" style="margin-top:12px">${rep.deudores.length} alumno${rep.deudores.length === 1 ? '' : 's'} debe${rep.deudores.length === 1 ? '' : 'n'} la cuota${rep.deudores.length ? ':' : ''}</div>
         ${rep.deudores.length ? `<div style="max-height:200px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px 10px">${rep.deudores.map(d => `<div class="flex space-between" style="padding:5px 0;border-bottom:1px solid var(--line)"><span>${esc(d.nombre)} <span class="small" style="color:var(--muted)">${esc(d.cinturon || '')}</span></span><b>$${num(d.cuota_mensual || 0)}</b></div>`).join('')}</div>` : ''}
         <p class="small" style="color:var(--warn)">${rep.avisos_pend} aviso(s) de pago pendiente(s) de revisar.</p>
@@ -974,7 +1096,7 @@ async function renderMisPagos(el) {
       <div class="flex space-between">
         <div>
           <h3 style="margin:0">Cuota de ${c.mes}/${c.anio}</h3>
-          <p class="small">Tu cuota mensual es <b>$${num(c.cuota)}</b> · se considera paga hasta el día ${c.due_day} del mes.</p>
+          <p class="small">Tu cuota mensual es <b>$${num(c.cuota)}</b> · se considera paga hasta el día ${c.due_day} del mes${c.cargo_demora_pct ? ` · <b style="color:var(--warn)">si pagás después, se suma un ${c.cargo_demora_pct}% de recargo</b>` : ''}.</p>
         </div>
         <div class="tag ${cls}" style="font-size:14px;padding:6px 14px">${lbl}</div>
       </div>
@@ -1085,6 +1207,7 @@ async function renderAlumnos(el) {
             <button class="btn ghost small" onclick="cambiarCuota(${a.id},'${esc(a.nombre)}',${a.cuota_mensual || 0})">💲</button>
             <button class="btn ghost small" onclick="verFicha(${a.id},'${esc(a.nombre)}')">🩺</button>
             <button class="btn good small" onclick="notificarDeuda(${a.id})">🔔</button>
+            ${USER.role !== 'alumno' ? `<button class="btn ${a.activo ? 'bad' : 'good'} small" onclick="toggleActivo(${a.id},${a.activo ? 1 : 0})">${a.activo ? '🚫 Desactivar' : '✅ Reactivar'}</button>` : ''}
             ${USER.role === 'admin' ? `<button class="btn bad small" onclick="eliminarAlumno(${a.id},'${esc(a.nombre)}')">🗑</button>` : ''}
           </div>
         </div>`;
@@ -1104,6 +1227,16 @@ async function verFicha(id, nombre) {
     ${a.medic_info ? `<p class="small" style="white-space:pre-wrap;background:var(--bg2);border-radius:8px;padding:10px"><b>Ficha médica:</b><br>${esc(a.medic_info)}</p>` : '<div class="empty">Sin ficha médica cargada.</div>'}
     ${a.emergency_contact ? `<p class="small" style="white-space:pre-wrap;background:var(--bg2);border-radius:8px;padding:10px"><b>📞 Contacto de emergencia:</b> ${esc(a.emergency_contact)}</p>` : ''}
     <button class="btn ghost btn-block" onclick="closeModal()">Cerrar</button>`);
+}
+
+async function toggleActivo(id, activo) {
+  const accion = activo ? 'desactivar' : 'reactivar';
+  if (!confirm(activo ? '¿Desactivar a este alumno? No va a poder entrar hasta que lo reactives.' : '¿Reactivar a este alumno?')) return;
+  try {
+    await api('/api/alumnos/' + id, { method: 'PUT', body: { activo: activo ? 0 : 1 } });
+    toast(activo ? 'Alumno desactivado.' : 'Alumno reactivado ✓');
+    renderAlumnos($('#sec-alumnos'));
+  } catch (err) { toast(err.message); }
 }
 
 async function formAlumno(id) {
@@ -1128,7 +1261,7 @@ async function formAlumno(id) {
     </form>`);
   function fillBelt() {
     const cat = $('#aCat').value;
-    const belts = cat === 'kids' ? BELTS_KIDS : BELTS_ADULT;
+    const belts = BELTS_POR_CAT[cat] || BELTS_ADULT;
     $('#aCinturon').innerHTML = belts.map(b => `<option ${a && a.cinturon === b ? 'selected' : ''}>${esc(b)}</option>`).join('');
   }
   fillBelt();
@@ -1345,9 +1478,24 @@ async function renderConfig(el) {
         <div class="field"><label>Código de la academia (para que los profes se registren)</label><input id="cCodigo" value="${esc(s.academy_code)}"></div>
         <div class="field"><label>Cuota mensual por defecto ($)</label><input id="cCuota" value="${esc(s.default_cuota)}"></div>
         <div class="field"><label>Día de vencimiento (día del mes)</label><input type="number" id="cDue" value="${esc(s.due_day)}"></div>
+        <div class="field"><label>Recargo por pago con demora (%)</label><input type="number" id="cDemora" value="${esc(s.cargo_demora_pct ?? '10')}" placeholder="10"></div>
         <div class="field" style="grid-column:1/-1"><label>Link de pago en línea (ej: link de MercadoPago)</label><input id="cLink" value="${esc(s.pago_link || '')}" placeholder="https://link.mercadopago.com.ar/... (dejalo vacío para ocultar el botón de pago)"></div>
         <div class="field" style="grid-column:1/-1"><label>Alias o CVU para transferencia</label><input id="cAlias" value="${esc(s.pago_alias || '')}" placeholder="ej: academia.bjj.viedma (dejalo vacío para ocultarlo)"></div>
         <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar configuración</button></div>
+      </form>
+    </div>
+    <div class="card">
+      <h3>📣 Mensajes automáticos</h3>
+      <p class="small">Cada alumno recibe el mensaje <b>una vez por día</b> si supera los días sin entrenar o sin pagar (el que pase primero).</p>
+      <form id="autoForm" class="grid2">
+        <div class="field"><label>Mensaje que reciben</label><input id="aMsg" value="${esc(s.auto_mensaje || '')}" style="grid-column:1/-1"></div>
+        <div class="field"><label>Días sin entrenar para avisar</label><input type="number" id="aInact" value="${esc(s.auto_inact_dias ?? '15')}"></div>
+        <div class="field"><label>Días sin pagar para avisar</label><input type="number" id="aDeuda" value="${esc(s.auto_deuda_dias ?? '30')}"></div>
+        <div class="field" style="grid-column:1/-1"><label><input type="checkbox" id="aActivo" ${s.auto_mensaje_activo === '1' ? 'checked' : ''}> Activar mensajes automáticos</label></div>
+        <div class="field" style="grid-column:1/-1">
+          <button class="btn primary btn-block" type="submit">💾 Guardar mensaje automático</button>
+          <button class="btn ghost btn-block" type="button" onclick="enviarAutoAhora()">🚀 Enviar ahora a quienes corresponda</button>
+        </div>
       </form>
     </div>
     <div class="card">
@@ -1366,11 +1514,20 @@ async function renderConfig(el) {
       await api('/api/settings', { method: 'PUT', body: {
         academy_name: $('#cNombre').value, academy_color: $('#cColor').value,
         academy_code: $('#cCodigo').value, default_cuota: $('#cCuota').value,
-        due_day: $('#cDue').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value } });
+        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value } });
       toast('Configuración guardada ✓');
       window.ACADEMY_NAME = $('#cNombre').value;
       $('#academyName').textContent = $('#cNombre').value;
       $('#academyTitle') && ($('#academyTitle').textContent = $('#cNombre').value);
+    } catch (err) { toast(err.message); }
+  });
+  $('#autoForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/settings', { method: 'PUT', body: {
+        auto_mensaje: $('#aMsg').value, auto_inact_dias: $('#aInact').value,
+        auto_deuda_dias: $('#aDeuda').value, auto_mensaje_activo: $('#aActivo').checked ? '1' : '0' } });
+      toast('Mensaje automático guardado ✓');
     } catch (err) { toast(err.message); }
   });
 }
@@ -1385,6 +1542,12 @@ async function aplicarCuotaTodos() {
   try {
     const r = await api('/api/settings/aplicar_cuota', { method: 'POST' });
     toast(`Cuota actualizada en ${r.alumnos} alumnos ✓`);
+  } catch (e) { toast(e.message); }
+}
+async function enviarAutoAhora() {
+  try {
+    const r = await api('/api/mensajes/auto', { method: 'POST' });
+    toast(r.enviados.length ? `Mensaje enviado a ${r.enviados.length} alumnos (${r.enviados.map(x => x.nombre).join(', ')})` : 'Ningún alumno necesita aviso hoy.');
   } catch (e) { toast(e.message); }
 }
 
