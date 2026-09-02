@@ -92,6 +92,8 @@ CREATE TABLE IF NOT EXISTS users (
     medic_info TEXT,
     emergency_contact TEXT,
     activo INTEGER DEFAULT 1,
+    security_q TEXT,
+    security_a TEXT,
     creado TEXT
 );
 
@@ -291,7 +293,8 @@ def init_db():
         cols = [r[1] for r in c.execute('PRAGMA table_info(users)').fetchall()]
     if 'foto' not in cols:
         c.execute('ALTER TABLE users ADD COLUMN foto TEXT')
-    for col, ddl in [('tel', 'TEXT'), ('nacimiento', 'TEXT'), ('medic_info', 'TEXT'), ('emergency_contact', 'TEXT')]:
+    for col, ddl in [('tel', 'TEXT'), ('nacimiento', 'TEXT'), ('medic_info', 'TEXT'), ('emergency_contact', 'TEXT'),
+                     ('security_q', 'TEXT'), ('security_a', 'TEXT')]:
         if col not in cols:
             c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
     if DB_MODE == 'postgres':
@@ -524,6 +527,7 @@ def user_public(u):
         'nacimiento': u['nacimiento'] if 'nacimiento' in u.keys() else None,
         'medic_info': u['medic_info'] if 'medic_info' in u.keys() else None,
         'emergency_contact': u['emergency_contact'] if 'emergency_contact' in u.keys() else None,
+        'security_q': u['security_q'] if 'security_q' in u.keys() else None,
         'activo': u['activo'],
         'creado': u['creado'],
     }
@@ -758,6 +762,83 @@ def api_login():
     session.clear()
     session['user_id'] = u['id']
     return jsonify({'ok': True, 'user': user_public(u)})
+
+
+# ---------------------------------------------------------------------------
+# Recuperacion de contrasena (pregunta de seguridad + reinicio por admin)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/recuperar', methods=['POST'])
+def api_recuperar():
+    """Devuelve la pregunta de seguridad de un usuario (sin exponer la respuesta)."""
+    data = parse_json()
+    username = (data.get('username') or '').strip()
+    u = get_db().execute('SELECT id, security_q FROM users WHERE username=?', (username,)).fetchone()
+    if not u:
+        return jsonify({'error': 'Ese usuario no existe'}), 404
+    if not u['security_q']:
+        return jsonify({'error': 'Ese usuario no configuró pregunta de seguridad. Pedile al profe/admin que reinicie tu contraseña.'}), 400
+    return jsonify({'ok': True, 'pregunta': u['security_q']})
+
+
+@app.route('/api/recuperar/verificar', methods=['POST'])
+def api_recuperar_verificar():
+    """Verifica la respuesta de seguridad y cambia la contrasena."""
+    data = parse_json()
+    username = (data.get('username') or '').strip()
+    resp = (data.get('respuesta') or '').strip()
+    nueva = data.get('nueva_password') or ''
+    if len(nueva) < 4:
+        return jsonify({'error': 'La nueva contrasena debe tener al menos 4 caracteres'}), 400
+    u = get_db().execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
+    if not u:
+        return jsonify({'error': 'Ese usuario no existe'}), 404
+    if not u['security_a'] or not u['security_q']:
+        return jsonify({'error': 'Ese usuario no configuró pregunta de seguridad.'}), 400
+    if resp.lower() != (u['security_a'] or '').strip().lower():
+        return jsonify({'error': 'La respuesta no es correcta'}), 401
+    get_db().execute('UPDATE users SET password_hash=? WHERE id=?',
+                     (generate_password_hash(nueva), u['id']))
+    get_db().commit()
+    notify(1, 'Contraseña cambiada', 'Se cambio la contraseña de %s con la pregunta de seguridad' % u['nombre'])
+    return jsonify({'ok': True})
+
+
+@app.route('/api/perfil/seguridad', methods=['PUT'])
+@login_required
+def api_perfil_seguridad():
+    u = current_user()
+    data = parse_json()
+    q = (data.get('pregunta') or '').strip()
+    a = (data.get('respuesta') or '').strip()
+    nueva = data.get('nueva_password') or ''
+    if not q or not a:
+        return jsonify({'error': 'Completa la pregunta y la respuesta'}), 400
+    db = get_db()
+    if nueva:
+        if len(nueva) < 4:
+            return jsonify({'error': 'La contrasena debe tener al menos 4 caracteres'}), 400
+        db.execute('UPDATE users SET password_hash=? WHERE id=?', (generate_password_hash(nueva), u['id']))
+    db.execute('UPDATE users SET security_q=?, security_a=? WHERE id=?', (q, a, u['id']))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/usuarios/<int:uid>/password', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_usuario_password(uid):
+    data = parse_json()
+    nueva = data.get('password') or ''
+    if len(nueva) < 4:
+        return jsonify({'error': 'La contrasena debe tener al menos 4 caracteres'}), 400
+    db = get_db()
+    u = db.execute('SELECT nombre FROM users WHERE id=?', (uid,)).fetchone()
+    if not u:
+        return jsonify({'error': 'Usuario no encontrado'}), 404
+    db.execute('UPDATE users SET password_hash=? WHERE id=?', (generate_password_hash(nueva), uid))
+    db.commit()
+    notify(uid, 'Contraseña actualizada', 'Tu contraseña fue reiniciada por la academia. La próxima vez que entres, usá la nueva clave.')
+    return jsonify({'ok': True})
 
 
 @app.route('/api/register', methods=['POST'])

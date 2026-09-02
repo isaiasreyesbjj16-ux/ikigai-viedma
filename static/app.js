@@ -96,6 +96,8 @@ function initLogin() {
     } catch (err) { msgShow(m, err.message, false); }
   });
 
+  $('#btnOlvidada').addEventListener('click', () => abrirModalRecuperar());
+
   $('#tab-reg-alumno').addEventListener('submit', async (e) => {
     e.preventDefault();
     const m = $('#loginMsg');
@@ -877,6 +879,14 @@ async function renderPerfil(el) {
         <p class="small" style="margin-bottom:0">Se instala en tu pantalla de inicio sin pasar por Google. (En el celular: menú → "Agregar a pantalla de inicio".)</p>
       </div>
 
+      <div class="feed-card">
+        <div class="small mb">🔐 Seguridad de la cuenta</div>
+        <p class="small" style="margin-bottom:6px">Configurá una <b>pregunta de seguridad</b> para poder recuperar tu contraseña si alguna vez la olvidás. También podés cambiar tu contraseña acá.</p>
+        <div class="field"><label>Pregunta de seguridad</label><input id="pSecQ" placeholder="Ej: ¿Nombre de tu mascota?" value="${esc(me.security_q || '')}"></div>
+        <div class="field"><label>Respuesta</label><input id="pSecA" placeholder="Tu respuesta (se guarda visible solo para vos)"></div>
+        <div class="field"><label>Nueva contraseña (opcional)</label><input type="password" id="pSecPass" placeholder="Dejalo en blanco para no cambiarla"></div>
+        <button class="btn primary btn-block" onclick="guardarSeguridad()">Guardar seguridad</button>
+      </div>
       ${me.role === 'alumno' ? `
       <div class="feed-card">
         <div class="small mb" style="color:var(--bad)">¿No vas a seguir entrenando?</div>
@@ -1327,6 +1337,7 @@ async function renderAlumnos(el) {
             <button class="btn ghost small" onclick="verFicha(${a.id},'${esc(a.nombre)}')">🩺</button>
             <button class="btn good small" onclick="notificarDeuda(${a.id})">🔔</button>
             ${USER.role !== 'alumno' ? `<button class="btn ${a.activo ? 'bad' : 'good'} small" onclick="toggleActivo(${a.id},${a.activo ? 1 : 0})">${a.activo ? '🚫 Desactivar' : '✅ Reactivar'}</button>` : ''}
+            ${USER.role === 'admin' ? `<button class="btn ghost small" onclick="reiniciarPassword(${a.id},'${esc(a.nombre)}')">🔑</button>` : ''}
             ${USER.role === 'admin' ? `<button class="btn bad small" onclick="eliminarAlumno(${a.id},'${esc(a.nombre)}')">🗑</button>` : ''}
           </div>
         </div>`;
@@ -2078,6 +2089,105 @@ async function exportarExcel() {
     a.download = 'historial_ikigai.csv';
     a.click();
     toast('Historial exportado ✓');
+  } catch (e) { toast(e.message); }
+}
+
+/* =====================================================================
+   RECUPERAR CONTRASEÑA OLVIDADA
+   ===================================================================== */
+async function guardarSeguridad() {
+  const q = ($('#pSecQ')?.value || '').trim();
+  const a = ($('#pSecA')?.value || '').trim();
+  const np = ($('#pSecPass')?.value || '');
+  if (!q || !a) { toast('Completá la pregunta y la respuesta de seguridad'); return; }
+  try {
+    await api('/api/perfil/seguridad', { method: 'PUT', body: { pregunta: q, respuesta: a, nueva_password: np } });
+    toast('Seguridad guardada ✓');
+  } catch (e) { toast(e.message); }
+}
+
+async function reiniciarPassword(id, nombre) {
+  openModal(`
+    <h3>🔑 Reiniciar contraseña de ${esc(nombre)}</h3>
+    <p class="small">Poné una contraseña nueva para ${esc(nombre)}. Se le notificará que su contraseña fue reiniciada.</p>
+    <div class="field"><label>Contraseña nueva (mín. 4 caracteres)</label><input type="password" id="nuevaPass"></div>
+    <button class="btn primary btn-block" onclick="hacerReinicio(${id})">Guardar y notificar</button>
+    <button class="btn ghost btn-block" onclick="closeModal()">Cancelar</button>
+  `);
+}
+
+async function hacerReinicio(id) {
+  const np = $('#nuevaPass')?.value || '';
+  if (np.length < 4) { toast('La contraseña debe tener al menos 4 caracteres'); return; }
+  try {
+    await api('/api/usuarios/' + id + '/password', { method: 'POST', body: { password: np } });
+    closeModal();
+    toast('Contraseña reiniciada ✓ Se notificó al alumno.');
+  } catch (e) { toast(e.message); }
+}
+function overlayRecup(markup) {
+  const old = document.getElementById('recupOverlay');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'recupOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.innerHTML = `<div style="width:100%;max-width:400px;background:var(--card,#271619);border:1px solid var(--line,#421f24);border-radius:16px;padding:22px">${markup}</div>`;
+  ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+  return ov;
+}
+
+function overlayRecupCerrar() {
+  const old = document.getElementById('recupOverlay');
+  if (old) old.remove();
+}
+
+function abrirModalRecuperar() {
+  overlayRecup(`
+    <h3 style="color:#fff;margin:0 0 14px">Recuperar contraseña</h3>
+    <p class="small" style="color:var(--muted,#b0969b)">Escribí tu usuario. Si configuraste la pregunta de seguridad, la respondes para cambiar la clave. Si no, pedile al profe/admin que la reinicie.</p>
+    <div class="field"><label>Tu usuario</label><input id="recUser" placeholder="Tu usuario"></div>
+    <div id="recPasso"></div>
+    <button type="button" class="btn primary btn-block" onclick="recPaso1()">Continuar</button>
+    <button type="button" class="link-btn" style="width:100%;text-align:center;margin-top:10px" onclick="overlayRecupCerrar()">Cerrar</button>
+  `);
+}
+
+async function recPaso1() {
+  const user = ($('#recUser')?.value || '').trim();
+  if (!user) { toast('Escribí tu usuario'); return; }
+  try {
+    const d = await api('/api/recuperar', { method: 'POST', body: { username: user } });
+    const passo = document.getElementById('recPasso');
+    if (d.ok) {
+      if (passo) passo.innerHTML = `
+        <div class="field" style="margin-top:10px"><label>Pregunta de seguridad</label>
+          <input value="${esc(d.pregunta)}" disabled style="opacity:.7"></div>
+        <div class="field"><label>Tu respuesta</label><input id="recResp" placeholder="Respuesta"></div>
+        <div class="field"><label>Contraseña nueva (mín. 4 caracteres)</label><input type="password" id="recNueva"></div>
+        <button type="button" class="btn primary btn-block" onclick="recPaso2('${esc(user)}')">Cambiar mi contraseña</button>`;
+    } else {
+      if (passo) passo.innerHTML = `
+        <p style="color:var(--warn,#f1c40f)">${esc(d.error || 'No tiene pregunta de seguridad configurada.')}</p>
+        <p class="small" style="color:var(--muted,#b0969b)">Pedile al profe/admin que reinicie tu contraseña desde la pantalla de Alumnos.</p>`;
+    }
+  } catch (e) {
+    const passo = document.getElementById('recPasso');
+    if (passo) passo.innerHTML = `<p style="color:var(--bad,#e74c3c)">${esc(e.message)}</p>`;
+  }
+}
+
+async function recPaso2(user) {
+  const resp = ($('#recResp')?.value || '').trim();
+  const nueva = $('#recNueva')?.value || '';
+  if (!resp) { toast('Respondé la pregunta de seguridad'); return; }
+  if (nueva.length < 4) { toast('La contraseña debe tener al menos 4 caracteres'); return; }
+  try {
+    const d = await api('/api/recuperar/verificar', { method: 'POST', body: { username: user, respuesta: resp, nueva_password: nueva } });
+    if (d.ok) {
+      overlayRecupCerrar();
+      toast('Contraseña cambiada ✓ Ingresá con tu clave nueva.');
+    }
   } catch (e) { toast(e.message); }
 }
 
