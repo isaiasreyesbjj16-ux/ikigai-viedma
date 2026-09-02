@@ -651,7 +651,7 @@ async function renderInicio(el) {
             </div>
             <button class="btn ghost small" onclick="showSec('mispagos')">Ver mi cuenta</button>
           </div>
-          ${estado !== 'al_dia' ? `<p class="small" style="color:#ff9b8f;margin-bottom:0">⚠️ Pagá ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_link ? ' con el botón de abajo' : ' y avisá a un profesor para que registre tu pago'}.</p>${me.pago_link ? `<button class="btn primary btn-block mt" onclick="window.open('${esc(me.pago_link)}','_blank')">💳 Pagar la cuota</button>` : ''}` : ''}
+          ${estado !== 'al_dia' ? `<p class="small" style="color:#ff9b8f;margin-bottom:0">⚠️ Aboná tu cuota y <b>mandá el comprobante de pago</b>${me.pago_alias ? ' (por transferencia al alias/CVU de la academia)' : ''}. El pago se confirma solo cuando el profe/admin lo revisa.</p><button class="btn primary btn-block mt" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
         </div>
 
         <div class="feed-card">
@@ -1115,7 +1115,8 @@ function verComprobante(id) {
   `);
 }
 async function confirmarAviso(id) {
-  if (!confirm('¿Confirmar este aviso? Se registra el pago de la cuota y se notifica al alumno.')) return;
+  const a = AVISOS_CACHE[id] || {};
+  if (!confirm(`¿Confirmar el pago de ${a.alumno_nombre || 'este alumno'} (cuota ${a.mes}/${a.anio})? Revisá antes el comprobante (tocá "Ver comprobante"). Se registra el pago y se notifica al alumno.`)) return;
   closeModal();
   try {
     await api('/api/avisos_pago/' + id + '/confirmar', { method: 'POST' });
@@ -1143,7 +1144,6 @@ async function renderMisPagos(el) {
   const cls = estado === 'al_dia' ? 'tag-al-dia' : estado === 'por_vencer' ? 'tag-por-vencer' : 'tag-deuda';
   const lbl = estado === 'al_dia' ? 'Al día ✓' : estado === 'por_vencer' ? 'Por vencer' : 'Debe la cuota';
   const aviso = pagos.aviso_pendiente;
-  const link = me.pago_link;
   el.innerHTML = `
     ${secHeader('Mi estado de cuenta')}
     <div class="card">
@@ -1154,15 +1154,14 @@ async function renderMisPagos(el) {
         </div>
         <div class="tag ${cls}" style="font-size:14px;padding:6px 14px">${lbl}</div>
       </div>
-      <p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${link ? ' y usá el botón de pago en línea' : ' en la academia'}${link ? '' : ' y avisá a un profesor para que registre el pago'}.</p>
-      ${aviso ? `<p class="small mt" style="color:var(--warn)">⏳ Ya avisaste el pago de ${aviso.mes}/${aviso.anio} con tu comprobante. Esperá la confirmación.</p>` : ''}
-      ${link ? `<button class="btn primary btn-block" onclick="window.open('${esc(link)}','_blank')">💳 Pagar la cuota</button>` : ''}
-      ${estado !== 'al_dia' && !aviso ? `<button class="btn ghost btn-block" onclick="avisarPago()">✅ Avisar que ya pagué</button>` : ''}
+      <p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_alias ? ' por transferencia al alias/CVU de la academia' : ' en la academia'} y <b>sí o sí mandá el comprobante de pago</b>: sin comprobante, el pago no se confirma.</p>
+      ${aviso ? `<p class="small mt" style="color:var(--warn)">⏳ Comprobante de ${aviso.mes}/${aviso.anio} enviado. Esperá la confirmación.</p>` : ''}
+      ${estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
     </div>
     ${me.pago_alias ? `
     <div class="card">
       <h3>🏦 Pagar por transferencia</h3>
-      <p class="small">Págale al alias/CVU de la academia y después tocá "Avisar que ya pagué".</p>
+      <p class="small">Págale al alias/CVU de la academia y después <b>mandá el comprobante</b> (foto o captura). El pago se confirma cuando lo revisa el profe/admin.</p>
       <div class="alias-box" id="aliasBox">${esc(me.pago_alias)}</div>
       <button class="btn ghost btn-block" onclick="copiarAlias()">📋 Copiar alias / CVU</button>
     </div>` : ''}
@@ -1179,7 +1178,7 @@ async function renderMisPagos(el) {
 }
 async function avisarPago() {
   openModal(`
-    <h3>✅ Avisar que pagué</h3>
+    <h3>🧾 Mandar comprobante de pago</h3>
     <p class="small">Subí una <b>foto o captura del comprobante de pago</b>. El profe/admin lo va a revisar y confirmar tu cuota.</p>
     <div class="field"><label>Comprobante (JPG o PNG)</label>
       <input type="file" id="avComprobante" accept="image/*">
