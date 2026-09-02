@@ -411,17 +411,35 @@ function abrirScannerQR() {
   overlay.querySelector('#qrCerrar').onclick = cerrar;
 
   const video = overlay.querySelector('video');
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-    .then(s => {
-      stream = s;
-      video.srcObject = s;
-      video.setAttribute('autoplay', 'true');
-      video.play();
-      timer = setInterval(leer, 250);
-    })
-    .catch(err => {
-      overlay.querySelector('#qrMsg').textContent = 'No se pudo abrir la cámara: ' + err.message;
-    });
+  const msj = (t) => { overlay.querySelector('#qrMsg').textContent = t; };
+  const esIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    msj('Este navegador no soporta cámara o falta HTTPS. Probá recargar (Ctrl+F5) en la URL principal.');
+  } else {
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(s => {
+        stream = s;
+        video.srcObject = s;
+        video.setAttribute('autoplay', 'true');
+        video.play();
+        timer = setInterval(leer, 250);
+      })
+      .catch(err => {
+        let m = '';
+        if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+          m = 'Permiso de cámara denegado. Tenés que habilitar la Cámara para este sitio en los ajustes del navegador Chrome, no de una app. En Chrome: Configuración > Sitios > Cámara; o borra el permiso y recargá.';
+        } else if (err && (err.name === 'NotFoundError' || err.name === 'OverconstrainedError')) {
+          m = 'No se encontró cámara. Probá con la otra cámara (girar el celular).';
+        } else if (err && err.name === 'NotReadableError') {
+          m = 'La cámara está siendo usada por otra app. Cerrá otras apps y reintentá.';
+        } else if (err && err.name === 'SecurityError') {
+          m = 'Bloqueado por seguridad: necesitás HTTPS o permisos de cámara en el navegador.';
+        } else {
+          m = 'Error de cámara: ' + (err && err.message ? err.message : 'desconocido');
+        }
+        msj(m);
+      });
+  }
 
   function leer() {
     const v = video;
