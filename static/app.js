@@ -72,7 +72,14 @@ function initLogin() {
   }
   fillBelts($('#regAlumnoCinturon'), 'adulto');
   fillBelts($('#regProfeCinturon'), 'adulto');
-  $('#regAlumnoCat').addEventListener('change', (e) => fillBelts($('#regAlumnoCinturon'), e.target.value));
+  $('#regAlumnoCat').addEventListener('change', (e) => {
+    fillBelts($('#regAlumnoCinturon'), e.target.value);
+    const menor = e.target.value === 'kids' || e.target.value === 'juveniles';
+    const tf = $('#tutorFields');
+    if (tf) tf.style.display = menor ? '' : 'none';
+    const tt = $('#regAlumnoTelTutor');
+    if (tt) tt.required = menor;
+  });
 
   $$('.tab').forEach(t => t.addEventListener('click', () => {
     $$('.tab').forEach(x => x.classList.remove('active'));
@@ -107,7 +114,8 @@ function initLogin() {
         password: $('#regAlumnoPass').value, nombre: $('#regAlumnoNombre').value.trim(),
         edad: $('#regAlumnoEdad').value, peso: $('#regAlumnoPeso').value,
         categoria: $('#regAlumnoCat').value, cinturon: $('#regAlumnoCinturon').value,
-        gi_pref: $('#regAlumnoGi').value } });
+        gi_pref: $('#regAlumnoGi').value, tel: $('#regAlumnoTel')?.value || '',
+        tel_tutor: $('#regAlumnoTelTutor')?.value || '', tel_2: $('#regAlumnoTel2')?.value || '' } });
       if (d.ok) location.href = '/app';
     } catch (err) { msgShow(m, err.message, false); }
   });
@@ -848,6 +856,8 @@ async function renderPerfil(el) {
           <div class="field"><label>Edad</label><input type="number" id="pEdad" value="${me.edad != null ? me.edad : ''}"></div>
           <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="pPeso" value="${me.peso != null ? me.peso : ''}"></div>
           <div class="field"><label>Teléfono</label><input type="tel" id="pTel" value="${esc(me.tel || '')}"></div>
+          <div class="field"><label>📞 Teléfono del padre/madre/tutor ${cat === 'kids' || cat === 'juveniles' ? '<span style="color:#ff9b8f">(obligatorio)</span>' : '(opcional)'}</label><input type="tel" id="pTelTutor" placeholder="Ej: 299 1234567" value="${esc(me.tel_tutor || '')}"></div>
+          <div class="field"><label>📞 Segundo teléfono (opcional)</label><input type="tel" id="pTel2" placeholder="Otro teléfono de contacto" value="${esc(me.tel_2 || '')}"></div>
           <div class="field"><label>Fecha de nacimiento</label><input type="date" id="pNac" value="${me.nacimiento || ''}"></div>
           <div class="field"><label>Categoría</label><select id="pCat">
             ${CATEGORIAS.map(c => `<option value="${c}" ${c === cat ? 'selected' : ''}>${catLabel(c)}</option>`).join('')}</select></div>
@@ -907,6 +917,7 @@ async function renderPerfil(el) {
         categoria: $('#pCat').value, gi_pref: $('#pGi').value,
         tel: $('#pTel').value, nacimiento: $('#pNac').value,
         medic_info: $('#pMedic').value, emergency_contact: $('#pEmer').value,
+        tel_tutor: $('#pTelTutor')?.value || '', tel_2: $('#pTel2')?.value || '',
         password: $('#pPass').value } });
       toast('Perfil actualizado ✓'); renderPerfil(el);
     } catch (err) { toast(err.message); }
@@ -1379,6 +1390,8 @@ async function formAlumno(id) {
       <div class="field"><label>Edad</label><input type="number" id="aEdad" value="${a.edad != null ? a.edad : ''}"></div>
       <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="aPeso" value="${a.peso != null ? a.peso : ''}"></div>
       <div class="field"><label>Teléfono</label><input type="tel" id="aTel" value="${esc(a.tel || '')}"></div>
+      <div class="field"><label>📞 Tel. padre/madre/tutor ${a.categoria === 'kids' || a.categoria === 'juveniles' ? '<span style="color:#ff9b8f">(obligatorio)</span>' : ''}</label><input type="tel" id="aTutor" value="${esc(a.tel_tutor || '')}"></div>
+      <div class="field"><label>📞 Segundo teléfono</label><input type="tel" id="aTel2" value="${esc(a.tel_2 || '')}"></div>
       <div class="field"><label>Fecha de nacimiento</label><input type="date" id="aNac" value="${a.nacimiento || ''}"></div>
       <div class="field"><label>Categoría</label><select id="aCat">${CATEGORIAS.map(c => `<option value="${c}" ${a.categoria === c ? 'selected' : ''}>${catLabel(c)}</option>`).join('')}</select></div>
       <div class="field"><label>Cinturón</label><select id="aCinturon"></select></div>
@@ -1401,7 +1414,8 @@ async function formAlumno(id) {
     const body = { nombre: $('#aNombre').value.trim(), edad: $('#aEdad').value, peso: $('#aPeso').value,
       cinturon: $('#aCinturon').value, categoria: $('#aCat').value, gi_pref: $('#aGi').value,
       tel: $('#aTel').value, nacimiento: $('#aNac').value,
-      medic_info: $('#aMedic').value, emergency_contact: $('#aEmer').value };
+      medic_info: $('#aMedic').value, emergency_contact: $('#aEmer').value,
+      tel_tutor: $('#aTutor')?.value || '', tel_2: $('#aTel2')?.value || '' };
     try {
       await api('/api/alumnos/' + a.id, { method: 'PUT', body });
       toast('Alumno actualizado ✓');
