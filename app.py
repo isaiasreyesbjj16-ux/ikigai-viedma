@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS users (
     activo INTEGER DEFAULT 1,
     security_q TEXT,
     security_a TEXT,
+    tel_tutor TEXT,
+    tel_2 TEXT,
     creado TEXT
 );
 
@@ -294,7 +296,7 @@ def init_db():
     if 'foto' not in cols:
         c.execute('ALTER TABLE users ADD COLUMN foto TEXT')
     for col, ddl in [('tel', 'TEXT'), ('nacimiento', 'TEXT'), ('medic_info', 'TEXT'), ('emergency_contact', 'TEXT'),
-                     ('security_q', 'TEXT'), ('security_a', 'TEXT')]:
+                     ('security_q', 'TEXT'), ('security_a', 'TEXT'), ('tel_tutor', 'TEXT'), ('tel_2', 'TEXT')]:
         if col not in cols:
             c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
     if DB_MODE == 'postgres':
@@ -528,6 +530,8 @@ def user_public(u):
         'medic_info': u['medic_info'] if 'medic_info' in u.keys() else None,
         'emergency_contact': u['emergency_contact'] if 'emergency_contact' in u.keys() else None,
         'security_q': u['security_q'] if 'security_q' in u.keys() else None,
+        'tel_tutor': u['tel_tutor'] if 'tel_tutor' in u.keys() else None,
+        'tel_2': u['tel_2'] if 'tel_2' in u.keys() else None,
         'activo': u['activo'],
         'creado': u['creado'],
     }
@@ -862,19 +866,27 @@ def api_register():
         if codigo != get_setting('academy_code'):
             return jsonify({'error': 'Codigo de academia incorrecto. Pedile el codigo al administrador.'}), 400
 
+    categoria = data.get('categoria') or 'adulto'
+    tel_tutor = (data.get('tel_tutor') or '').strip()
+    if role == 'alumno' and categoria in ('kids', 'juveniles') and not tel_tutor:
+        return jsonify({'error': 'Para menores (Kids/Juveniles) es obligatorio el telefono del padre, madre o tutor responsable.'}), 400
+    tel_2 = (data.get('tel_2') or '').strip() or None
+
     try:
         get_db().execute(
-            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, tel, nacimiento, medic_info, emergency_contact, creado)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, tel, nacimiento, medic_info, emergency_contact, tel_tutor, tel_2, creado)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (username, generate_password_hash(password), role, nombre,
              to_int(data.get('edad')), to_float(data.get('peso')),
-             data.get('cinturon'), data.get('categoria') or 'adulto',
+             data.get('cinturon'), categoria,
              data.get('gi_pref') or 'Ambas',
              to_float(data.get('cuota_mensual')) if role == 'alumno' else None,
              (data.get('tel') or '').strip() or None,
              (data.get('nacimiento') or '').strip() or None,
              (data.get('medic_info') or '').strip() or None,
              (data.get('emergency_contact') or '').strip() or None,
+             tel_tutor or None,
+             tel_2,
              datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         get_db().commit()
     except dbadapter.IntegrityError:
@@ -1031,7 +1043,7 @@ def api_alumnos_update(uid):
     if not u:
         return jsonify({'error': 'Alumno no encontrado'}), 404
     get_db().execute(
-        """UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, activo=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=? WHERE id=?""",
+        """UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, activo=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=? WHERE id=?""",
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
          data.get('categoria', u['categoria']), data.get('gi_pref', u['gi_pref']),
@@ -1039,7 +1051,9 @@ def api_alumnos_update(uid):
          (data.get('tel', u['tel']) or '').strip() or None,
          (data.get('nacimiento', u['nacimiento']) or '').strip() or None,
          data.get('medic_info', u['medic_info']),
-         data.get('emergency_contact', u['emergency_contact']), uid))
+         data.get('emergency_contact', u['emergency_contact']),
+         (data.get('tel_tutor', u['tel_tutor']) or '').strip() or None,
+         (data.get('tel_2', u['tel_2']) or '').strip() or None, uid))
     get_db().commit()
     return jsonify({'ok': True})
 
@@ -1541,15 +1555,21 @@ def api_cumpleanios():
 def api_perfil_update():
     u = current_user()
     data = parse_json()
+    cat = data.get('categoria', u['categoria'])
+    tel_tutor = (data.get('tel_tutor', u['tel_tutor']) or '').strip() or None
+    if u['role'] == 'alumno' and cat in ('kids', 'juveniles') and not tel_tutor:
+        return jsonify({'error': 'Para menores (Kids/Juveniles) es obligatorio el telefono del padre, madre o tutor responsable.'}), 400
     get_db().execute(
-        'UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=? WHERE id=?',
+        'UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=? WHERE id=?',
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
-         data.get('categoria', u['categoria']), data.get('gi_pref', u['gi_pref']),
+         cat, data.get('gi_pref', u['gi_pref']),
          (data.get('tel', u['tel']) or '').strip() or None,
          (data.get('nacimiento', u['nacimiento']) or '').strip() or None,
          data.get('medic_info', u['medic_info']),
-         data.get('emergency_contact', u['emergency_contact']), u['id']))
+         data.get('emergency_contact', u['emergency_contact']),
+         tel_tutor,
+         (data.get('tel_2', u['tel_2']) or '').strip() or None, u['id']))
     if data.get('password'):
         if len(data['password']) < 4:
             return jsonify({'error': 'La contrasena debe tener al menos 4 caracteres'}), 400
