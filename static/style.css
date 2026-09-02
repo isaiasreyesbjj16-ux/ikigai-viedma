@@ -425,3 +425,21 @@ hint { font-size: 12px; color: var(--muted); }
   .grid2 { grid-template-columns: 1fr; }
   .content { padding: 12px 10px 104px; }
 }
+
+/* ---------- TEMA CLARO ---------- */
+[data-theme="light"] {
+  --bg: #f7f2f3;
+  --bg2: #efe6e8;
+  --card: #ffffff;
+  --card2: #f6ecee;
+  --line: #e3cfd3;
+  --txt: #2a1a1e;
+  --muted: #7d656c;
+  --accent: #d02424;
+  --accent2: #e0493d;
+}
+[data-theme="light"] .topbar { background: rgba(255,255,255,.92); box-shadow: 0 1px 0 var(--line); }
+[data-theme="light"] .bottombar { background: rgba(255,255,255,.95); border-top: 1px solid var(--line); }
+@media (prefers-color-scheme: light) {
+  [data-theme="auto"] { }
+}

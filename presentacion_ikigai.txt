@@ -1,0 +1,185 @@
+IKIGAI VIEDMA
+Sistema integral de gestión para academia de Jiu-Jitsu Brasileño
+Presentación de la plataforma
+
+========================================
+1. ¿QUÉ ES IKIGAI VIEDMA?
+========================================
+
+IKIGAI VIEDMA es una plataforma completa y moderna para gestionar todos los aspectos de una academia de artes marciales en un solo lugar. El sistema permite administrar alumnos, profesores, cuotas, pagos, asistencia, horarios, videos de técnicas y notificaciones, tanto desde una aplicación web instalable como desde una app nativa para Android.
+
+Incluye tres roles de usuario con distintos niveles de acceso:
+- Administrador: control total de la plataforma.
+- Profesor: gestiona sus clases, pagos, asistencia y videos.
+- Alumno: experiencia personal con su cuota, asistencia y contenido.
+
+La infraestructura funciona en la nube con costo de mantenimiento $0 por mes, gracias al uso de servicios gratuitos (Render + Supabase).
+
+========================================
+2. STACK TECNOLÓGICO
+========================================
+
+Backend:
+- Python con framework Flask (API REST completa).
+- Base de datos PostgreSQL en la nube (Supabase).
+- Hosting gratuito en Render (auto-deploy desde GitHub).
+- Notificaciones push (Web Push / protocolo VAPID).
+- Generación de códigos QR y recibos en PDF.
+
+Frontend:
+- Aplicación web instalable (PWA) en JavaScript puro.
+- App Android nativa desarrollada en Kotlin.
+- Diseño responsive, moderno y con colores personalizables de la academia.
+- Menú de navegación inferior estilo Instagram.
+
+========================================
+3. ROLES DE USUARIO
+========================================
+
+ADMINISTRADOR (👑):
+- Gestiona alumnos y profesores.
+- Registra y confirma pagos.
+- Carga, edita y elimina horarios.
+- Configura los parámetros de la academia (nombre, color, cuota, recargo, etc.).
+- Genera reportes y estadísticas.
+- Envía mensajes masivos.
+- Aplica cuota mensual a todos los alumnos.
+
+PROFESOR (🧑‍🏫):
+- Carga y edita horarios (no puede eliminarlos).
+- Registra pagos.
+- Marca asistencia.
+- Sube videos de técnicas.
+- Ve sus propios ingresos.
+- Gestiona alumnos.
+- Visualiza los comprobantes de pago para confirmarlos.
+
+ALUMNO (🥋):
+- Ve su estado de cuenta y cuota.
+- Marca su asistencia mediante código QR.
+- Envía comprobante de pago.
+- Visualiza videos acordes a su cinturón y categoría.
+- Consulta su historial de asistencias.
+- Edita su perfil y datos.
+- Recibe notificaciones en tiempo real.
+
+========================================
+4. FUNCIONALIDADES PRINCIPALES
+========================================
+
+Medición de asistencia:
+- Escaneo de código QR desde la app (Android) o desde la cámara web.
+- Auto-marca la asistencia en todas las clases del día.
+- Historial completo por alumno y por clase.
+- Cálculo de porcentaje de asistencia en reportes.
+
+Gestión de pagos:
+- Verificación de cada pago con comprobante obligatorio.
+- Cálculo automático de recargo por pago fuera de término.
+- Alias/CVU copiable para realizar transferencia.
+- Reporte mensual con desglose por método y deudores.
+
+========================================
+5. SISTEMA DE PAGOS VERIFICADO
+========================================
+
+Flujo del cobro mensual:
+1) El alumno transfiere el monto por su banco (usando el alias/CVU de la academia).
+2) El alumno envía el comprobante desde la app (foto o captura).
+3) El profesor o administrador revisa la imagen y confirma o descarta el pago.
+4) El alumno recibe una notificación automática con la confirmación y se actualiza su estado de cuenta.
+
+Cálculo automático:
+- Si el alumno paga después del día de vencimiento, se aplica un recargo automático configurable.
+
+Mensajes automáticos:
+- Si un alumno no entrena hace cierta cantidad de días, o debe más de cierta cantidad de días, la plataforma le envía un seguimiento automático configurable.
+
+Aplicación masiva:
+- El administrador puede aplicar la cuota mensual a todos los alumnos de una sola vez.
+
+(Pendiente de integrar: MercadoPago, para cobro en línea con link de pago.)
+
+========================================
+6. APP ANDROID NATIVA
+========================================
+
+La aplicación compilada para Android 8.0 o superior cuenta con todas las funcionalidades de la versión web:
+
+- Login con servidor configurable.
+- Cinco secciones: Inicio, Horarios, Pagos, Videos y Perfil.
+- Subida de videos directamente desde el celular.
+- Cámara para escanear el QR de asistencia.
+- Envío de comprobante de pago con foto.
+- Reproductor de video integrado.
+- Foto de perfil desde galería o cámara.
+- Diseño moderno con animaciones.
+- Colores coincidentes con la versión web.
+
+========================================
+7. BIBLIOTECA DE VIDEOS
+========================================
+
+- Subida de videos desde YouTube (link) o desde el dispositivo (MP4/MOV, hasta 25 MB).
+- Filtro por cinturón y categoría (Kids, Juveniles, Adulto).
+- Marca automática de "visto" por alumno.
+- Contador de vistas y consulta de "¿Quién lo vio?" para el equipo.
+- Categorías de clase: Gi, NoGi, Kids, Juveniles y Abierto.
+- Niveles: Principiantes, Intermedios, Avanzados, Competencia y Femenino.
+- Los alumnos solo visualizan videos de su cinturón y categoría; los profesores ven todos.
+
+========================================
+8. SEGURIDAD Y AUTOMATIZACIÓN
+========================================
+
+Seguridad:
+- Contraseñas almacenadas con hash seguro (Werkzeug).
+- Sesiones con cookies seguras (HTTP-only).
+- Permisos por rol en cada endpoint.
+- Los alumnos solo acceden a sus propios datos.
+- Comprobantes de pago subidos de forma segura.
+- Límite de tamaño en los archivos subidos.
+
+Automatización:
+- Recargo automático por pago tardío.
+- Alertas de inactividad (sin entrenar por X días).
+- Alertas de deuda (sin pagar por Y días).
+- Mensajes automáticos configurables.
+- Aplicación masiva de la cuota mensual.
+- Notificaciones push en tiempo real.
+
+========================================
+9. ESTADO DE PRODUCCIÓN
+========================================
+
+- Servidor activo y publicado: https://ikigai-viedma.onrender.com
+- App Android lista para instalar: IKIGAI-VIEDMA.apk
+- Deploy automático: cada actualización publicada en GitHub se despliega sola.
+- Infraestructura sin costo mensual.
+
+========================================
+10. PRÓXIMOS PASOS / FEATURES FUTUROS
+========================================
+
+Planeados:
+- MercadoPago: cobro automático en línea con link de pago.
+- Chat: mensajería entre alumnos y profesores.
+- Plan de entrenamiento: objetivos por cinturón.
+- Torneos: inscripción y seguimiento.
+- Encuestas: recolección de feedback de alumnos.
+
+Mejoras:
+- Dashboard con gráficos de asistencia e ingresos.
+- Exportación de datos a Excel/PDF.
+- Soporte para múltiples sedes.
+- Clases online (integración con videollamadas).
+- Versión para iOS (React Native).
+
+========================================
+CIERRE
+========================================
+
+IKIGAI VIEDMA es "La academia conectada": todo lo necesario para administrar una academia de artes marciales en un solo lugar, disponible en la web y en el celular, con cero costo de infraestructura.
+
+Acceso web: https://ikigai-viedma.onrender.com
+Aplicación Android: IKIGAI-VIEDMA.apk
