@@ -180,6 +180,94 @@ CREATE TABLE IF NOT EXISTS video_views (
     fecha TEXT,
     UNIQUE(video_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS video_progress (
+    video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    segundos INTEGER DEFAULT 0,
+    duracion INTEGER DEFAULT 0,
+    completado INTEGER DEFAULT 0,
+    fecha TEXT,
+    PRIMARY KEY (video_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS chats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT,
+    tipo TEXT DEFAULT 'grupo',
+    creado_por INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    fecha TEXT
+);
+
+CREATE TABLE IF NOT EXISTS chat_members (
+    chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (chat_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+    mensaje TEXT,
+    fecha TEXT
+);
+
+CREATE TABLE IF NOT EXISTS muro (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    texto TEXT,
+    fecha TEXT
+);
+
+CREATE TABLE IF NOT EXISTS muro_fotos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    muro_id INTEGER REFERENCES muro(id) ON DELETE CASCADE,
+    data TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS metas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    titulo TEXT NOT NULL,
+    tipo TEXT DEFAULT 'semanas',
+    objetivo INTEGER DEFAULT 3,
+    cumplida INTEGER DEFAULT 0,
+    fecha TEXT
+);
+
+CREATE TABLE IF NOT EXISTS encuestas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    titulo TEXT NOT NULL,
+    opciones TEXT,
+    activa INTEGER DEFAULT 1,
+    fecha TEXT
+);
+
+CREATE TABLE IF NOT EXISTS encuesta_votos (
+    encuesta_id INTEGER NOT NULL REFERENCES encuestas(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    opcion INTEGER,
+    PRIMARY KEY (encuesta_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS eventos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    titulo TEXT NOT NULL,
+    descripcion TEXT,
+    fecha TEXT,
+    hora TEXT,
+    lugar TEXT,
+    fecha_evento TEXT
+);
+
+CREATE TABLE IF NOT EXISTS evento_asistencias (
+    evento_id INTEGER NOT NULL REFERENCES eventos(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (evento_id, user_id)
+);
 """
 
 
@@ -239,6 +327,10 @@ def init_db():
         'auto_inact_dias': '15',
         'auto_deuda_dias': '30',
         'auto_mensaje_activo': '0',
+        'logro_asist': '50',
+        'logro_videos': '25',
+        'mp_access_token': '',
+        'wp_numero': '',
     }
     for k, v in defaults.items():
         c.execute('INSERT OR IGNORE INTO settings(k, value) VALUES(?,?)', (k, v))
@@ -330,6 +422,35 @@ def notify(user_id, titulo, mensaje, tipo='info', push=True):
     get_db().commit()
     if push:
         send_push(user_id, titulo, mensaje)
+
+
+def chequear_logros(user_id):
+    """Notifica cada vez que el alumno cruza un múltiplo del umbral configurable."""
+    th = to_int(get_setting('logro_asist', '50')) or 50
+    thv = to_int(get_setting('logro_videos', '25')) or 25
+    db = get_db()
+    asis = db.execute('SELECT COUNT(*) AS n FROM asistencia WHERE alumno_id=?',
+                      (user_id,)).fetchone()['n']
+    vids = db.execute('SELECT COUNT(*) AS n FROM video_views WHERE user_id=?',
+                      (user_id,)).fetchone()['n']
+    avisos = []
+    if th > 0 and asis > 0 and asis % th == 0 and not _ya_logro(user_id, 'asis', asis):
+        notify(user_id, '🎉 Logro alcanzado',
+               '¡Llegaste a %d asistencias! Seguí así 🥋' % asis, 'logro', push=True)
+        avisos.append('asistencias')
+    if thv > 0 and vids > 0 and vids % thv == 0 and not _ya_logro(user_id, 'vids', vids):
+        notify(user_id, '🎉 Logro alcanzado',
+               '¡Viste %d videos! Buen progreso 🎥' % vids, 'logro', push=True)
+        avisos.append('videos')
+    return avisos
+
+
+def _ya_logro(user_id, tipo, valor):
+    key = 'logro_done_%d_%s_%d' % (user_id, tipo, valor)
+    if get_setting(key, '0') == '1':
+        return True
+    set_setting(key, '1')
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -705,6 +826,8 @@ def api_me():
         d['cuota'] = cuota_status(u)
     d['pago_link'] = get_setting('pago_link', '')
     d['pago_alias'] = get_setting('pago_alias', '')
+    d['mp_habilitado'] = bool((get_setting('mp_access_token', '') or '').strip())
+    d['wp_numero'] = get_setting('wp_numero', '')
     return jsonify(d)
 
 
@@ -1231,6 +1354,7 @@ def api_asistencia_yo():
         'INSERT OR IGNORE INTO asistencia(clase_id, alumno_id, fecha, presente) VALUES(?,?,?,1)',
         (clase_id, u['id'], fecha))
     get_db().commit()
+    chequear_logros(u['id'])
     return jsonify({'ok': True})
 
 
@@ -1396,12 +1520,22 @@ def _video_public(v, u):
     visto = bool(d.execute(
         'SELECT 1 FROM video_views WHERE video_id=? AND user_id=?',
         (v['id'], u['id'])).fetchone())
-    return {
+    out = {
         'id': v['id'], 'titulo': v['titulo'], 'descripcion': v['descripcion'],
         'belt': v['belt'], 'categoria': v['categoria'], 'url': v['url'], 'tipo': v['tipo'],
         'subido_por': v['subido_por'], 'fecha': v['fecha'],
         'subidor_nombre': v['subidor_nombre'], 'vistas': vistas, 'visto': visto,
     }
+    if u['role'] == 'alumno':
+        prog = d.execute('SELECT * FROM video_progress WHERE video_id=? AND user_id=?',
+                         (v['id'], u['id'])).fetchone()
+        completado = bool(prog and prog['completado'])
+        pct = 0
+        if prog and prog['duracion'] > 0:
+            pct = min(99, int(prog['segundos'] * 100 / prog['duracion']))
+        out['completado'] = completado
+        out['progreso_pct'] = pct
+    return out
 
 
 def _list_videos(u, belt=None, categoria=None):
@@ -1574,6 +1708,508 @@ def api_estadisticas():
 
 
 # ---------------------------------------------------------------------------
+# Chat + grupos por categoria
+# ---------------------------------------------------------------------------
+
+@app.route('/api/chats')
+@login_required
+def api_chats():
+    u = current_user()
+    db = get_db()
+    rows = db.execute(
+        'SELECT c.* FROM chats c JOIN chat_members m ON m.chat_id=c.id '
+        'WHERE m.user_id=? ORDER BY c.id DESC', (u['id'],)).fetchall()
+    chats = []
+    for c in rows:
+        nombre = c['nombre']
+        if c['tipo'] == 'grupo':
+            miembros = db.execute(
+                'SELECT COUNT(*) AS n FROM chat_members WHERE chat_id=?', (c['id'],)).fetchone()['n']
+            chats.append({'id': c['id'], 'nombre': nombre or 'Grupo', 'tipo': c['tipo'],
+                          'miembros': miembros})
+        else:
+            otro = db.execute(
+                'SELECT u.id, u.nombre, u.foto FROM users u JOIN chat_members m ON m.user_id=u.id '
+                'WHERE m.chat_id=? AND u.id<>?', (c['id'], u['id'])).fetchone()
+            chats.append({'id': c['id'], 'nombre': (otro['nombre'] if otro else 'Chat'),
+                          'tipo': c['tipo']})
+    return jsonify({'chats': chats})
+
+
+@app.route('/api/chats', methods=['POST'])
+@login_required
+def api_chat_crear():
+    u = current_user()
+    data = parse_json()
+    db = get_db()
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+    if data.get('categoria') in ('kids', 'juveniles', 'adulto'):
+        cat = data['categoria']
+        cur = db.execute(
+            "INSERT INTO chats(nombre, tipo, creado_por, fecha) VALUES(?,?,?,?)",
+            (cat, 'grupo', u['id'], now))
+        chat_id = cur.lastrowid
+        ids = [r['id'] for r in db.execute(
+            "SELECT id FROM users WHERE role in ('admin','profesor') OR (role='alumno' AND categoria=?)",
+            (cat,)).fetchall()]
+        for uid in ids:
+            db.execute('INSERT OR IGNORE INTO chat_members(chat_id, user_id) VALUES(?,?)', (chat_id, uid))
+        db.commit()
+        return jsonify({'ok': True, 'id': chat_id, 'nombre': cat, 'tipo': 'grupo'})
+    # chat directo
+    otro = to_int(data.get('user_id'))
+    if not otro or otro == u['id']:
+        return jsonify({'error': 'Elegí un contacto válido'}), 400
+    exist = db.execute(
+        'SELECT c.id FROM chats c JOIN chat_members m1 ON m1.chat_id=c.id JOIN chat_members m2 ON m2.chat_id=c.id '
+        'WHERE c.tipo=\'directo\' AND m1.user_id=? AND m2.user_id=? '
+        'AND (SELECT COUNT(*) FROM chat_members WHERE chat_id=c.id)=2', (u['id'], otro)).fetchone()
+    if exist:
+        return jsonify({'ok': True, 'id': exist['id'], 'tipo': 'directo'})
+    cur = db.execute("INSERT INTO chats(nombre, tipo, creado_por, fecha) VALUES(?,?,?,?)",
+                     (None, 'directo', u['id'], now))
+    chat_id = cur.lastrowid
+    db.execute('INSERT OR IGNORE INTO chat_members(chat_id, user_id) VALUES(?,?)', (chat_id, u['id']))
+    db.execute('INSERT OR IGNORE INTO chat_members(chat_id, user_id) VALUES(?,?)', (chat_id, otro))
+    db.commit()
+    return jsonify({'ok': True, 'id': chat_id, 'tipo': 'directo'})
+
+
+@app.route('/api/chats/<int:chat_id>/mensajes')
+@login_required
+def api_chat_mensajes(chat_id):
+    u = current_user()
+    db = get_db()
+    miembro = db.execute('SELECT 1 FROM chat_members WHERE chat_id=? AND user_id=?', (chat_id, u['id'])).fetchone()
+    chat = db.execute('SELECT * FROM chats WHERE id=?', (chat_id,)).fetchone()
+    if not chat or not miembro:
+        return jsonify({'error': 'No tenés acceso a este chat'}), 403
+    filas = db.execute(
+        'SELECT m.id, m.user_id, m.mensaje, m.fecha, us.nombre, us.foto '
+        'FROM chat_messages m JOIN users us ON us.id=m.user_id '
+        'WHERE m.chat_id=? ORDER BY m.id ASC LIMIT 200', (chat_id,)).fetchall()
+    return jsonify({'mensajes': [dict(r) for r in filas], 'chat': dict(chat)})
+
+
+@app.route('/api/chats/<int:chat_id>/mensajes', methods=['POST'])
+@login_required
+def api_chat_enviar(chat_id):
+    u = current_user()
+    data = parse_json()
+    msj = (data.get('mensaje') or '').strip()
+    if not msj:
+        return jsonify({'error': 'Escribí un mensaje'}), 400
+    db = get_db()
+    chat = db.execute('SELECT * FROM chats WHERE id=?', (chat_id,)).fetchone()
+    if not chat or not db.execute('SELECT 1 FROM chat_members WHERE chat_id=? AND user_id=?', (chat_id, u['id'])).fetchone():
+        return jsonify({'error': 'No tenés acceso a este chat'}), 403
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+    db.execute('INSERT INTO chat_messages(chat_id, user_id, mensaje, fecha) VALUES(?,?,?,?)',
+               (chat_id, u['id'], msj, now))
+    db.commit()
+    for m in db.execute('SELECT user_id FROM chat_members WHERE chat_id=? AND user_id<>?', (chat_id, u['id'])).fetchall():
+        notify(m['user_id'], 'Nuevo mensaje', '%s: %s' % (u['nombre'], msj), 'chat', push=True)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/contactos')
+@login_required
+def api_contactos():
+    u = current_user()
+    if u['role'] == 'alumno':
+        rows = get_db().execute(
+            "SELECT id, nombre, cinturon, foto FROM users WHERE activo=1 AND id<>? AND role IN ('admin','profesor')",
+            (u['id'],)).fetchall()
+    else:
+        rows = get_db().execute(
+            "SELECT id, nombre, cinturon, categoria, foto FROM users WHERE activo=1 AND id<>? AND role='alumno'",
+            (u['id'],)).fetchall()
+    return jsonify({'contactos': [dict(r) for r in rows]})
+
+
+# ---------------------------------------------------------------------------
+# Video progress (no removible hasta terminar)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/videos/<int:vid>/progress', methods=['POST'])
+@login_required
+def api_video_progress(vid):
+    u = current_user()
+    data = parse_json()
+    seg = max(0, to_int(data.get('segundos')) or 0)
+    dur = max(0, to_int(data.get('duracion')) or 0)
+    db = get_db()
+    v = db.execute('SELECT * FROM videos WHERE id=?', (vid,)).fetchone()
+    if not v:
+        return jsonify({'error': 'Video no encontrado'}), 404
+    completado = 1 if (dur > 0 and seg >= dur * 0.95) else 0
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+    db.execute(
+        'INSERT OR IGNORE INTO video_views(video_id, user_id, fecha) VALUES(?,?,?)',
+        (vid, u['id'], now))
+    db.execute(
+        'INSERT INTO video_progress(video_id, user_id, segundos, duracion, completado, fecha) VALUES(?,?,?,?,?,?) '
+        'ON CONFLICT(video_id, user_id) DO UPDATE SET segundos=excluded.segundos, duracion=excluded.duracion, completado=MAX(video_progress.completado, excluded.completado), fecha=excluded.fecha',
+        (vid, u['id'], seg, dur, completado, now))
+    db.commit()
+    if completado and u['role'] == 'alumno':
+        chequear_logros(u['id'])
+    if completado and v['subido_por']:
+        notify(v['subido_por'], 'Video completado',
+               '%s terminó de ver "%s"' % (u['nombre'], v['titulo']), 'info', push=True)
+    return jsonify({'ok': True, 'completado': completado})
+
+
+@app.route('/api/videos/<int:vid>/progress')
+@login_required
+def api_video_progress_get(vid):
+    u = current_user()
+    r = get_db().execute('SELECT * FROM video_progress WHERE video_id=? AND user_id=?',
+                         (vid, u['id'])).fetchone()
+    return jsonify({'progress': dict(r) if r else {'segundos': 0, 'duracion': 0, 'completado': 0}})
+
+
+# ---------------------------------------------------------------------------
+# Metas de entrenamiento
+# ---------------------------------------------------------------------------
+
+@app.route('/api/metas')
+@login_required
+def api_metas():
+    u = current_user()
+    filas = get_db().execute('SELECT * FROM metas WHERE user_id=? ORDER BY id DESC', (u['id'],)).fetchall()
+    return jsonify({'metas': [dict(r) for r in filas]})
+
+
+@app.route('/api/metas', methods=['POST'])
+@login_required
+def api_meta_crear():
+    u = current_user()
+    data = parse_json()
+    titulo = (data.get('titulo') or '').strip()
+    if not titulo:
+        return jsonify({'error': 'Poné el título de la meta'}), 400
+    obj = to_int(data.get('objetivo')) or 3
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+    cur = get_db().execute('INSERT INTO metas(user_id, titulo, tipo, objetivo, fecha) VALUES(?,?,?,?,?)',
+                           (u['id'], titulo, data.get('tipo') or 'semanas', obj, now))
+    get_db().commit()
+    return jsonify({'ok': True, 'id': cur.lastrowid})
+
+
+@app.route('/api/metas/<int:meta_id>', methods=['POST'])
+@login_required
+def api_meta_actualizar(meta_id):
+    u = current_user()
+    db = get_db()
+    if not db.execute('SELECT 1 FROM metas WHERE id=? AND user_id=?', (meta_id, u['id'])).fetchone():
+        return jsonify({'error': 'Meta no encontrada'}), 404
+    data = parse_json()
+    cumplida = 1 if (data.get('cumplida') or data.get('cumplida') == 'on') else 0
+    if cumplida:
+        db.execute('UPDATE metas SET cumplida=1 WHERE id=?', (meta_id,))
+    else:
+        db.execute('UPDATE metas SET titulo=?, tipo=?, objetivo=? WHERE id=?',
+                   ((data.get('titulo') or '').strip(), data.get('tipo') or 'semanas',
+                    to_int(data.get('objetivo')) or 3, meta_id))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/metas/<int:meta_id>', methods=['DELETE'])
+@login_required
+def api_meta_borrar(meta_id):
+    u = current_user()
+    db = get_db()
+    db.execute('DELETE FROM metas WHERE id=? AND user_id=?', (meta_id, u['id']))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Ranking (asistencia + progreso + videos vistos)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/ranking')
+@role_required('admin', 'profesor')
+def api_ranking():
+    db = get_db()
+    asis = db.execute(
+        'SELECT a.alumno_id AS uid, COUNT(*) AS n FROM asistencia a GROUP BY a.alumno_id').fetchall()
+    vids = db.execute(
+        'SELECT vv.user_id AS uid, COUNT(*) AS n FROM video_views vv GROUP BY vv.user_id').fetchall()
+    comp = db.execute(
+        'SELECT vp.user_id AS uid, COUNT(*) AS n FROM video_progress vp WHERE vp.completado=1 GROUP BY vp.user_id').fetchall()
+    nmap = {a['uid']: a['n'] for a in asis}
+    vmap = {v['uid']: v['n'] for v in vids}
+    cmap = {c['uid']: c['n'] for c in comp}
+    filas = db.execute(
+        "SELECT id, nombre, cinturon, categoria, foto FROM users WHERE activo=1 AND role='alumno'").fetchall()
+    lista = []
+    for r in filas:
+        punt = (nmap.get(r['id'], 0) * 2) + (cmap.get(r['id'], 0) * 5) + (vmap.get(r['id'], 0) * 1)
+        lista.append({'id': r['id'], 'nombre': r['nombre'], 'cinturon': r['cinturon'],
+                      'categoria': r['categoria'], 'asistencias': nmap.get(r['id'], 0),
+                      'videos': vmap.get(r['id'], 0), 'completados': cmap.get(r['id'], 0), 'puntos': punt})
+    lista.sort(key=lambda x: x['puntos'], reverse=True)
+    return jsonify({'ranking': lista})
+
+
+# ---------------------------------------------------------------------------
+# Muro + galería de fotos
+# ---------------------------------------------------------------------------
+
+@app.route('/api/muro')
+@login_required
+def api_muro():
+    filas = get_db().execute(
+        'SELECT m.*, us.nombre, us.cinturon, us.foto '
+        'FROM muro m JOIN users us ON us.id=m.user_id ORDER BY m.id DESC LIMIT 100').fetchall()
+    db = get_db()
+    out = []
+    for r in filas:
+        fotos = [f['data'] for f in db.execute('SELECT data FROM muro_fotos WHERE muro_id=?', (r['id'],)).fetchall()]
+        out.append({**dict(r), 'fotos': fotos})
+    return jsonify({'muro': out})
+
+
+@app.route('/api/muro', methods=['POST'])
+@login_required
+def api_muro_crear():
+    u = current_user()
+    data = parse_json()
+    texto = (data.get('texto') or '').strip()
+    fotos = data.get('fotos') or []
+    if not texto and not fotos:
+        return jsonify({'error': 'Escribí algo o subí una foto'}), 400
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+    db = get_db()
+    cur = db.execute('INSERT INTO muro(user_id, texto, fecha) VALUES(?,?,?)', (u['id'], texto, now))
+    mid = cur.lastrowid
+    for f in fotos[:5]:
+        if isinstance(f, str) and f.startswith('data:image/'):
+            db.execute('INSERT INTO muro_fotos(muro_id, data) VALUES(?,?)', (mid, f))
+    db.commit()
+    return jsonify({'ok': True, 'id': mid})
+
+
+@app.route('/api/muro/<int:muro_id>', methods=['DELETE'])
+@login_required
+def api_muro_borrar(muro_id):
+    u = current_user()
+    db = get_db()
+    db.execute('DELETE FROM muro WHERE id=? AND user_id=?', (muro_id, u['id']))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Encuestas
+# ---------------------------------------------------------------------------
+
+@app.route('/api/encuestas')
+@login_required
+def api_encuestas():
+    u = current_user()
+    db = get_db()
+    filas = db.execute('SELECT * FROM encuestas ORDER BY id DESC').fetchall()
+    out = []
+    for r in filas:
+        opciones = json.loads(r['opciones']) if r['opciones'] else []
+        mi_voto = db.execute('SELECT opcion FROM encuesta_votos WHERE encuesta_id=? AND user_id=?',
+                             (r['id'], u['id'])).fetchone()
+        conteo = []
+        for i in range(len(opciones)):
+            conteo.append(db.execute('SELECT COUNT(*) AS n FROM encuesta_votos WHERE encuesta_id=? AND opcion=?',
+                                     (r['id'], i)).fetchone()['n'])
+        out.append({**dict(r), 'opciones': opciones, 'conteo': conteo,
+                    'mi_voto': mi_voto['opcion'] if mi_voto else None})
+    return jsonify({'encuestas': out})
+
+
+@app.route('/api/encuestas', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_encuesta_crear():
+    u = current_user()
+    data = parse_json()
+    titulo = (data.get('titulo') or '').strip()
+    opciones = [str(x).strip() for x in (data.get('opciones') or []) if str(x).strip()]
+    if not titulo or len(opciones) < 2:
+        return jsonify({'error': 'Necesitás título y al menos 2 opciones'}), 400
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+    cur = get_db().execute('INSERT INTO encuestas(user_id, titulo, opciones, fecha) VALUES(?,?,?,?)',
+                           (u['id'], titulo, json.dumps(opciones), now))
+    get_db().commit()
+    return jsonify({'ok': True, 'id': cur.lastrowid})
+
+
+@app.route('/api/encuestas/<int:eid>/votar', methods=['POST'])
+@login_required
+def api_encuesta_votar(eid):
+    u = current_user()
+    data = parse_json()
+    opcion = to_int(data.get('opcion'))
+    db = get_db()
+    e = db.execute('SELECT * FROM encuestas WHERE id=?', (eid,)).fetchone()
+    if not e:
+        return jsonify({'error': 'Encuesta no encontrada'}), 404
+    n_opts = len(json.loads(e['opciones'])) if e['opciones'] else 0
+    if opcion is None or opcion < 0 or opcion >= n_opts:
+        return jsonify({'error': 'Opción inválida'}), 400
+    db.execute('DELETE FROM encuesta_votos WHERE encuesta_id=? AND user_id=?', (eid, u['id']))
+    db.execute('INSERT INTO encuesta_votos(encuesta_id, user_id, opcion) VALUES(?,?,?)', (eid, u['id'], opcion))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Eventos y actividades
+# ---------------------------------------------------------------------------
+
+@app.route('/api/eventos')
+@login_required
+def api_eventos():
+    filas = get_db().execute('SELECT * FROM eventos ORDER BY fecha_evento ASC').fetchall()
+    db = get_db()
+    u = current_user()
+    out = []
+    for r in filas:
+        asisten = db.execute('SELECT COUNT(*) AS n FROM evento_asistencias WHERE evento_id=?', (r['id'],)).fetchone()['n']
+        voy = db.execute('SELECT 1 FROM evento_asistencias WHERE evento_id=? AND user_id=?', (r['id'], u['id'])).fetchone()
+        out.append({**dict(r), 'asisten_conf': asisten, 'voy': 1 if voy else 0})
+    return jsonify({'eventos': out})
+
+
+@app.route('/api/eventos', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_evento_crear():
+    u = current_user()
+    data = parse_json()
+    titulo = (data.get('titulo') or '').strip()
+    if not titulo:
+        return jsonify({'error': 'Poné el título del evento'}), 400
+    now = datetime.now().strftime('%Y-%m-%d %H:%M')
+    cur = get_db().execute(
+        'INSERT INTO eventos(user_id, titulo, descripcion, fecha, hora, lugar, fecha_evento) VALUES(?,?,?,?,?,?,?)',
+        (u['id'], titulo, (data.get('descripcion') or '').strip(), now,
+         (data.get('hora') or '').strip(), (data.get('lugar') or '').strip(),
+         (data.get('fecha_evento') or '').strip() or now[:10]))
+    get_db().commit()
+    return jsonify({'ok': True, 'id': cur.lastrowid})
+
+
+@app.route('/api/eventos/<int:eid>/asistir', methods=['POST'])
+@login_required
+def api_evento_asistir(eid):
+    u = current_user()
+    db = get_db()
+    data = parse_json()
+    quitar = data.get('quitar')
+    if quitar:
+        db.execute('DELETE FROM evento_asistencias WHERE evento_id=? AND user_id=?', (eid, u['id']))
+    else:
+        db.execute('INSERT OR IGNORE INTO evento_asistencias(evento_id, user_id) VALUES(?,?)', (eid, u['id']))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/eventos/<int:eid>', methods=['DELETE'])
+@role_required('admin')
+def api_evento_borrar(eid):
+    get_db().execute('DELETE FROM eventos WHERE id=?', (eid,))
+    get_db().commit()
+    return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Historial financiero + asistencias (gráficos)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/historial')
+@role_required('admin', 'profesor')
+def api_historial():
+    db = get_db()
+    pagos = db.execute(
+        'SELECT anio, mes, COALESCE(SUM(monto),0) AS monto, COUNT(*) AS n '
+        'FROM pagos GROUP BY anio, mes ORDER BY anio, mes').fetchall()
+    asis = db.execute(
+        'SELECT DATE(fecha) AS d, COUNT(DISTINCT alumno_id) AS n FROM asistencia '
+        'WHERE fecha >= ? GROUP BY d ORDER BY d',
+        (datetime.now().strftime('%Y-%m-01'))).fetchall()
+    return jsonify({
+        'pagos': [dict(r) for r in pagos],
+        'asistencia': [{'fecha': r['d'], 'alumnos': r['n']} for r in asis]
+    })
+
+
+# ---------------------------------------------------------------------------
+# MercadoPago (link de checkout)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/checkout', methods=['POST'])
+@login_required
+def api_checkout():
+    """Genera un link de pago de MercadoPago para la cuota del alumno."""
+    u = current_user()
+    token = (get_setting('mp_access_token', '') or '').strip()
+    if not token:
+        return jsonify({'error': 'MercadoPago aún no está configurado'}), 400
+    cuota = u['cuota_mensual'] or to_float(get_setting('default_cuota')) or 0
+    if cuota <= 0:
+        return jsonify({'error': 'No hay un monto de cuota definido'}), 400
+    desc = 'Cuota IKIGAI VIEDMA'
+    email = (u.get('username') or '') + '@alumno.local' if '@' not in (u.get('username') or '') else u.get('username')
+    import urllib.request
+    payload = {
+        'items': [{'title': desc, 'quantity': 1, 'unit_price': float(cuota), 'currency_id': 'ARS'}],
+        'back_urls': {'success': 'https://ikigai-viedma.onrender.com/app', 'failure': 'https://ikigai-viedma.onrender.com/app'},
+        'auto_return': 'approved',
+        'notification_url': 'https://ikigai-viedma.onrender.com/api/mp_webhook',
+        'external_reference': 'cuota-%s-%d' % (u['id'], int(datetime.now().timestamp())),
+    }
+    req = urllib.request.Request(
+        'https://api.mercadopago.com/checkout/preferences',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token},
+        method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        return jsonify({'init_point': data.get('init_point'), 'preference_id': data.get('id')})
+    except Exception as e:
+        return jsonify({'error': 'No se pudo crear el pago: %s' % e}), 502
+
+
+@app.route('/api/mp_webhook', methods=['POST'])
+def api_mp_webhook():
+    """Webhook de MercadoPago: registra el aviso de pago cuando se aprueba."""
+    try:
+        data = request.get_json(silent=True) or {}
+        ext = data.get('external_reference') or ''
+        if ext.startswith('cuota-'):
+            parts = ext.split('-')
+            alumno_id = int(parts[1])
+            now = datetime.now().strftime('%Y-%m-%d %H:%M')
+            hoy = date.today()
+            db = get_db()
+            cur = db.execute(
+                'INSERT INTO avisos_pago(alumno_id, monto, mes, anio, nota, comprobante, estado, fecha) '
+                'VALUES(?,?,?,?,?,?,?,?)',
+                (alumno_id, 0, hoy.month, hoy.year, 'Pago por MercadoPago', None, 'pendiente', now))
+            db.commit()
+            aviso_id = cur.lastrowid
+            # notificar a staff
+            staff = db.execute("SELECT id FROM users WHERE role IN ('admin','profesor') AND activo=1").fetchall()
+            for s in staff:
+                notify(s['id'], '🧾 Nuevo pago por MercadoPago',
+                       'El alumno pagó por MercadoPago. Revisá y confirmá el aviso #%d.' % aviso_id,
+                       'info', push=True)
+        return jsonify({'ok': True})
+    except Exception:
+        return jsonify({'ok': True}), 200
+
+
+# ---------------------------------------------------------------------------
 # Notificaciones en la app + push
 # ---------------------------------------------------------------------------
 
@@ -1666,7 +2302,8 @@ def api_push_subscribe():
 def api_settings_get():
     u = current_user()
     keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_link', 'pago_alias',
-            'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo']
+            'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
+            'mp_access_token', 'wp_numero']
     if u['role'] == 'admin':
         keys += ['academy_color']
     return jsonify({k: get_setting(k) for k in keys})
@@ -1677,7 +2314,8 @@ def api_settings_get():
 def api_settings_put():
     data = parse_json()
     for k in ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'academy_color', 'pago_link', 'pago_alias',
-              'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo']:
+              'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
+              'mp_access_token', 'wp_numero']:
         if k in data and data[k] is not None:
             set_setting(k, data[k])
     return jsonify({'ok': True})

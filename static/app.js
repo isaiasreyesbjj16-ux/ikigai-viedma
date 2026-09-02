@@ -189,6 +189,11 @@ function initDashboard() {
     p.hidden = !p.hidden;
     if (!p.hidden) loadNotifs();
   });
+  // tema claro/oscuro
+  applyTheme(localStorage.getItem('ikigai_tema') || 'dark');
+  $('#themeBtn').addEventListener('click', () => {
+    applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+  });
   $('#markAllRead').addEventListener('click', async () => {
     await api('/api/notificaciones/leer_todas', { method: 'POST' }).catch(() => {});
     loadNotifs();
@@ -230,6 +235,9 @@ function showSec(name) {
     asistencia: renderAsistencia, deudores: renderDeudores,
     profesores: renderProfesores, config: renderConfig,
     mi_asistencia: renderMiAsistencia, videos: renderVideos,
+    chat: renderChat, muro: renderMuro, galeria: renderGaleria,
+    ranking: renderRanking, metas: renderMetas, encuestas: renderEncuestas,
+    eventos: renderEventos, historial: renderHistorial,
   };
   if (renderers[name]) renderers[name](el);
 }
@@ -438,13 +446,52 @@ function videoMediaHTML(v) {
     if (yid) return `<iframe src="https://www.youtube.com/embed/${yid}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
     return `<div class="post-media-link"><a href="${esc(v.url)}" target="_blank" rel="noopener">🔗 ${esc(v.url)}</a></div>`;
   }
-  return `<video controls preload="metadata" playsinline><source src="${esc(v.url)}"></video>`;
+  return `<video controls preload="metadata" playsinline data-vid="${v.id}" ontimeupdate="trackProgreso(event)" onended="videoTerminado(event)"><source src="${esc(v.url)}"></video>`;
+}
+
+function applyTheme(t) {
+  if (t !== 'light') t = 'dark';
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('ikigai_tema', t);
+  const ic = document.querySelector('#themeIcon');
+  if (ic) ic.innerHTML = t === 'light'
+    ? '<path fill="currentColor" d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>'
+    : '<path fill="currentColor" d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/>';
+}
+
+async function trackProgreso(e) {
+  const vid = e.currentTarget;
+  const id = vid.dataset.vid;
+  if (!id) return;
+  // guarda cada ~5s
+  if (trackProgreso._last === id && (Date.now() - trackProgreso._time) < 5000) return;
+  trackProgreso._last = id; trackProgreso._time = Date.now();
+  try {
+    await api('/api/videos/' + id + '/progress', { method: 'POST',
+      body: { segundos: Math.floor(vid.currentTime), duracion: Math.floor(vid.duration || 0) } });
+  } catch (e) {}
+}
+async function videoTerminado(e) {
+  const vid = e.currentTarget;
+  const id = vid.dataset.vid;
+  if (!id) return;
+  try {
+    await api('/api/videos/' + id + '/progress', { method: 'POST',
+      body: { segundos: Math.floor(vid.duration || 0), duracion: Math.floor(vid.duration || 0) } });
+    toast('🎉 Video completado');
+    const sec = $('#sec-videos');
+    if (sec && sec.classList.contains('active')) renderVideos(sec);
+  } catch (err) {}
 }
 
 function videoCardHTML(v, isStaff) {
   const beltCls = 'tag ' + (v.belt === 'Todos' ? 'alumno' : 'nogi');
   const visto = v.visto ? ' visto' : '';
   const staffBtns = isStaff ? `<div class="post-views" id="views-${v.id}"></div>` : '';
+  const vistoBtn = isStaff || v.tipo === 'link'
+    ? `<button class="post-btn${visto}" onclick="marcarVisto(${v.id}, this, ${v.tipo === 'link'})">✓ Visto</button>`
+    : `<button class="post-btn${visto}" ${v.completado ? '' : 'disabled style=opacity:.5'} onclick="marcarVisto(${v.id}, this)">✓ Visto</button>
+       <div class="small" style="color:var(--muted)">${v.completado ? 'Completado ✓ (podés marcar visto)' : (v.progreso_pct ? 'Progreso ' + v.progreso_pct + '% — mirá el video hasta el final para poder marcarlo' : 'Mirá el video hasta el final para poder marcarlo como visto')}</div>`;
   return `<div class="post-card" id="video-${v.id}">
     <div class="post-head">
       ${avatarHTML('', v.subidor_nombre || 'Profesor', 'sm')}
@@ -456,7 +503,7 @@ function videoCardHTML(v, isStaff) {
     </div>
     <div class="post-media">${videoMediaHTML(v)}</div>
     <div class="post-actions">
-      <button class="post-btn${visto}" onclick="marcarVisto(${v.id}, this)">✓ Visto</button>
+      ${vistoBtn}
       <span class="post-count">👁 ${v.vistas} visto${v.vistas === 1 ? '' : 's'}</span>
       ${isStaff ? `<button class="post-btn" onclick="toggleVistos(${v.id})">Quién lo vio</button>` : ''}
     </div>
@@ -672,8 +719,12 @@ async function renderInicio(el) {
           <button class="chip" onclick="showSec('horarios')">📅 Horarios</button>
           <button class="chip" onclick="showSec('videos')">🎥 Videos</button>
           <button class="chip" onclick="showSec('mispagos')">🧾 Mi cuota</button>
-          <button class="chip" onclick="showSec('perfil')">👤 Mi perfil</button>
           <button class="chip" onclick="showSec('mi_asistencia')">✅ Mi asistencia</button>
+          <button class="chip" onclick="showSec('metas')">🎯 Mis metas</button>
+          <button class="chip" onclick="showSec('muro')">📢 Muro</button>
+          <button class="chip" onclick="showSec('chat')">💬 Chat</button>
+          <button class="chip" onclick="showSec('eventos')">🗓️ Eventos</button>
+          <button class="chip" onclick="showSec('encuestas')">📊 Encuestas</button>
           <button class="chip" onclick="abrirScannerQR()">📷 Escanear QR</button>
         </div>
       </div>`;
@@ -691,6 +742,13 @@ async function renderInicio(el) {
       `<button class="chip" onclick="showSec('deudores')">⚠️ Deudas</button>`,
       `<button class="chip" onclick="showSec('videos')">🎥 Videos</button>`];
     if (R === 'admin') chips.push(`<button class="chip" onclick="showSec('profesores')">🧑‍🏫 Profesores</button>`, `<button class="chip" onclick="showSec('config')">⚙️ Configuración</button>`);
+    chips.push(`<button class="chip" onclick="showSec('muro')">📢 Muro</button>`);
+    chips.push(`<button class="chip" onclick="showSec('chat')">💬 Chat</button>`);
+    chips.push(`<button class="chip" onclick="showSec('ranking')">🏆 Ranking</button>`);
+    chips.push(`<button class="chip" onclick="showSec('eventos')">🗓️ Eventos</button>`);
+    chips.push(`<button class="chip" onclick="showSec('encuestas')">📊 Encuestas</button>`);
+    chips.push(`<button class="chip" onclick="showSec('historial')">📈 Historial</button>`);
+    chips.push(`<button class="chip" onclick="showSec('galeria')">🖼️ Galería</button>`);
     chips.push(`<button class="chip" onclick="abrirMensajeMasivo()">📣 Mandar mensaje</button>`);
     chips.push(`<button class="chip" onclick="window.open('/qr_print','_blank')">📱 QR de asistencia</button>`);
     el.innerHTML = `
@@ -903,7 +961,7 @@ function formHorario(h = null) {
       <div class="field"><label>Tipo</label><select id="hTipo">
         ${TIPOS_CLASE.map(t => `<option ${h && h[3] === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="field"><label>Nivel</label><select id="hNivel">
-        ${['Todos', 'Principiantes', 'Intermedios', 'Avanzados', 'Competencia'].map(n => `<option ${h && h[4] === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+        ${['Todos', 'Principiantes', 'Intermedios', 'Avanzados', 'Competencia', 'Femenino'].map(n => `<option ${h && h[4] === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
       <div class="field"><label>Profesor</label><select id="hProfesor">
         <option value="">Sin asignar</option>
         ${PROFESORES_CACHE.length ? PROFESORES_CACHE.map(p => `<option value="${p.id}" ${h && h[5] === p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('') : ''}</select></div>
@@ -1157,6 +1215,7 @@ async function renderMisPagos(el) {
       <p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_alias ? ' por transferencia al alias/CVU de la academia' : ' en la academia'} y <b>sí o sí mandá el comprobante de pago</b>: sin comprobante, el pago no se confirma.</p>
       ${aviso ? `<p class="small mt" style="color:var(--warn)">⏳ Comprobante de ${aviso.mes}/${aviso.anio} enviado. Esperá la confirmación.</p>` : ''}
       ${estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
+      ${me.mp_habilitado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" style="background:linear-gradient(90deg,#00c3ff,#0aa2e0);border:none" onclick="pagarMercadoPago()">💳 Pagar con MercadoPago</button>` : ''}
     </div>
     ${me.pago_alias ? `
     <div class="card">
@@ -1175,6 +1234,13 @@ async function renderMisPagos(el) {
           : '<tr><td colspan="6" class="empty">Aún no registraste pagos</td></tr>'}
       </table></div>
     </div>`;
+}
+async function pagarMercadoPago() {
+  try {
+    const r = await api('/api/checkout', { method: 'POST' });
+    if (r.init_point) { window.open(r.init_point, '_blank'); }
+    else toast(r.error || 'No se pudo generar el pago');
+  } catch (e) { toast(e.message); }
 }
 async function avisarPago() {
   openModal(`
@@ -1534,6 +1600,10 @@ async function renderConfig(el) {
         <div class="field"><label>Recargo por pago con demora (%)</label><input type="number" id="cDemora" value="${esc(s.cargo_demora_pct ?? '10')}" placeholder="10"></div>
         <div class="field" style="grid-column:1/-1"><label>Link de pago en línea (ej: link de MercadoPago)</label><input id="cLink" value="${esc(s.pago_link || '')}" placeholder="https://link.mercadopago.com.ar/... (dejalo vacío para ocultar el botón de pago)"></div>
         <div class="field" style="grid-column:1/-1"><label>Alias o CVU para transferencia</label><input id="cAlias" value="${esc(s.pago_alias || '')}" placeholder="ej: academia.bjj.viedma (dejalo vacío para ocultarlo)"></div>
+        <div class="field" style="grid-column:1/-1"><label>Access Token de MercadoPago (APP_USR-...) para el botón de pago en línea</label><input id="cMpTk" value="${esc(s.mp_access_token || '')}" placeholder="APP_USR-... (dejalo vacío para ocultar el botón de pago online)"></div>
+        <div class="field"><label>Número WhatsApp de la academia (con código país)</label><input id="cWp" value="${esc(s.wp_numero || '')}" placeholder="549299..."></div>
+        <div class="field"><label>Logro de asistencias (cada cuántas avisar)</label><input type="number" id="cLogroAsist" value="${esc(s.logro_asist ?? '50')}"></div>
+        <div class="field"><label>Logro de videos vistos (cada cuántos avisar)</label><input type="number" id="cLogroVids" value="${esc(s.logro_videos ?? '25')}"></div>
         <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar configuración</button></div>
       </form>
     </div>
@@ -1567,8 +1637,10 @@ async function renderConfig(el) {
       await api('/api/settings', { method: 'PUT', body: {
         academy_name: $('#cNombre').value, academy_color: $('#cColor').value,
         academy_code: $('#cCodigo').value, default_cuota: $('#cCuota').value,
-        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value } });
+        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value,
+        mp_access_token: $('#cMpTk').value, wp_numero: $('#cWp').value, logro_asist: $('#cLogroAsist').value, logro_videos: $('#cLogroVids').value } });
       toast('Configuración guardada ✓');
+      if (location.reload) { /* color aplicado al recargar */ }
       window.ACADEMY_NAME = $('#cNombre').value;
       $('#academyName').textContent = $('#cNombre').value;
       $('#academyTitle') && ($('#academyTitle').textContent = $('#cNombre').value);
@@ -1608,3 +1680,404 @@ async function enviarAutoAhora() {
 try { fetch('/api/settings').then(r => r.json()).then(s => {
   if (s.academy_name) window.ACADEMY_NAME = s.academy_name;
 }).catch(() => {}); } catch (e) {}
+
+/* =====================================================================
+   CHAT + GRUPOS POR CATEGORÍA
+   ===================================================================== */
+let CHAT_ACTIVO = null;
+let CHAT_TIMER = null;
+
+async function renderChat(el) {
+  const d = await api('/api/chats').catch(() => ({ chats: [] }));
+  el.innerHTML = `
+    ${secHeader('💬 Chat')}
+    <div class="card">
+      <h3>Grupos por categoría</h3>
+      <p class="small">Podés abrir un chat grupal automático para cada categoría.</p>
+      <div class="chips">
+        <button class="chip" onclick="abrirGrupo('kids')">🧒 Grupo Kids</button>
+        <button class="chip" onclick="abrirGrupo('juveniles')">👦 Grupo Juveniles</button>
+        <button class="chip" onclick="abrirGrupo('adulto')">🧑 Grupo Adultos</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Chats directos</h3>
+      <button class="btn primary btn-block" onclick="nuevoChatDirecto()">➕ Nuevo chat</button>
+    </div>
+    <div class="card">
+      <h3>Tus conversaciones</h3>
+      <div id="chatLista">${d.chats.length ? d.chats.map(c =>
+        `<div class="flex space-between" style="padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="abrirChatId(${c.id})">
+          <span><b>${esc(c.nombre)}</b> <span class="small" style="color:var(--muted)">${c.tipo === 'grupo' ? '· ' + c.miembros + ' miembros' : ''}</span></span>
+          <span class="small" style="color:var(--accent2)">Abrir →</span>
+        </div>`).join('') : '<div class="empty">Todavía no tenés conversaciones.</div>'}</div>
+    </div>`;
+}
+
+async function abrirGrupo(cat) {
+  try {
+    const r = await api('/api/chats', { method: 'POST', body: { categoria: cat } });
+    abrirChatId(r.id);
+  } catch (e) { toast(e.message); }
+}
+
+async function nuevoChatDirecto() {
+  const d = await api('/api/contactos').catch(() => ({ contactos: [] }));
+  openModal(`
+    <h3>Nuevo chat</h3>
+    <div>
+      ${d.contactos.length ? d.contactos.map(c =>
+        `<div class="flex space-between" style="padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer" onclick="crearDirecto(${c.id})">
+          <span>${avatarHTML(c.foto, c.nombre, 'sm')} <b>${esc(c.nombre)}</b> ${c.cinturon ? beltHTML(c.cinturon) : ''}</span>
+          <span class="small" style="color:var(--accent2)">Abrir →</span>
+        </div>`).join('') : '<div class="empty">No hay contactos disponibles</div>'}
+    </div>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+}
+
+async function crearDirecto(uid) {
+  try {
+    const r = await api('/api/chats', { method: 'POST', body: { user_id: uid } });
+    closeModal();
+    abrirChatId(r.id);
+  } catch (e) { toast(e.message); }
+}
+
+async function abrirChatId(cid) {
+  CHAT_ACTIVO = cid;
+  const d = await api('/api/chats/' + cid + '/mensajes').catch(() => null);
+  if (!d) { toast('No pudimos abrir el chat'); return; }
+  const mensajes = (d.mensajes || []).map(m => `
+    <div class="chat-msg ${m.user_id === USER.id ? 'own' : ''}">
+      <div class="chat-bubble">${esc(m.mensaje)}</div>
+      <div class="chat-meta">${esc(m.nombre)} · ${esc(m.fecha)}</div>
+    </div>`).join('');
+  showSec('chat');
+  const el = $('#sec-chat');
+  el.innerHTML = `
+    ${secHeader('💬 ' + esc(d.chat.nombre || 'Chat'))}
+    <button class="btn ghost small mb" onclick="renderChat($('#sec-chat'))">← Volver a la lista</button>
+    <div class="card">
+      <div id="chatMsgs" style="max-height:55vh;overflow:auto;display:flex;flex-direction:column">${mensajes || '<div class="empty">Decí hola 👋</div>'}</div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <input id="chatInput" placeholder="Escribí un mensaje..." style="flex:1">
+        <button class="btn primary" onclick="enviarChat()">Enviar</button>
+      </div>
+    </div>`;
+  const inp = $('#chatInput');
+  inp.focus();
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') enviarChat(); });
+  const box = $('#chatMsgs'); box.scrollTop = box.scrollHeight;
+  if (CHAT_TIMER) clearInterval(CHAT_TIMER);
+  CHAT_TIMER = setInterval(() => { if (CHAT_ACTIVO && $('#sec-chat') && !document.hidden) actualizarChatMsgs(); }, 5000);
+}
+
+async function actualizarChatMsgs() {
+  const d = await api('/api/chats/' + CHAT_ACTIVO + '/mensajes').catch(() => null);
+  if (!d || !$('#chatMsgs')) return;
+  const box = $('#chatMsgs');
+  const eraAbajo = box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
+  box.innerHTML = (d.mensajes || []).map(m => `
+    <div class="chat-msg ${m.user_id === USER.id ? 'own' : ''}">
+      <div class="chat-bubble">${esc(m.mensaje)}</div>
+      <div class="chat-meta">${esc(m.nombre)} · ${esc(m.fecha)}</div>
+    </div>`).join('');
+  if (eraAbajo) box.scrollTop = box.scrollHeight;
+}
+
+async function enviarChat() {
+  const inp = $('#chatInput');
+  const msg = inp.value.trim();
+  if (!CHAT_ACTIVO || !msg) return;
+  inp.value = '';
+  try {
+    await api('/api/chats/' + CHAT_ACTIVO + '/mensajes', { method: 'POST', body: { mensaje: msg } });
+    actualizarChatMsgs();
+  } catch (e) { toast(e.message); }
+}
+
+/* =====================================================================
+   MURO
+   ===================================================================== */
+async function renderMuro(el) {
+  const d = await api('/api/muro').catch(() => ({ muro: [] }));
+  el.innerHTML = `
+    ${secHeader('📢 Muro de la academia')}
+    <div class="card">
+      <textarea id="muroTexto" placeholder="¿Qué está pasando en la academia? Compartí algo..." style="width:100%;min-height:70px"></textarea>
+      <input type="file" id="muroFoto" accept="image/*" style="margin-top:8px">
+      <button class="btn primary btn-block mt" onclick="publicarMuro()">Publicar</button>
+    </div>
+    <div id="muroFeed">
+      ${d.muro.length ? d.muro.map(p => `
+        <div class="post-card">
+          <div class="post-head">
+            ${avatarHTML(p.foto, p.nombre, 'sm')} <b>${esc(p.nombre)}</b> ${p.cinturon ? beltHTML(p.cinturon) : ''}
+            <span class="small" style="color:var(--muted)">· ${esc(p.fecha)}</span>
+            ${p.user_id === USER.id ? `<button class="btn ghost small" style="margin-left:auto" onclick="borrarMuro(${p.id})">🗑</button>` : ''}
+          </div>
+          ${p.texto ? `<p style="margin:8px 0">${esc(p.texto)}</p>` : ''}
+          ${(p.fotos || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${p.fotos.slice(0,4).map(f => `<img src="${esc(f)}" style="max-width:150px;max-height:150px;border-radius:8px;object-fit:cover">`).join('')}</div>` : ''}
+        </div>`).join('') : '<div class="empty">Todavía no hay publicaciones.</div>'}
+    </div>`;
+}
+
+async function publicarMuro() {
+  const texto = $('#muroTexto').value.trim();
+  const file = $('#muroFoto').files && $('#muroFoto').files[0];
+  let foto = null;
+  if (file) {
+    try { foto = await leerArchivoBase64(file); } catch (e) {}
+  }
+  if (!texto && !foto) { toast('Escribí algo o subí una foto'); return; }
+  try {
+    await api('/api/muro', { method: 'POST', body: { texto, fotos: foto ? [foto] : [] } });
+    toast('Publicado ✓');
+    renderMuro($('#sec-muro'));
+  } catch (e) { toast(e.message); }
+}
+function leerArchivoBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+async function borrarMuro(id) {
+  if (!confirm('¿Eliminar esta publicación?')) return;
+  try { await api('/api/muro/' + id, { method: 'DELETE' }); renderMuro($('#sec-muro')); }
+  catch (e) { toast(e.message); }
+}
+
+/* =====================================================================
+   GALERÍA DE FOTOS
+   ===================================================================== */
+async function renderGaleria(el) {
+  const d = await api('/api/muro').catch(() => ({ muro: [] }));
+  const fotos = [];
+  d.muro.forEach(p => (p.fotos || []).forEach(f => fotos.push({ f, n: p.nombre })));
+  el.innerHTML = `
+    ${secHeader('🖼️ Galería de fotos')}
+    <div class="card">${fotos.length
+      ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">${fotos.map(x => `<div style="position:relative"><img src="${esc(x.f)}" style="width:100%;height:120px;object-fit:cover;border-radius:10px" onclick="window.open('${esc(x.f)}','_blank')"><span class="small" style="position:absolute;bottom:4px;left:6px;color:#fff;text-shadow:0 1px 2px #000">${esc(x.n)}</span></div>`).join('')}</div>`
+      : '<div class="empty">Aún no hay fotos. Publicá una en el Muro 🖼️</div>'}</div>`;
+}
+
+/* =====================================================================
+   RANKING
+   ===================================================================== */
+async function renderRanking(el) {
+  const d = await api('/api/ranking').catch(() => ({ ranking: [] }));
+  const medallas = ['🥇', '🥈', '🥉'];
+  el.innerHTML = `
+    ${secHeader('🏆 Ranking de la academia')}
+    <div class="card">
+      <p class="small">Puntos: <b>+2</b> por asistencia · <b>+5</b> por video completado · <b>+1</b> por video visto.</p>
+      ${d.ranking.length ? d.ranking.map((r, i) => `
+        <div class="flex space-between" style="padding:10px 0;border-bottom:1px solid var(--line)">
+          <span>${medallas[i] || (i + 1) + 'º'} ${avatarHTML(r.foto, r.nombre, 'sm')} <b>${esc(r.nombre)}</b> ${r.cinturon ? beltHTML(r.cinturon) : ''}</span>
+          <span class="small">${r.asistencias} asist · ${r.completados} vid · <b style="color:var(--accent2)">${r.puntos} pts</b></span>
+        </div>`).join('') : '<div class="empty">Todavía no hay datos para ranking.</div>'}
+    </div>`;
+}
+
+/* =====================================================================
+   METAS DE ENTRENAMIENTO
+   ===================================================================== */
+async function renderMetas(el) {
+  const d = await api('/api/metas').catch(() => ({ metas: [] }));
+  el.innerHTML = `
+    ${secHeader('🎯 Mis metas de entrenamiento')}
+    <div class="card">
+      <form id="metaForm" class="grid2">
+        <div class="field" style="grid-column:1/-1"><label>Meta</label><input id="mTitulo" placeholder="ej: Entrenar 3 veces por semana"></div>
+        <div class="field"><label>Tipo</label><select id="mTipo"><option value="semanas">Por semana</option><option value="mes">Por mes</option><option value="objetivo">Objetivo puntual</option></select></div>
+        <div class="field"><label>Objetivo (veces/valor)</label><input type="number" id="mObj" value="3"></div>
+        <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">＋ Agregar meta</button></div>
+      </form>
+    </div>
+    <div class="card">
+      <h3>Mis metas</h3>
+      ${d.metas.length ? d.metas.map(m => `
+        <div class="flex space-between" style="padding:10px 0;border-bottom:1px solid var(--line)">
+          <span>${m.cumplida ? '✅' : '⭕'} <b>${esc(m.titulo)}</b> <span class="small" style="color:var(--muted)">(${esc(m.tipo)} · ${m.objetivo})</span></span>
+          <span>
+            ${m.cumplida ? `<button class="btn ghost small" onclick="metaCumplida(${m.id},0)">Desmarcar</button>` : `<button class="btn primary small" onclick="metaCumplida(${m.id},1)">Cumplida ✓</button>`}
+            <button class="btn ghost small" onclick="borrarMeta(${m.id})">🗑</button>
+          </span>
+        </div>`).join('') : '<div class="empty">No tenés metas todavía. Agrega la primera 🎯</div>'}
+    </div>`;
+  $('#metaForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/metas', { method: 'POST', body: { titulo: $('#mTitulo').value, tipo: $('#mTipo').value, objetivo: +$('#mObj').value } });
+      renderMetas($('#sec-metas'));
+    } catch (err) { toast(err.message); }
+  });
+}
+async function metaCumplida(id, val) {
+  try { await api('/api/metas/' + id, { method: 'POST', body: { cumplida: val } }); renderMetas($('#sec-metas')); }
+  catch (e) { toast(e.message); }
+}
+async function borrarMeta(id) {
+  try { await api('/api/metas/' + id, { method: 'DELETE' }); renderMetas($('#sec-metas')); }
+  catch (e) { toast(e.message); }
+}
+
+/* =====================================================================
+   ENCUESTAS
+   ===================================================================== */
+async function renderEncuestas(el) {
+  const d = await api('/api/encuestas').catch(() => ({ encuestas: [] }));
+  const esStaff = USER.role !== 'alumno';
+  el.innerHTML = `
+    ${secHeader('📊 Encuestas')}
+    ${esStaff ? `<div class="card">
+      <h3>Crear encuesta</h3>
+      <form id="encForm" class="grid2">
+        <div class="field" style="grid-column:1/-1"><label>Pregunta</label><input id="eTitulo"></div>
+        <div class="field" style="grid-column:1/-1"><label>Opciones (una por línea)</label><textarea id="eOpc" style="width:100%;min-height:70px" placeholder="Opción 1&#10;Opción 2&#10;Opción 3"></textarea></div>
+        <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Publicar encuesta</button></div>
+      </form>
+    </div>` : ''}
+    <div class="card"><h3>Encuestas</h3>
+      ${d.encuestas.length ? d.encuestas.map(e => {
+        const total = e.conteo.reduce((a, b) => a + b, 0);
+        return `<div style="padding:10px 0;border-bottom:1px solid var(--line)">
+          <b>${esc(e.titulo)}</b> <span class="small" style="color:var(--muted)">· ${total} voto${total === 1 ? '' : 's'}</span>
+          ${e.opciones.map((o, i) => {
+            const pct = total ? Math.round(e.conteo[i] * 100 / total) : 0;
+            const esMi = e.mi_voto === i;
+            return `<div style="margin-top:6px">
+              <div class="flex space-between"><span class="small">${esMi ? '✓ ' : ''}${esc(o)}</span><span class="small">${e.conteo[i]} · ${pct}%</span></div>
+              <button class="btn ghost small" style="width:100%;margin-top:2px" onclick="votarEncuesta(${e.id},${i})">${esMi ? 'Cambiar voto' : 'Votar'}</button>
+              <div style="height:6px;background:var(--bg);border-radius:4px;margin-top:2px"><div style="height:100%;width:${pct}%;background:var(--red);border-radius:4px"></div></div>
+            </div>`;
+          }).join('')}
+        </div>`;
+      }).join('') : '<div class="empty">No hay encuestas todavía.</div>'}
+    </div>`;
+  if (esStaff) $('#encForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const opciones = $('#eOpc').value.split('\n').map(s => s.trim()).filter(Boolean);
+    try {
+      await api('/api/encuestas', { method: 'POST', body: { titulo: $('#eTitulo').value, opciones } });
+      renderEncuestas($('#sec-encuestas'));
+    } catch (err) { toast(err.message); }
+  });
+}
+async function votarEncuesta(id, op) {
+  try { await api('/api/encuestas/' + id + '/votar', { method: 'POST', body: { opcion: op } }); renderEncuestas($('#sec-encuestas')); }
+  catch (e) { toast(e.message); }
+}
+
+/* =====================================================================
+   EVENTOS Y ACTIVIDADES
+   ===================================================================== */
+async function renderEventos(el) {
+  const d = await api('/api/eventos').catch(() => ({ eventos: [] }));
+  const esStaff = USER.role !== 'alumno';
+  el.innerHTML = `
+    ${secHeader('🗓️ Eventos y actividades')}
+    ${esStaff ? `<div class="card">
+      <h3>Crear evento</h3>
+      <form id="evForm" class="grid2">
+        <div class="field"><label>Título</label><input id="vTitulo"></div>
+        <div class="field"><label>Fecha del evento</label><input type="date" id="vFecha"></div>
+        <div class="field"><label>Hora</label><input type="time" id="vHora"></div>
+        <div class="field"><label>Lugar</label><input id="vLugar"></div>
+        <div class="field" style="grid-column:1/-1"><label>Descripción</label><textarea id="vDesc" style="width:100%;min-height:60px"></textarea></div>
+        <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Publicar evento</button></div>
+      </form>
+    </div>` : ''}
+    <div class="card"><h3>Próximos eventos</h3>
+      ${d.eventos.length ? d.eventos.map(ev => `
+        <div class="flex space-between" style="padding:10px 0;border-bottom:1px solid var(--line)">
+          <div>
+            <b>${esc(ev.titulo)}</b>
+            <div class="small" style="color:var(--muted)">${esc(ev.fecha_evento)}${ev.hora ? ' · ' + esc(ev.hora) : ''}${ev.lugar ? ' · ' + esc(ev.lugar) : ''}</div>
+            ${ev.descripcion ? `<div class="small">${esc(ev.descripcion)}</div>` : ''}
+            <div class="small" style="color:var(--muted)">👥 ${ev.asisten_conf} confirmaron</div>
+          </div>
+          <span>
+            <button class="btn ${ev.voy ? 'ghost' : 'primary'} small" onclick="asistirEvento(${ev.id}, ${ev.voy ? 1 : 0})">${ev.voy ? 'No asistiré' : 'Voy a ir ✓'}</button>
+            ${USER.role === 'admin' ? `<button class="btn ghost small" onclick="borrarEvento(${ev.id})">🗑</button>` : ''}
+          </span>
+        </div>`).join('') : '<div class="empty">No hay eventos próximos.</div>'}
+    </div>`;
+  if (esStaff) $('#evForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/eventos', { method: 'POST', body: {
+        titulo: $('#vTitulo').value, fecha_evento: $('#vFecha').value, hora: $('#vHora').value,
+        lugar: $('#vLugar').value, descripcion: $('#vDesc').value } });
+      renderEventos($('#sec-eventos'));
+    } catch (err) { toast(err.message); }
+  });
+}
+async function asistirEvento(id, voy) {
+  try { await api('/api/eventos/' + id + '/asistir', { method: 'POST', body: { quitar: voy ? 1 : 0 } }); renderEventos($('#sec-eventos')); }
+  catch (e) { toast(e.message); }
+}
+async function borrarEvento(id) {
+  if (!confirm('¿Eliminar este evento?')) return;
+  try { await api('/api/eventos/' + id, { method: 'DELETE' }); renderEventos($('#sec-eventos')); }
+  catch (e) { toast(e.message); }
+}
+
+/* =====================================================================
+   HISTORIAL CON GRÁFICOS
+   ===================================================================== */
+async function renderHistorial(el) {
+  const d = await api('/api/historial').catch(() => ({ pagos: [], asistencia: [] }));
+  const pagos = d.pagos || [];
+  const asis = d.asistencia || [];
+  const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const maxPagos = Math.max(1, ...pagos.map(p => p.monto));
+  const maxAsis = Math.max(1, ...asis.map(a => a.alumnos));
+  el.innerHTML = `
+    ${secHeader('📈 Historial financiero y asistencia')}
+    <div class="card">
+      <h3>💵 Ingresos por mes</h3>
+      ${pagos.length ? `<div style="display:flex;align-items:flex-end;gap:8px;height:180px;padding-top:10px">
+        ${pagos.map(p => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end">
+          <span class="small" style="color:var(--accent2)">$${num(p.monto)}</span>
+          <div style="width:100%;background:var(--red);border-radius:6px 6px 0 0;height:${Math.max(4, Math.round(p.monto * 160 / maxPagos))}px"></div>
+          <span class="small" style="color:var(--muted)">${MESES[p.mes - 1]}</span>
+        </div>`).join('')}
+      </div>` : '<div class="empty">Sin pagos registrados.</div>'}
+    </div>
+    <div class="card">
+      <h3>🥋 Asistencia diaria (este mes)</h3>
+      ${asis.length ? `<div style="display:flex;align-items:flex-end;gap:4px;height:160px;padding-top:10px;overflow-x:auto">
+        ${asis.map(a => `<div style="flex:1;min-width:20px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end">
+          <div style="width:100%;background:var(--blue);border-radius:4px 4px 0 0;height:${Math.max(4, Math.round(a.alumnos * 140 / maxAsis))}px"></div>
+          <span class="small" style="color:var(--muted)">${a.fecha.slice(8)}</span>
+        </div>`).join('')}
+      </div>` : '<div class="empty">Sin asistencias este mes.</div>'}
+    </div>
+    <div class="card">
+      <h3>Exportar</h3>
+      <button class="btn primary" onclick="exportarExcel()">⬇️ Exportar historial a Excel</button>
+    </div>`;
+}
+
+/* =====================================================================
+   EXPORTAR A EXCEL
+   ===================================================================== */
+async function exportarExcel() {
+  try {
+    const hist = await api('/api/historial').catch(() => ({ pagos: [], asistencia: [] }));
+    const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    let csv = '\uFEFFMes,Año,Ingresos,Cantidad\n';
+    (hist.pagos || []).forEach(p => csv += MESES[p.mes - 1] + ',' + p.anio + ',$' + p.monto + ',' + p.n + '\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'historial_ikigai.csv';
+    a.click();
+    toast('Historial exportado ✓');
+  } catch (e) { toast(e.message); }
+}
+

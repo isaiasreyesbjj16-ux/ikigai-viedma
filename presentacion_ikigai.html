@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IKIGAI VIEDMA — Presentación</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --red: #e02e2e; --accent2: #ff5a4d; --bg: #160d0f; --bg2: #221315;
+    --card: #271619; --card2: #311b1f; --line: #421f24;
+    --txt: #f2e8ea; --muted: #b0969b; --good: #2ecc71; --warn: #f1c40f;
+    --blue: #3aa0ff;
+  }
+  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--txt); overflow: hidden; }
+  .slide { display: none; width: 100vw; height: 100vh; padding: 60px 80px; flex-direction: column; justify-content: center; }
+  .slide.active { display: flex; }
+  .slide h1 { font-size: 52px; font-weight: 900; margin-bottom: 16px; }
+  .slide h2 { font-size: 36px; font-weight: 700; margin-bottom: 24px; color: var(--accent2); }
+  .slide h3 { font-size: 22px; font-weight: 600; margin-bottom: 12px; color: var(--muted); }
+  .slide p, .slide li { font-size: 20px; line-height: 1.6; color: var(--txt); }
+  .slide ul { list-style: none; padding-left: 0; }
+  .slide ul li { padding: 6px 0; }
+  .slide ul li::before { content: "▸ "; color: var(--red); font-weight: 700; }
+  .big { font-size: 80px; font-weight: 900; }
+  .accent { color: var(--accent2); }
+  .good { color: var(--good); }
+  .blue { color: var(--blue); }
+  .muted { color: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 24px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px; margin-top: 24px; }
+  .grid4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 24px; margin-top: 24px; }
+  .stat-card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 28px; text-align: center; }
+  .stat-card .num { font-size: 44px; font-weight: 900; color: var(--accent2); }
+  .stat-card .lbl { font-size: 14px; color: var(--muted); margin-top: 4px; }
+  .feature-card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 28px; }
+  .feature-card .ico { font-size: 36px; margin-bottom: 12px; }
+  .feature-card h4 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  .feature-card p { font-size: 14px; color: var(--muted); }
+  .badge { display: inline-block; padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 700; }
+  .badge-admin { background: rgba(224,46,46,0.2); color: var(--red); }
+  .badge-profe { background: rgba(58,160,255,0.2); color: var(--blue); }
+  .badge-alumno { background: rgba(46,204,113,0.2); color: var(--good); }
+  .tech-row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 16px; }
+  .tech-tag { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 20px; font-size: 14px; font-weight: 600; }
+  .nav { position: fixed; bottom: 30px; right: 40px; display: flex; gap: 12px; z-index: 100; }
+  .nav button { background: var(--card); border: 1px solid var(--line); color: var(--txt); padding: 12px 24px; border-radius: 12px; cursor: pointer; font-size: 16px; font-weight: 600; transition: 0.2s; }
+  .nav button:hover { background: var(--red); border-color: var(--red); }
+  .counter { position: fixed; bottom: 36px; left: 40px; font-size: 14px; color: var(--muted); z-index: 100; }
+  .timeline { display: flex; flex-direction: column; gap: 20px; margin-top: 24px; }
+  .timeline-item { display: flex; gap: 20px; align-items: flex-start; }
+  .timeline-dot { width: 16px; height: 16px; border-radius: 50%; background: var(--red); margin-top: 4px; flex-shrink: 0; }
+  .timeline-item:nth-child(2) .timeline-dot { background: var(--accent2); }
+  .timeline-item:nth-child(3) .timeline-dot { background: var(--good); }
+  .timeline-item:nth-child(4) .timeline-dot { background: var(--blue); }
+  .table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  .table th, .table td { padding: 10px 16px; text-align: left; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .table th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; }
+  .glow { text-shadow: 0 0 40px rgba(224,46,46,0.5); }
+  .sub { font-size: 24px; color: var(--muted); font-weight: 300; margin-top: 8px; }
+  .tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .mini-tag { background: rgba(255,90,77,0.15); color: var(--accent2); padding: 4px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+  .phone-frame { width: 220px; height: 400px; background: var(--bg2); border: 2px solid var(--line); border-radius: 24px; padding: 12px; display: flex; flex-direction: column; }
+  .phone-notch { width: 80px; height: 6px; background: var(--line); border-radius: 4px; margin: 0 auto 10px; }
+  .phone-screen { flex: 1; background: var(--card); border-radius: 12px; padding: 10px; overflow: hidden; }
+  .phone-screen .mini-title { font-size: 11px; font-weight: 700; color: var(--accent2); }
+  .phone-screen .mini-text { font-size: 8px; color: var(--muted); margin-top: 4px; }
+  .phone-screen .mini-bar { display: flex; justify-content: space-around; margin-top: auto; padding-top: 6px; border-top: 1px solid var(--line); }
+  .phone-screen .mini-bar span { font-size: 10px; color: var(--muted); }
+  .phone-screen .mini-bar span.active { color: var(--accent2); }
+</style>
+</head>
+<body>
+
+<!-- SLIDE 1: Portada -->
+<div class="slide active" id="s1">
+  <h3>Presentación de plataforma</h3>
+  <h1 class="big glow">IKIGAI <span class="accent">VIEDMA</span></h1>
+  <p class="sub">Sistema integral de gestión para academia de Jiu-Jitsu Brasileño</p>
+  <div style="margin-top: 40px;">
+    <div class="tech-row">
+      <div class="tech-tag">🥋 BJJ Academy</div>
+      <div class="tech-tag">📱 Android APK</div>
+      <div class="tech-tag">🌐 PWA Web</div>
+      <div class="tech-tag">☁️ Cloud (Render + Supabase)</div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 2: Qué es -->
+<div class="slide" id="s2">
+  <h2>¿Qué es IKIGAI VIEDMA?</h2>
+  <div class="grid2">
+    <div>
+      <p>Una plataforma <strong>completa y moderna</strong> para gestionar todos los aspectos de una academia de artes marciales:</p>
+      <ul style="margin-top: 20px;">
+        <li>Alumnos, profesores y administración</li>
+        <li>Cuotas y pagos con verificación</li>
+        <li>Asistencia con QR</li>
+        <li>Horarios semanales</li>
+        <li>Biblioteca de videos de técnicas</li>
+        <li>Notificaciones y mensajería</li>
+        <li>Reportes y estadísticas</li>
+      </ul>
+    </div>
+    <div style="display:flex; align-items:center; justify-content:center;">
+      <div class="phone-frame">
+        <div class="phone-notch"></div>
+        <div class="phone-screen" style="display:flex; flex-direction:column; justify-content:space-between;">
+          <div>
+            <div class="mini-title">🥋 IKIGAI VIEDMA</div>
+            <div class="mini-text">Inicio</div>
+            <div style="display:flex;gap:6px;margin-top:8px;">
+              <div style="background:var(--accent2);border-radius:8px;padding:6px;width:45%;text-align:center"><div style="font-size:16px;font-weight:900">12</div><div style="font-size:7px;color:var(--muted)">Alumnos</div></div>
+              <div style="background:var(--blue);border-radius:8px;padding:6px;width:45%;text-align:center"><div style="font-size:16px;font-weight:900">$180k</div><div style="font-size:7px;color:var(--muted)">Ingresos</div></div>
+            </div>
+            <div class="mini-text" style="margin-top:8px">📅 Hoy: 3 clases</div>
+            <div class="mini-text">🎂 María cumple hoy</div>
+          </div>
+          <div class="mini-bar">
+            <span class="active">🏠</span><span>📅</span><span>💳</span><span>🎥</span><span>👤</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 3: Stack tecnológico -->
+<div class="slide" id="s3">
+  <h2>Stack tecnológico</h2>
+  <div class="grid2">
+    <div>
+      <h3>Backend</h3>
+      <ul>
+        <li>Python Flask (REST API completa)</li>
+        <li>PostgreSQL en la nube (Supabase)</li>
+        <li>Hosting gratuito (Render)</li>
+        <li>Push notifications (Web Push / VAPID)</li>
+        <li>Generación de QR y recibos PDF</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Frontend</h3>
+      <ul>
+        <li>Web: PWA instalable (JavaScript vanilla)</li>
+        <li>App Android nativa (Kotlin)</li>
+        <li>Diseño responsive y moderno</li>
+        <li>Colores personalizables de la academia</li>
+        <li>Menú inferior estilo Instagram</li>
+      </ul>
+    </div>
+  </div>
+  <div class="tech-row" style="margin-top: 32px;">
+    <div class="tech-tag">🐍 Python</div>
+    <div class="tech-tag">🐘 PostgreSQL</div>
+    <div class="tech-tag">☁️ Render</div>
+    <div class="tech-tag">🟣 Supabase</div>
+    <div class="tech-tag">📱 Kotlin</div>
+    <div class="tech-tag">🌐 HTML/CSS/JS</div>
+    <div class="tech-tag">📦 PWA</div>
+    <div class="tech-tag">🔐 VAPID</div>
+  </div>
+</div>
+
+<!-- SLIDE 4: Roles -->
+<div class="slide" id="s4">
+  <h2>Tres roles, tres experiencias</h2>
+  <div class="grid3">
+    <div class="feature-card" style="border-top: 3px solid var(--red);">
+      <div class="ico">👑</div>
+      <h4>Administrador</h4>
+      <span class="badge badge-admin">Control total</span>
+      <ul style="margin-top: 12px; font-size: 14px;">
+        <li>Gestiona alumnos y profesores</li>
+        <li>Registra y confirma pagos</li>
+        <li>Carga y elimina horarios</li>
+        <li>Configuración de la academia</li>
+        <li>Reportes y estadísticas</li>
+        <li>Envía mensajes masivos</li>
+        <li>Aplica cuota a todos</li>
+      </ul>
+    </div>
+    <div class="feature-card" style="border-top: 3px solid var(--blue);">
+      <div class="ico">🧑‍🏫</div>
+      <h4>Profesor</h4>
+      <span class="badge badge-profe">Gestión parcial</span>
+      <ul style="margin-top: 12px; font-size: 14px;">
+        <li>Carga horarios</li>
+        <li>Registra pagos</li>
+        <li>Marca asistencia</li>
+        <li>Sube videos de técnicas</li>
+        <li>Ve sus ingresos propios</li>
+        <li>Gestiona alumnos</li>
+        <li>No puede borrar horarios</li>
+      </ul>
+    </div>
+    <div class="feature-card" style="border-top: 3px solid var(--good);">
+      <div class="ico">🥋</div>
+      <h4>Alumno</h4>
+      <span class="badge badge-alumno">Experiencia propia</span>
+      <ul style="margin-top: 12px; font-size: 14px;">
+        <li>Ve su cuota y estado</li>
+        <li>Marca asistencia con QR</li>
+        <li>Manda comprobante de pago</li>
+        <li>Ve videos de su cinturón</li>
+        <li>Ve historial de asistencias</li>
+        <li>Edita su perfil</li>
+        <li>Notificaciones en tiempo real</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 5: Funcionalidades principales -->
+<div class="slide" id="s5">
+  <h2>Funcionalidades principales</h2>
+  <div class="grid4">
+    <div class="stat-card"><div class="num">14</div><div class="lbl">Tablas en la DB</div></div>
+    <div class="stat-card"><div class="num">40+</div><div class="lbl">Endpoints API</div></div>
+    <div class="stat-card"><div class="num">3</div><div class="lbl">Roles de usuario</div></div>
+    <div class="stat-card"><div class="num">2</div><div class="lbl">Plataformas (Web + Android)</div></div>
+  </div>
+  <div class="grid2" style="margin-top: 24px;">
+    <div>
+      <h3>Medición de asistencia</h3>
+      <ul>
+        <li>Escáner QR desde la app o cámara web</li>
+        <li>Auto-marca todas las clases del día</li>
+        <li>Historial por alumno y por clase</li>
+        <li>Porcentaje de asistencia en reportes</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Gestión de pagos</h3>
+      <ul>
+        <li>Verificación con comprobante obligatorio</li>
+        <li>Cálculo automático de recargo por demora</li>
+        <li>Alias/CVU copiable para transferencia</li>
+        <li>Reporte mensual con desglose</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 6: Sistema de pagos -->
+<div class="slide" id="s6">
+  <h2>Sistema de pagos <span class="accent">verificado</span></h2>
+  <div class="grid2">
+    <div>
+      <div class="timeline">
+        <div class="timeline-item">
+          <div class="timeline-dot"></div>
+          <div>
+            <strong>1. El alumno transfiere</strong>
+            <p class="muted" style="font-size:16px;">Copia el alias/CVU desde la app y transfiere por su banco</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-dot"></div>
+          <div>
+            <strong>2. Envía comprobante</strong>
+            <p class="muted" style="font-system:16px;">Tira una foto al comprobante desde la app — se sube encriptado</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-dot"></div>
+          <div>
+            <strong>3. El profe/admin revisa</strong>
+            <p class="muted" style="font-size:16px;">Ve la imagen del comprobante y confirma o descarta el pago</p>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-dot"></div>
+          <div>
+            <strong>4. Notificación automática</strong>
+            <p class="muted" style="font-size:16px;">El alumno recibe aviso de confirmación + se actualiza su estado</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="feature-card" style="margin-bottom: 16px;">
+        <h4>⚡ Cálculo automático</h4>
+        <p>Si el alumno paga después del día de vencimiento, se aplica recargo automático configurable (% configurable desde admin).</p>
+      </div>
+      <div class="feature-card" style="margin-bottom: 16px;">
+        <h4>🔔 Mensajes automáticos</h4>
+        <p>Si un alumno no entrena hace X días o debe más de Y días, la app le envía un mensaje automático de seguimiento.</p>
+      </div>
+      <div class="feature-card">
+        <h4>📊 Aplicar cuota masiva</h4>
+        <p>El admin puede aplicar la cuota mensual a todos los alumnos de golpe con un solo botón.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 7: App Android -->
+<div class="slide" id="s7">
+  <h2>App Android nativa</h2>
+  <div class="grid2">
+    <div>
+      <p>App compilada para <strong>Android 8.0+</strong> con todas las funcionalidades de la versión web:</p>
+      <ul style="margin-top: 16px;">
+        <li>Login con servidor configurable</li>
+        <li>5 secciones: Inicio, Horarios, Pagos, Videos, Perfil</li>
+        <li>Subida de videos directamente desde el celular</li>
+        <li>Cámara para escanear QR de asistencia</li>
+        <li>Envío de comprobante de pago con foto</li>
+        <li>Reproductor de video integrado</li>
+        <li>Foto de perfil desde galería o cámara</li>
+        <li>Diseño moderno con animaciones</li>
+        <li>Colores iguales a la versión web</li>
+      </ul>
+    </div>
+    <div style="display:flex; gap: 20px; align-items:center; justify-content:center;">
+      <div class="phone-frame">
+        <div class="phone-notch"></div>
+        <div class="phone-screen" style="display:flex;flex-direction:column;justify-content:space-between;">
+          <div>
+            <div class="mini-title">Login</div>
+            <div style="background:var(--bg);border-radius:6px;padding:4px 6px;margin-top:6px"><div class="mini-text">Usuario</div></div>
+            <div style="background:var(--bg);border-radius:6px;padding:4px 6px;margin-top:4px"><div class="mini-text">Contraseña</div></div>
+            <div style="background:var(--red);border-radius:6px;padding:4px;margin-top:8px;text-align:center"><div style="font-size:8px;font-weight:700">Entrar</div></div>
+          </div>
+          <div class="mini-bar"><span class="active">🏠</span><span>📅</span><span>💳</span><span>🎥</span><span>👤</span></div>
+        </div>
+      </div>
+      <div class="phone-frame">
+        <div class="phone-notch"></div>
+        <div class="phone-screen" style="display:flex;flex-direction:column;justify-content:space-between;">
+          <div>
+            <div class="mini-title">🎬 Videos</div>
+            <div style="background:var(--bg);border-radius:6px;padding:4px;margin-top:6px">
+              <div style="font-size:8px;font-weight:600">Armbar desde guardia</div>
+              <div style="font-size:7px;color:var(--muted)">Blanco · Adulto</div>
+            </div>
+            <div style="background:var(--bg);border-radius:6px;padding:4px;margin-top:4px">
+              <div style="font-size:8px;font-weight:600">Rear naked choke</div>
+              <div style="font-size:7px;color:var(--muted)">Azul · Adulto</div>
+            </div>
+            <div style="background:var(--bg);border-radius:6px;padding:4px;margin-top:4px">
+              <div style="font-size:8px;font-weight:600">Guard pass combo</div>
+              <div style="font-size:7px;color:var(--muted)">Púrpura · Adulto</div>
+            </div>
+          </div>
+          <div class="mini-bar"><span>🏠</span><span>📅</span><span>💳</span><span class="active">🎥</span><span>👤</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 8: Videos de técnicas -->
+<div class="slide" id="s8">
+  <h2>Biblioteca de videos</h2>
+  <div class="grid2">
+    <div>
+      <ul>
+        <li>Subir desde YouTube (link) o desde el celular (MP4/MOV, hasta 25MB)</li>
+        <li>Filtrar por cinturón y categoría (Kids/Juveniles/Adulto)</li>
+        <li>Marca automática de "visto" por alumno</li>
+        <li>Contador de vistas y "¿Quién lo vio?" para staff</li>
+        <li>Categorías: Gi, NoGi, Kids, Juveniles, Abierto</li>
+        <li>Niveles: Principiantes, Intermedios, Avanzados, Competencia, Femenino</li>
+      </ul>
+    </div>
+    <div>
+      <div class="feature-card">
+        <div class="ico">🎥</div>
+        <h4>Cinturones filtrados por categoría</h4>
+        <p style="margin-top: 8px;">Los alumnos solo ven videos de su cinturón y categoría. Los profesores ven todos.</p>
+        <div class="tag-row" style="margin-top: 12px;">
+          <span class="mini-tag">Kids: Gris → Blanco</span>
+          <span class="mini-tag">Juveniles: Blanco → Verde</span>
+          <span class="mini-tag">Adulto: Blanco → Negro</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 9: Seguridad y automatización -->
+<div class="slide" id="s9">
+  <h2>Seguridad y automatización</h2>
+  <div class="grid2">
+    <div>
+      <h3>Seguridad</h3>
+      <ul>
+        <li>Contraseñas hasheadas con Werkzeug</li>
+        <li>Sesiones HTTP-only (cookies seguras)</li>
+        <li>Permisos por rol en cada endpoint</li>
+        <li>Alumnos solo ven sus propios datos</li>
+        <li>Comprobantes de pago encriptados</li>
+        <li>Límite de tamaño en uploads</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Automatización</h3>
+      <ul>
+        <li>Recargo automático por pago tardío</li>
+        <li>Alertas de inactividad (>X días sin entrenar)</li>
+        <li>Alertas de deuda (>Y días sin pagar)</li>
+        <li>Mensajes automáticos configurables</li>
+        <li>Aplicación masiva de cuota mensual</li>
+        <li>Notificaciones push en tiempo real</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 10: Producción -->
+<div class="slide" id="s10">
+  <h2>En producción <span class="good">✓</span></h2>
+  <div class="grid3">
+    <div class="stat-card">
+      <div class="num" style="font-size:28px;">🌐 ikigai-viedma.onrender.com</div>
+      <div class="lbl">Servidor activo 24/7</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" style="font-size:28px;">📱 IKIGAI-VIEDMA.apk</div>
+      <div class="lbl">App Android lista para instalar</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" style="font-size:28px;">🔄 Auto-deploy</div>
+      <div class="lbl">Push a GitHub = deploy automático</div>
+    </div>
+  </div>
+  <div class="feature-card" style="margin-top: 32px;">
+    <h4>Costo de infraestructura</h4>
+    <p style="margin-top: 8px; font-size: 18px;">
+      <span class="good" style="font-weight:700;">$0/mes</span> — Render free tier + Supabase free tier.<br>
+      <span class="muted">Sin servidores, sin base de datos local, sin mantenimiento.</span>
+    </p>
+  </div>
+</div>
+
+<!-- SLIDE 11: Próximos pasos -->
+<div class="slide" id="s11">
+  <h2>Próximos features</h2>
+  <div class="grid2">
+    <div>
+      <h3>Planeados</h3>
+      <ul>
+        <li><strong>MercadoPago</strong> — Cobro automático con link de pago</li>
+        <li><strong>Chat</strong> — Mensajería entre alumnos y profesores</li>
+        <li><strong>Plan de entrenamiento</strong> — Objetivos por cinturón</li>
+        <li><strong>Torneos</strong> — Inscripción y seguimiento</li>
+        <li><strong>Encuestas</strong> — Feedback de alumnos</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Mejoras</h3>
+      <ul>
+        <li>Dashboard con gráficos de asistencia</li>
+        <li>Exportar datos a Excel/PDF</li>
+        <li>Múltiples sedes</li>
+        <li>Clases online (integración con Zoom)</li>
+        <li>App iOS (React Native)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 12: Cierre -->
+<div class="slide" id="s12" style="justify-content: center; align-items: center; text-align: center;">
+  <h1 class="big glow">IKIGAI <span class="accent">VIEDMA</span></h1>
+  <p class="sub" style="margin-top: 16px;">La academia conectada. Todo en un solo lugar.</p>
+  <div class="tech-row" style="justify-content: center; margin-top: 32px;">
+    <div class="tech-tag">🌐 ikigai-viedma.onrender.com</div>
+    <div class="tech-tag">📱 Android APK</div>
+    <div class="tech-tag">💰 $0/mes infraestructura</div>
+  </div>
+  <p style="margin-top: 40px; font-size: 16px; color: var(--muted);">Gracias por tu tiempo 🥋</p>
+</div>
+
+<!-- NAV -->
+<div class="counter"><span id="current">1</span> / <span id="total">12</span></div>
+<div class="nav">
+  <button onclick="prev()">← Anterior</button>
+  <button onclick="next()">Siguiente →</button>
+</div>
+
+<script>
+let n = 0;
+const slides = document.querySelectorAll('.slide');
+document.getElementById('total').textContent = slides.length;
+function show(i) {
+  slides.forEach(s => s.classList.remove('active'));
+  slides[i].classList.add('active');
+  document.getElementById('current').textContent = i + 1;
+}
+function next() { if (n < slides.length - 1) { n++; show(n); } }
+function prev() { if (n > 0) { n--; show(n); } }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next(); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
+});
+</script>
+</body>
+</html>
