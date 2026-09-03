@@ -302,7 +302,8 @@ def init_db():
         c.execute('ALTER TABLE users ADD COLUMN foto TEXT')
     for col, ddl in [('tel', 'TEXT'), ('nacimiento', 'TEXT'), ('medic_info', 'TEXT'), ('emergency_contact', 'TEXT'),
                      ('security_q', 'TEXT'), ('security_a', 'TEXT'), ('tel_tutor', 'TEXT'), ('tel_2', 'TEXT'),
-                     ('direccion', 'TEXT'), ('dni', 'TEXT'), ('foto_ok', 'INTEGER')]:
+                     ('direccion', 'TEXT'), ('dni', 'TEXT'), ('foto_ok', 'INTEGER'),
+                     ('acepto_tyc', 'TEXT')]:
         if col not in cols:
             c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
     if DB_MODE == 'postgres':
@@ -403,26 +404,29 @@ def ensure_vapid():
 
 def send_push(user_id, titulo, mensaje, extra=None):
     """Envia notificacion push a todas las suscripciones del usuario."""
-    ensure_vapid()
-    if not os.path.exists(VAPID_PRIVATE):
-        return
-    from pywebpush import webpush, WebPushException
-    subs = get_db().execute('SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id=?',
-                            (user_id,)).fetchall()
-    payload = json.dumps({'title': titulo, 'body': mensaje, **(extra or {})})
-    for s in subs:
-        try:
-            webpush(
-                subscription_info={
-                    'endpoint': s['endpoint'],
-                    'keys': {'p256dh': s['p256dh'], 'auth': s['auth']}},
-                data=payload,
-                vapid_private_key=VAPID_PRIVATE,
-                vapid_claims={'sub': 'mailto:admin@academia.local'})
-        except WebPushException:
-            pass
-        except Exception:
-            pass
+    try:
+        ensure_vapid()
+        if not os.path.exists(VAPID_PRIVATE):
+            return
+        from pywebpush import webpush, WebPushException
+        subs = get_db().execute('SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id=?',
+                                (user_id,)).fetchall()
+        payload = json.dumps({'title': titulo, 'body': mensaje, **(extra or {})})
+        for s in subs:
+            try:
+                webpush(
+                    subscription_info={
+                        'endpoint': s['endpoint'],
+                        'keys': {'p256dh': s['p256dh'], 'auth': s['auth']}},
+                    data=payload,
+                    vapid_private_key=VAPID_PRIVATE,
+                    vapid_claims={'sub': 'mailto:admin@academia.local'})
+            except WebPushException:
+                pass
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def notify(user_id, titulo, mensaje, tipo='info', push=True):
@@ -541,6 +545,7 @@ def user_public(u):
         'direccion': u['direccion'] if 'direccion' in u.keys() else None,
         'dni': u['dni'] if 'dni' in u.keys() else None,
         'foto_ok': u['foto_ok'] if 'foto_ok' in u.keys() else None,
+        'acepto_tyc': u['acepto_tyc'] if 'acepto_tyc' in u.keys() else None,
         'activo': u['activo'],
         'creado': u['creado'],
     }
@@ -1932,8 +1937,11 @@ def api_chat_enviar(chat_id):
     db.execute('INSERT INTO chat_messages(chat_id, user_id, mensaje, fecha) VALUES(?,?,?,?)',
                (chat_id, u['id'], msj, now))
     db.commit()
-    for m in db.execute('SELECT user_id FROM chat_members WHERE chat_id=? AND user_id<>?', (chat_id, u['id'])).fetchall():
-        notify(m['user_id'], 'Nuevo mensaje', '%s: %s' % (u['nombre'], msj), 'chat', push=True)
+    try:
+        for m in db.execute('SELECT user_id FROM chat_members WHERE chat_id=? AND user_id<>?', (chat_id, u['id'])).fetchall():
+            notify(m['user_id'], 'Nuevo mensaje', '%s: %s' % (u['nombre'], msj), 'chat', push=True)
+    except Exception:
+        pass
     return jsonify({'ok': True})
 
 
