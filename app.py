@@ -440,6 +440,17 @@ def ensure_vapid():
                 f.write(pem)
         except OSError:
             pass
+    # Para que el navegador pueda suscribirse, applicationServerKey debe ser el
+    # "raw point" P-256 descomprimido (65 bytes, 04||X||Y), NO el DER/SPKI.
+    try:
+        from cryptography.hazmat.primitives import serialization
+        pubkey = serialization.load_pem_public_key((pub or '').encode())
+        raw_point = pubkey.public_bytes(
+            serialization.Encoding.X962,
+            serialization.PublicFormat.UncompressedPoint)
+        return base64.urlsafe_b64encode(raw_point).rstrip(b'=').decode()
+    except Exception:
+        pass
     pem = (pub or '').replace('-----BEGIN PUBLIC KEY-----', '').replace('-----END PUBLIC KEY-----', '').strip()
     try:
         return base64.urlsafe_b64encode(base64.b64decode(pem)).rstrip(b'=').decode()
