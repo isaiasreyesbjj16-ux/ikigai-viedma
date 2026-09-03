@@ -1839,8 +1839,14 @@ async function crearDirecto(uid) {
 
 async function abrirChatId(cid) {
   CHAT_ACTIVO = cid;
-  const d = await api('/api/chats/' + cid + '/mensajes').catch(() => null);
-  if (!d) { toast('No pudimos abrir el chat'); return; }
+  const d = await api('/api/chats/' + cid + '/mensajes').catch((err) => ({ __err: err.message }));
+  if (!d || d.__err) {
+    const msg = 'No pudimos abrir el chat: ' + (d ? d.__err : 'error desconocido');
+    if (window.toastGlobal) console.error(msg);
+    toast(msg);
+    CHAT_ACTIVO = null;
+    return;
+  }
   const mensajes = (d.mensajes || []).map(m => `
     <div class="chat-msg ${m.user_id === USER.id ? 'own' : ''}">
       <div class="chat-bubble">${esc(m.mensaje)}</div>
@@ -1859,9 +1865,8 @@ async function abrirChatId(cid) {
       </div>
     </div>`;
   const inp = $('#chatInput');
-  inp.focus();
-  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') enviarChat(); });
   const box = $('#chatMsgs'); box.scrollTop = box.scrollHeight;
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') enviarChat(); });
   if (CHAT_TIMER) clearInterval(CHAT_TIMER);
   CHAT_TIMER = setInterval(() => { if (CHAT_ACTIVO && $('#sec-chat') && !document.hidden) actualizarChatMsgs(); }, 5000);
 }
