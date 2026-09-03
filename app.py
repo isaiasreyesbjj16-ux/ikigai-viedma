@@ -2537,6 +2537,7 @@ def api_exportar_alumnos():
                'Telefono tutor/padre', 'Email/Usuario',
                'Fecha de nacimiento', 'Edad', 'Peso (kg)', 'Categoria', 'Cinturon / Faixa',
                'Modalidad', 'Ficha medica', 'Contacto emergencia', 'Autoriza fotos (menores)',
+               'Cuota mensual ($)', 'Estado de pago',
                'Asistencias', 'Total pagos registrados', 'Miembro desde']
 
     data_rows = []
@@ -2546,11 +2547,21 @@ def api_exportar_alumnos():
             aut_foto = 'SI' if r['foto_ok'] else 'NO'
         else:
             aut_foto = 'N/A (adulto)'
+        try:
+            cs = cuota_status(r)
+            estado_label = {
+                'al_dia': 'Al dia',
+                'por_vencer': 'Por vencer (antes del dia %s)' % (cs.get('due_day') or 10),
+                'deuda': 'Deuda',
+            }.get(cs['estado'], cs['estado'])
+        except Exception:
+            estado_label = ''
         data_rows.append([
             r['nombre'], r['dni'], r['direccion'], r['tel'], r['tel_2'], r['tel_tutor'],
             r['username'], r['nacimiento'],
             r['edad'], r['peso'], r['categoria'], r['cinturon'], r['gi_pref'],
             r['medic_info'], r['emergency_contact'], aut_foto,
+            r['cuota_mensual'], estado_label,
             r['asistencias'], r['pagos_totales'],
             (r['creado'] or '')[:10],
         ])
