@@ -1820,10 +1820,12 @@ async function renderConfig(el) {
 }
 async function testPush() {
   try {
-    const r = await api('/api/test_push', { method: 'POST' });
+    const resp = await fetch('/api/test_push', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    let raw = '(sin body)';
+    try { raw = await resp.text(); } catch (e) {}
     const el = $('#pushDiag');
-    if (el) el.textContent = `✓ Enviado a ${r.enviados} dispositivo(s) de ${r.suscripciones} suscripción(es). ¿Te llegó?`;
-    toast('Notificación enviada ✓ ¿Te llegó?');
+    if (el) el.textContent = 'Respuesta del servidor: ' + raw;
+    toast('Ver la respuesta abajo');
   } catch (e) {
     toast(e.message);
     const el = $('#pushDiag');
