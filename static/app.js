@@ -947,6 +947,14 @@ async function renderPerfil(el) {
       </div>` : ''}
 
       <div class="feed-card">
+        <div class="small mb">📲 Notificaciones push</div>
+        <p class="small" style="margin-bottom:8px">Activá las notificaciones para que te lleguen avisos de mensajes y novedades al celular, aun con la app cerrada.</p>
+        <button class="btn primary btn-block" onclick="perfilActivarPush()">🔔 Activar notificaciones</button>
+        <button class="btn ghost btn-block mt" onclick="testPush()">🧪 Probar notificación</button>
+        <p class="small mt" id="pushDiag" style="color:var(--muted);margin-bottom:0"></p>
+      </div>
+
+      <div class="feed-card">
         <div class="small mb">📲 ¿Querés la app como si fuera de tu teléfono?</div>
         <button class="btn ghost" onclick="instalarManual()">📲 Instalar la app</button>
         <p class="small" style="margin-bottom:0">Se instala en tu pantalla de inicio sin pasar por Google. (En el celular: menú → "Agregar a pantalla de inicio".)</p>
@@ -1796,6 +1804,14 @@ async function testPush() {
   }
 }
 async function activarPush() {
+  try {
+    if (!('Notification' in window)) { toast('Este navegador no soporta notificaciones'); return; }
+    if (Notification.permission === 'denied') { toast('Permiso denegado en el navegador. Entrá a Ajustes del sitio y permití las notificaciones.'); return; }
+    await setupPush();
+    toast('Notificaciones activadas ✓ Probá con el botón de abajo.');
+  } catch (e) { toast('No se pudo activar: ' + e.message); }
+}
+async function perfilActivarPush() {
   try {
     if (!('Notification' in window)) { toast('Este navegador no soporta notificaciones'); return; }
     if (Notification.permission === 'denied') { toast('Permiso denegado en el navegador. Entrá a Ajustes del sitio y permití las notificaciones.'); return; }
