@@ -1875,17 +1875,26 @@ def api_chat_crear():
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     if data.get('categoria') in ('kids', 'juveniles', 'adulto'):
         cat = data['categoria']
-        cur = db.execute(
-            "INSERT INTO chats(nombre, tipo, creado_por, fecha) VALUES(?,?,?,?)",
-            (cat, 'grupo', u['id'], now))
-        chat_id = cur.lastrowid
-        ids = [r['id'] for r in db.execute(
-            "SELECT id FROM users WHERE role in ('admin','profesor') OR (role='alumno' AND categoria=?)",
-            (cat,)).fetchall()]
-        for uid in ids:
-            db.execute('INSERT OR IGNORE INTO chat_members(chat_id, user_id) VALUES(?,?)', (chat_id, uid))
-        db.commit()
-        return jsonify({'ok': True, 'id': chat_id, 'nombre': cat, 'tipo': 'grupo'})
+        try:
+            # reutilizar un chat de grupo existente de esa categoria
+            exist = db.execute(
+                "SELECT id FROM chats WHERE tipo='grupo' AND nombre=? ORDER BY id ASC LIMIT 1",
+                (cat,)).fetchone()
+            if exist:
+                return jsonify({'ok': True, 'id': exist['id'], 'nombre': cat, 'tipo': 'grupo'})
+            cur = db.execute(
+                "INSERT INTO chats(nombre, tipo, creado_por, fecha) VALUES(?,?,?,?)",
+                (cat, 'grupo', u['id'], now))
+            chat_id = cur.lastrowid
+            ids = [r['id'] for r in db.execute(
+                "SELECT id FROM users WHERE role in ('admin','profesor') OR (role='alumno' AND categoria=?)",
+                (cat,)).fetchall()]
+            for uid in ids:
+                db.execute('INSERT OR IGNORE INTO chat_members(chat_id, user_id) VALUES(?,?)', (chat_id, uid))
+            db.commit()
+            return jsonify({'ok': True, 'id': chat_id, 'nombre': cat, 'tipo': 'grupo'})
+        except Exception as e:
+            return jsonify({'error': 'Error al crear el grupo: %s' % str(e)}), 500
     # chat directo
     otro = to_int(data.get('user_id'))
     if not otro or otro == u['id']:
