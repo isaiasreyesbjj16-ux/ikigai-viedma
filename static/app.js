@@ -1880,8 +1880,19 @@ async function abrirChatId(cid) {
       <div class="chat-bubble">${esc(m.mensaje)}</div>
       <div class="chat-meta">${esc(m.nombre)} · ${esc(m.fecha)}</div>
     </div>`).join('');
-  showSec('chat');
-  const el = $('#sec-chat');
+  // Activar la sección de chat sin volver a llamar a renderChat (que reemplazaría
+  // esta conversación por la lista de chats al completar su fetch).
+  $$('.sec').forEach(s => s.classList.remove('active'));
+  let secEl = $('#sec-chat');
+  if (!secEl) {
+    secEl = document.createElement('div');
+    secEl.className = 'sec';
+    secEl.id = 'sec-chat';
+    $('#content').appendChild(secEl);
+  }
+  secEl.classList.add('active');
+  $$('#bottombar .bb-item').forEach(x => x.classList.toggle('active', x.dataset.sec === 'chat'));
+  const el = secEl;
   el.innerHTML = `
     ${secHeader('💬 ' + esc(d.chat.nombre || 'Chat'))}
     <button class="btn ghost small mb" onclick="renderChat($('#sec-chat'))">← Volver a la lista</button>
