@@ -957,6 +957,12 @@ async function renderPerfil(el) {
         <div class="field"><label>Nueva contraseña (opcional)</label><input type="password" id="pSecPass" placeholder="Dejalo en blanco para no cambiarla"></div>
         <button class="btn primary btn-block" onclick="guardarSeguridad()">Guardar seguridad</button>
       </div>
+      <div class="feed-card">
+        <div class="small mb">📄 Términos y Condiciones</div>
+        ${me.acepto_tyc
+          ? `<p class="small" style="margin-bottom:0">✔ Aceptaste los <b>Términos y Condiciones y la Política de Privacidad</b> el <b>${esc(me.acepto_tyc)}</b>. <a href="javascript:void(0)" onclick="verTerminos()" style="color:var(--accent2)">Ver términos</a></p>`
+          : `<p class="small" style="margin-bottom:6px">Todavía no aceptaste los Términos y Condiciones.</p><button class="btn primary btn-block" onclick="verTerminos()">📄 Aceptar términos y condiciones</button>`}
+      </div>
       ${me.role === 'alumno' ? `
       <div class="feed-card">
         <div class="small mb" style="color:var(--bad)">¿No vas a seguir entrenando?</div>
@@ -1095,7 +1101,9 @@ async function renderPagos(el) {
         <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,.08)">
           <div><b>${esc(a.alumno_nombre)}</b> avisó que pagó la cuota de <b>${a.mes}/${a.anio}</b>${a.monto ? ' por <b>$' + num(a.monto) + '</b>' : ''}</div>
           <div class="small" style="color:var(--muted)">${esc(a.fecha)}${a.nota && a.nota !== 'Cuota mensual' ? ' · ' + esc(a.nota) : ''}</div>
-          ${a.comprobante ? `<div class="mt"><img src="${a.comprobante}" onclick="verComprobante(${a.id})" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer" title="Ver comprobante"></div>` : ''}
+          ${a.comprobante ? (a.comprobante.indexOf('data:image/') === 0
+            ? `<div class="mt"><img src="${a.comprobante}" onclick="verComprobante(${a.id})" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer" title="Ver comprobante"></div>`
+            : `<div class="mt"><div onclick="verComprobante(${a.id})" style="width:72px;height:72px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border-radius:8px;cursor:pointer;font-size:28px" title="Ver comprobante (PDF)">📄</div></div>`) : ''}
           <div class="flex mt" style="gap:8px">
             <button class="btn ghost small" onclick="verComprobante(${a.id})">🧾 Ver comprobante</button>
             <button class="btn primary small" onclick="confirmarAviso(${a.id})">✅ Confirmar y registrar</button>
@@ -1245,10 +1253,16 @@ function abrirReporte() {
 function verComprobante(id) {
   const a = AVISOS_CACHE[id];
   if (!a || !a.comprobante) { toast('No hay comprobante'); return; }
+  const esImg = a.comprobante.indexOf('data:image/') === 0;
+  const cuerpo = esImg
+    ? `<img src="${a.comprobante}" style="width:100%;border-radius:10px;background:#fff">`
+    : `<div class="flex center" style="flex-direction:column;gap:10px;padding:20px 0;color:var(--muted)"><div style="font-size:44px">📄</div><p style="margin:0">Comprobante en formato PDF</p>
+       <a class="btn primary small" href="${a.comprobante}" download="comprobante-${a.alumno_nombre || id}.pdf" style="text-decoration:none">⬇ Descargar PDF</a>
+       <a class="btn ghost small" href="${a.comprobante}" target="_blank" rel="noopener" style="text-decoration:none">👁 Ver PDF</a></div>`;
   openModal(`
     <h3>🧾 Comprobante · ${esc(a.alumno_nombre)}</h3>
     <p class="small">Cuota de <b>${a.mes}/${a.anio}</b> por <b>$${num(a.monto)}</b>${a.nota && a.nota !== 'Cuota mensual' ? ' · ' + esc(a.nota) : ''}</p>
-    <img src="${a.comprobante}" style="width:100%;border-radius:10px;background:#fff">
+    ${cuerpo}
     <div class="flex mt" style="gap:8px">
       <button class="btn primary small" onclick="confirmarAviso(${a.id})">✅ Confirmar y registrar</button>
       ${USER.role === 'admin' ? `<button class="btn bad small" onclick="descartarAviso(${a.id})">🗑 Descartar</button>` : ''}
@@ -1328,10 +1342,11 @@ async function pagarMercadoPago() {
 async function avisarPago() {
   openModal(`
     <h3>🧾 Mandar comprobante de pago</h3>
-    <p class="small">Subí una <b>foto o captura del comprobante de pago</b>. El profe/admin lo va a revisar y confirmar tu cuota.</p>
-    <div class="field"><label>Comprobante (JPG o PNG)</label>
-      <input type="file" id="avComprobante" accept="image/*">
+    <p class="small">Subí una <b>foto, captura o PDF</b> del comprobante de pago. El profe/admin lo va a revisar y confirmar tu cuota.</p>
+    <div class="field"><label>Comprobante (JPG, PNG o PDF)</label>
+      <input type="file" id="avComprobante" accept="image/*,application/pdf">
       <div id="avPreview" class="mt" style="display:none"><img id="avPreviewImg" style="max-width:100%;border-radius:10px;background:#fff"></div>
+      <div id="avFileName" class="small mt" style="display:none;color:var(--muted)"></div>
     </div>
     <button class="btn primary btn-block" id="avEnviar">📤 Enviar aviso</button>
     <p class="small" style="color:var(--muted)">No vas a poder volver a avisar hasta que confirmen o descarten tu aviso.</p>
@@ -1340,14 +1355,19 @@ async function avisarPago() {
   input.addEventListener('change', () => {
     const f = input.files && input.files[0];
     if (!f) return;
-    if (!/^image\/(png|jpe?g|webp)/.test(f.type)) { toast('Elegí una imagen (JPG o PNG)'); input.value = ''; return; }
-    if (f.size > 8 * 1024 * 1024) { toast('La imagen es muy grande (máx 8MB)'); input.value = ''; return; }
-    const r = new FileReader();
-    r.onload = () => {
-      $('#avPreview').style.display = '';
-      $('#avPreviewImg').src = r.result;
-    };
-    r.readAsDataURL(f);
+    if (!/^image\/(png|jpe?g|webp)|^application\/pdf/.test(f.type)) { toast('Elegí una imagen (JPG/PNG) o un PDF'); input.value = ''; return; }
+    if (f.size > 12 * 1024 * 1024) { toast('El archivo es muy grande (máx 12MB)'); input.value = ''; return; }
+    $('#avFileName').style.display = 'none';
+    $('#avFileName').textContent = '';
+    if (f.type.indexOf('image/') === 0) {
+      const r = new FileReader();
+      r.onload = () => { $('#avPreview').style.display = ''; $('#avPreviewImg').src = r.result; };
+      r.readAsDataURL(f);
+    } else {
+      $('#avPreview').style.display = 'none';
+      $('#avFileName').style.display = '';
+      $('#avFileName').textContent = '📄 ' + f.name + ' (' + (Math.round(f.size / 1024)) + ' KB)';
+    }
   });
   $('#avEnviar').addEventListener('click', () => {
     const f = input.files && input.files[0];
