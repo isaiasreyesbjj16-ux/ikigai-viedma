@@ -41,13 +41,14 @@ self.addEventListener('push', (e) => {
   const body = data.body || '';
   const options = {
     body: body,
+    tag: 'ikigai-' + (data.url || 'general'),
     icon: '/static/icons/icon-192.png',
     badge: '/static/icons/icon-192.png',
     vibrate: [200, 100, 200],
     renotify: true,
     data: { url: data.url || '/app' },
   };
-  e.waitUntil(self.registration.showNotification(title, options));
+  e.waitUntil(self.registration.showNotification(title, options).catch(() => {}));
 });
 
 self.addEventListener('notificationclick', (e) => {
