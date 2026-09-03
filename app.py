@@ -842,6 +842,18 @@ def api_perfil_seguridad():
     return jsonify({'ok': True})
 
 
+@app.route('/api/terminos/aceptar', methods=['POST'])
+@login_required
+def api_terminos_aceptar():
+    """Registra que el usuario aceptó los Términos y Condiciones (fecha y hora)."""
+    u = current_user()
+    db = get_db()
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    db.execute('UPDATE users SET acepto_tyc=? WHERE id=?', (now, u['id']))
+    db.commit()
+    return jsonify({'ok': True, 'acepto_tyc': now})
+
+
 @app.route('/api/usuarios/<int:uid>/password', methods=['POST'])
 @role_required('admin', 'profesor')
 def api_usuario_password(uid):
@@ -889,10 +901,13 @@ def api_register():
         return jsonify({'error': 'Para menores (Kids/Juveniles) debe autorizar el mayor, padre, madre o tutor que las fotos del menor puedan exponerse.'}), 400
     tel_2 = (data.get('tel_2') or '').strip() or None
 
+    if not data.get('acepto_tyc'):
+        return jsonify({'error': 'Debés aceptar los Términos y Condiciones para crear tu cuenta.'}), 400
+
     try:
         get_db().execute(
-            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, tel, nacimiento, medic_info, emergency_contact, tel_tutor, tel_2, direccion, dni, foto_ok, creado)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, tel, nacimiento, medic_info, emergency_contact, tel_tutor, tel_2, direccion, dni, foto_ok, acepto_tyc, creado)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (username, generate_password_hash(password), role, nombre,
              to_int(data.get('edad')), to_float(data.get('peso')),
              data.get('cinturon'), categoria,
@@ -907,6 +922,7 @@ def api_register():
              (data.get('direccion') or '').strip() or None,
              (data.get('dni') or '').strip() or None,
              foto_ok,
+             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
              datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         get_db().commit()
     except dbadapter.IntegrityError:

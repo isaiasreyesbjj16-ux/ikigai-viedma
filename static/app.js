@@ -10,6 +10,24 @@ function beltOptionsPorCategoriaConTodos(catSeleccionada, beltSel) {
   return `<option value="Todos">Todos</option>` + opts.map(b => `<option ${b === beltSel ? 'selected' : ''}>${esc(b)}</option>`).join('');
 }
 
+function verTerminos() {
+  const m = $('#tycModal');
+  if (!m) return;
+  m.style.display = 'flex';
+}
+function cerrarTerminos() {
+  const m = $('#tycModal');
+  if (m) m.style.display = 'none';
+}
+async function aceptarTerminosHoy() {
+  try {
+    const r = await api('/api/terminos/aceptar', { method: 'POST', body: {} });
+    if (r.ok && r.acepto_tyc && window.USER) window.USER.acepto_tyc = r.acepto_tyc;
+    toast('Gracias por aceptar los términos ✓');
+    cerrarTerminos();
+  } catch (e) { toast(e.message); }
+}
+
 const $ = (s, e) => (e || document).querySelector(s);
 const $$ = (s, e) => [...(e || document).querySelectorAll(s)];
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -117,7 +135,8 @@ function initLogin() {
         gi_pref: $('#regAlumnoGi').value, tel: $('#regAlumnoTel')?.value || '',
         dni: $('#regAlumnoDni')?.value.trim() || '', direccion: $('#regAlumnoDir')?.value.trim() || '',
         tel_tutor: $('#regAlumnoTelTutor')?.value || '', tel_2: $('#regAlumnoTel2')?.value || '',
-        foto_ok: !!($('#regAlumnoFoto')?.checked || false) } });
+        foto_ok: !!($('#regAlumnoFoto')?.checked || false),
+        acepto_tyc: !!($('#regAlumnoTyC')?.checked || false) } });
       if (d.ok) location.href = '/app';
     } catch (err) { msgShow(m, err.message, false); }
   });
@@ -130,7 +149,8 @@ function initLogin() {
         role: 'profesor', username: $('#regProfeUser').value.trim(),
         password: $('#regProfePass').value, nombre: $('#regProfeNombre').value.trim(),
         codigo: $('#regProfeCodigo').value.trim(), edad: $('#regProfeEdad').value,
-        peso: $('#regProfePeso').value, cinturon: $('#regProfeCinturon').value } });
+        peso: $('#regProfePeso').value, cinturon: $('#regProfeCinturon').value,
+        acepto_tyc: !!($('#regProfeTyC')?.checked || false) } });
       if (d.ok) location.href = '/app';
     } catch (err) { msgShow(m, err.message, false); }
   });
@@ -221,6 +241,13 @@ function initDashboard() {
   setupInstall();
 
   showSec('inicio');
+
+  // Si el usuario aún no aceptó los Términos y Condiciones, mostrarlos
+  try {
+    if (window.USER && !window.USER.acepto_tyc) {
+      setTimeout(() => verTerminos(), 800);
+    }
+  } catch (e) {}
 
   // QR auto-asistencia: si la URL tiene ?qr=1, marcar presente automáticamente
   if (new URLSearchParams(location.search).get('qr') === '1' && R === 'alumno') {

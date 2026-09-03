@@ -83,6 +83,13 @@
           </label>
         </div>
       </div>
+      <div class="field" style="grid-column:1/-1">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="regAlumnoTyC" style="width:18px;height:18px" required>
+          <span>He leído y <b>acepto los <a href="javascript:void(0)" onclick="verTerminos()" style="color:var(--accent);text-decoration:underline">Términos y Condiciones y la Política de Privacidad</a></b>.</span>
+        </label>
+        <p class="small" style="color:var(--muted)">Al tildar la casilla, el registro de tu aceptación (fecha y hora) queda guardado en la plataforma.</p>
+      </div>
       <button type="submit" class="btn primary btn-block">Crear mi cuenta</button>
     </form>
 
@@ -104,10 +111,46 @@
       </div>
       <div class="field"><label>Cinturón / Faixa</label>
         <select id="regProfeCinturon"></select></div>
+      <div class="field" style="grid-column:1/-1">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="regProfeTyC" style="width:18px;height:18px" required>
+          <span>He leído y <b>acepto los <a href="javascript:void(0)" onclick="verTerminos()" style="color:var(--accent);text-decoration:underline">Términos y Condiciones y la Política de Privacidad</a></b>.</span>
+        </label>
+        <p class="small" style="color:var(--muted)">Al tildar la casilla, el registro de tu aceptación (fecha y hora) queda guardado en la plataforma.</p>
+      </div>
       <button type="submit" class="btn primary btn-block">Crear mi cuenta de profesor</button>
     </form>
 
     <div class="msg" id="loginMsg"></div>
+  </div>
+</div>
+
+<!-- MODAL TÉRMINOS Y CONDICIONES -->
+<div id="tycModal" style="display:none;position:fixed;inset:0;z-index:20000;background:rgba(0,0,0,.75);align-items:center;justify-content:center;padding:16px">
+  <div style="background:#171d26;border:1px solid var(--line);border-radius:14px;max-width:680px;width:100%;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:18px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between">
+      <b style="font-size:16px">Términos y Condiciones de Uso y Política de Privacidad</b>
+      <button type="button" onclick="cerrarTerminos()" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer" aria-label="Cerrar">✕</button>
+    </div>
+    <div style="padding:18px 22px;overflow:auto;font-size:14px;line-height:1.55" id="tycTexto">
+      <p><b>1. Aceptación de los Términos</b><br>Al acceder, registrarse o utilizar esta aplicación, el usuario (en adelante, "el Usuario") acepta expresamente y sin reservas cumplir con los presentes Términos y Condiciones, así como con la Política de Privacidad aquí descrita. Si no está de acuerdo con estos términos, deberá abstenerse de utilizar la aplicación.</p>
+      <p><b>2. Contenido y Publicación de Fotografía Deportiva</b><br>La aplicación es una plataforma destinada a la publicación y difusión de fotografías e imágenes capturadas durante la práctica de entrenamientos y disciplinas deportivas.</p>
+      <p><b>Imágenes de Adultos:</b> Toda persona mayor de edad que aparezca o publique contenido en la plataforma declara hacerlo de forma voluntaria y otorga su consentimiento implícito para la visualización de dicho contenido dentro de la aplicación.</p>
+      <p><b>Imágenes de Menores de Edad (Jóvenes y Niños):</b></p>
+      <p>• La publicación de imágenes, fotografías o videos donde aparezcan menores de edad está estrictamente condicionada a la autorización previa y expresa de su padre, madre, tutor legal o representante legal.</p>
+      <p>• La responsabilidad sobre los derechos de imagen del menor recae exclusiva y totalmente en el adulto registrado que realiza la carga de dicho material.</p>
+      <p>• La aplicación se reserva el derecho de retirar de manera inmediata cualquier imagen de un menor si es solicitada por su tutor legal o si se presume una infracción a las leyes de protección a la infancia.</p>
+      <p><b>3. Exención de Responsabilidad por Deportes de Riesgo</b><br>La práctica de deportes y entrenamientos físicos —especialmente aquellos de contacto, alto rendimiento o deportes de riesgo— conlleva la posibilidad inherente de sufrir lesiones corporales, daños físicos o inconvenientes de salud.</p>
+      <p><b>Asunción de Riesgo:</b> El Usuario reconoce y acepta que las actividades exhibidas en la aplicación involucran riesgos físicos inherentes.</p>
+      <p><b>Deslinde de Responsabilidad:</b> La aplicación, sus desarrolladores, administradores y afiliados no asumen ninguna responsabilidad por lesiones, accidentes, incapacidades o perjuicios directos o indirectos que puedan sufrir los deportistas o usuarios antes, durante o después de las sesiones de entrenamiento.</p>
+      <p><b>Responsabilidad del Deportista o Tutor:</b><br>• En el caso de deportistas mayores de edad, la responsabilidad de su integridad física, aptitud médica y preparación recae de manera 100% individual en la persona.<br>• En el caso de deportistas menores de edad, la entera responsabilidad respecto a su salud, aptitud física, participación en la actividad y supervisión recae exclusivamente en su padre, madre o tutor legal.</p>
+      <p><b>4. Uso Aceptable y Normas de la Comunidad</b><br>Queda estrictamente prohibido:</p>
+      <p>• Cargar contenido difamatorio, explícito, inapropiado o que vulnera la intimidad y dignidad de las personas.<br>• Utilizar las fotografías con fines comerciales no autorizados o fuera del ámbito deportivo.<br>• Cargar imágenes de terceros o menores sin contar con las autorizaciones o cesión de derechos de imagen correspondientes.</p>
+      <p><b>5. Modificaciones de los Términos</b><br>La aplicación se reserva la facultad de modificar, actualizar o reformar estos Términos y Condiciones en cualquier momento. La continuidad en el uso de la aplicación tras la publicación de los cambios implica la aceptación automática de las nuevas condiciones.</p>
+    </div>
+    <div style="padding:16px 22px;border-top:1px solid var(--line)">
+      <button type="button" class="btn primary btn-block" onclick="cerrarTerminos()">Entendido</button>
+    </div>
   </div>
 </div>
 
