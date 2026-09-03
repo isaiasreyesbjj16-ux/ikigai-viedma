@@ -458,11 +458,20 @@ def ensure_vapid():
         return pem
 
 
-def send_push(user_id, titulo, mensaje, extra=None):
-    """Envia notificacion push a todas las suscripciones del usuario."""
+def send_push(user_id, titulo, mensaje, extra=None, _diag=None):
+    """Envia notificacion push a todas las suscripciones del usuario.
+
+    Devuelve la cantidad de notificaciones enviadas. Si se pasa _diag (dict),
+    guarda en el el primer error encontrado para poder diagnosticar sin loguear.
+    """
     try:
         ensure_vapid()
-        if not os.path.exists(VAPID_PRIVATE):
+        # usamos el PEM privado directamente de la BD, no del archivo en disco
+        # (Render usa filesystem efimero y el archivo puede faltar/perderse).
+        priv_pem = get_setting('vapid_private')
+        if not priv_pem:
+            if _diag is not None:
+                _diag['error'] = 'Falta la clave privada VAPID en la base'
             return 0
         from pywebpush import webpush, WebPushException
         subs = get_db().execute('SELECT id, endpoint, p256dh, auth FROM push_subs WHERE user_id=?',
@@ -476,23 +485,29 @@ def send_push(user_id, titulo, mensaje, extra=None):
                         'endpoint': s['endpoint'],
                         'keys': {'p256dh': s['p256dh'], 'auth': s['auth']}},
                     data=payload,
-                    vapid_private_key=VAPID_PRIVATE,
+                    vapid_private_key=priv_pem,
                     vapid_claims={'sub': 'mailto:admin@academia.local'})
                 enviados += 1
             except WebPushException as wp:
                 # Suscripciones vencidas/invalidas (410, 404, 403): borrarlas
                 status = getattr(wp, 'response', None)
                 code = status.status_code if status is not None else None
+                if _diag is not None and not _diag.get('error'):
+                    _diag['error'] = 'WebPush HTTP %s: %s' % (
+                        code, getattr(wp, 'message', '') or wp)
                 if code in (404, 410, 403):
                     try:
                         get_db().execute('DELETE FROM push_subs WHERE id=?', (s['id'],))
                         get_db().commit()
                     except Exception:
                         pass
-            except Exception:
-                pass
+            except Exception as e:
+                if _diag is not None and not _diag.get('error'):
+                    _diag['error'] = 'WebPush: %s' % e
         return enviados
-    except Exception:
+    except Exception as e:
+        if _diag is not None and not _diag.get('error'):
+            _diag['error'] = 'send_push: %s' % e
         return 0
 
 
@@ -2595,9 +2610,15 @@ def api_test_push():
     n = get_db().execute('SELECT COUNT(*) AS n FROM push_subs WHERE user_id=?', (u['id'],)).fetchone()['n']
     if not n:
         return jsonify({'ok': False, 'error': 'Tu dispositivo no está suscrito a notificaciones. Abrí la app, andá a Configuración y tocá "Activar notificaciones" (o recargá la app).'}), 400
+    enviados_test = {}
     enviados = send_push(u['id'], '✅ Notificación de prueba',
-                         '¡Funciona! Si ves esto, las notificaciones push están activas.')
-    return jsonify({'ok': True, 'suscripciones': n, 'enviados': enviados})
+                         '¡Funciona! Si ves esto, las notificaciones push están activas.',
+                         _diag=enviados_test)
+    resp = {'ok': True, 'suscripciones': n, 'enviados': enviados}
+    if enviados_test.get('error'):
+        resp['error'] = enviados_test['error']
+        resp['ok'] = False
+    return jsonify(resp)
 
 
 # ---------------------------------------------------------------------------
