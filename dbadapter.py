@@ -146,9 +146,12 @@ class Cursor:
                             row = self._cur.fetchone()
                             self._lastrowid = row['id'] if row else None
                             self._cur.execute('RELEASE SAVEPOINT sp_returning')
-                        except psycopg.errors.UndefinedColumnError:
+                        except Exception:
                             # tabla sin columna 'id' (ej: chat_members): reintentar sin RETURNING
-                            self._cur.execute('ROLLBACK TO SAVEPOINT sp_returning')
+                            try:
+                                self._cur.execute('ROLLBACK TO SAVEPOINT sp_returning')
+                            except Exception:
+                                pass
                             self._cur.execute(t, params if params else None)
                             self._lastrowid = None
                     else:
