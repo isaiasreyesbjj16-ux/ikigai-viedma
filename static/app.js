@@ -115,7 +115,9 @@ function initLogin() {
         edad: $('#regAlumnoEdad').value, peso: $('#regAlumnoPeso').value,
         categoria: $('#regAlumnoCat').value, cinturon: $('#regAlumnoCinturon').value,
         gi_pref: $('#regAlumnoGi').value, tel: $('#regAlumnoTel')?.value || '',
-        tel_tutor: $('#regAlumnoTelTutor')?.value || '', tel_2: $('#regAlumnoTel2')?.value || '' } });
+        dni: $('#regAlumnoDni')?.value.trim() || '', direccion: $('#regAlumnoDir')?.value.trim() || '',
+        tel_tutor: $('#regAlumnoTelTutor')?.value || '', tel_2: $('#regAlumnoTel2')?.value || '',
+        foto_ok: !!($('#regAlumnoFoto')?.checked || false) } });
       if (d.ok) location.href = '/app';
     } catch (err) { msgShow(m, err.message, false); }
   });
@@ -871,6 +873,8 @@ async function renderPerfil(el) {
         <form id="perfilForm" class="grid2">
           <div class="field"><label>Nombre y apellido</label><input type="text" id="pNombre" value="${esc(me.nombre)}"></div>
           <div class="field"><label>Usuario</label><input type="text" value="${esc(me.username)}" disabled></div>
+          <div class="field"><label>DNI</label><input type="text" id="pDni" value="${esc(me.dni || '')}"></div>
+          <div class="field"><label>Dirección / domicilio</label><input type="text" id="pDir" placeholder="Ej: Calle 1 N° 123, Viedma" value="${esc(me.direccion || '')}"></div>
           <div class="field"><label>Edad</label><input type="number" id="pEdad" value="${me.edad != null ? me.edad : ''}"></div>
           <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="pPeso" value="${me.peso != null ? me.peso : ''}"></div>
           <div class="field"><label>Teléfono</label><input type="tel" id="pTel" value="${esc(me.tel || '')}"></div>
@@ -887,6 +891,9 @@ async function renderPerfil(el) {
             <option ${me.gi_pref === 'NoGi' ? 'selected' : ''}>NoGi</option></select></div>
           <div class="field"><label>Cambiar contraseña (opcional)</label><input type="password" id="pPass" placeholder="Nueva contraseña"></div>
           <div class="field" style="grid-column:1/-1"><label>🩺 Ficha médica (opcional)</label><textarea id="pMedic" rows="2" placeholder="Lesiones, alergias, medicación, operaciones...">${esc(me.medic_info || '')}</textarea></div>
+          ${cat === 'kids' || cat === 'juveniles' ? `<div class="field" style="grid-column:1/-1"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="pFotoOk" style="width:18px;height:18px" ${me.foto_ok ? 'checked' : ''}>
+            <span>Autorizo como mayor/padre/madre/tutor que <b>las fotos de este/a menor puedan ser expuestas</b> (redes y muro). <span style="color:#ff9b8f">(obligatorio para menores)</span></span></label></div>` : ''}
           <div class="field" style="grid-column:1/-1"><label>📞 Contacto de emergencia (opcional)</label><input type="text" id="pEmer" placeholder="Nombre y teléfono" value="${esc(me.emergency_contact || '')}"></div>
           <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar cambios</button></div>
         </form>
@@ -936,6 +943,8 @@ async function renderPerfil(el) {
         tel: $('#pTel').value, nacimiento: $('#pNac').value,
         medic_info: $('#pMedic').value, emergency_contact: $('#pEmer').value,
         tel_tutor: $('#pTelTutor')?.value || '', tel_2: $('#pTel2')?.value || '',
+        dni: $('#pDni')?.value.trim() || '', direccion: $('#pDir')?.value.trim() || '',
+        foto_ok: !!($('#pFotoOk')?.checked || false),
         password: $('#pPass').value } });
       toast('Perfil actualizado ✓'); renderPerfil(el);
     } catch (err) { toast(err.message); }
@@ -1345,6 +1354,10 @@ async function renderAlumnos(el) {
   const d = await api('/api/alumnos');
   el.innerHTML = `
     ${secHeader('Alumnos', 'Los alumnos se registran solos en la pantalla de ingreso')}
+    ${USER.role === 'admin' || USER.role === 'profesor' ? `<div class="mb">
+      <button class="btn good" onclick="exportarAlumnosExcel()">📥 Exportar alumnos activos a Excel</button>
+      <p class="small" style="margin:6px 0 0">Descarga un archivo .xlsx con los datos de los alumnos activos (nombre, DNI, dirección, teléfonos, categoría, etc.). Solo alumnos <b>activos</b>.</p>
+    </div>` : ''}
     <div class="mb">
       <input class="search" style="max-width:100%" id="alumnoBusq" placeholder="🔍 Buscar alumno...">
     </div>
@@ -1378,6 +1391,10 @@ async function renderAlumnos(el) {
   });
 }
 
+function exportarAlumnosExcel() {
+  window.open('/api/exportar_alumnos', '_blank');
+}
+
 async function verFicha(id, nombre) {
   const a = (await api('/api/alumnos')).alumnos.find(x => x.id === id);
   openModal(`
@@ -1405,6 +1422,8 @@ async function formAlumno(id) {
     <h3>Editar alumno</h3>
     <form id="alForm" class="grid2">
       <div class="field"><label>Nombre y apellido</label><input id="aNombre" value="${esc(a.nombre)}" required></div>
+      <div class="field"><label>DNI</label><input type="text" id="aDni" value="${esc(a.dni || '')}"></div>
+      <div class="field"><label>Dirección / domicilio</label><input type="text" id="aDir" placeholder="Ej: Calle 1 N° 123, Viedma" value="${esc(a.direccion || '')}"></div>
       <div class="field"><label>Edad</label><input type="number" id="aEdad" value="${a.edad != null ? a.edad : ''}"></div>
       <div class="field"><label>Peso (kg)</label><input type="number" step="0.1" id="aPeso" value="${a.peso != null ? a.peso : ''}"></div>
       <div class="field"><label>Teléfono</label><input type="tel" id="aTel" value="${esc(a.tel || '')}"></div>
@@ -1418,6 +1437,9 @@ async function formAlumno(id) {
       <div class="field"><label>Cuota mensual ($)</label><input type="number" step="0.01" id="aCuota" value="${a.cuota_mensual != null ? a.cuota_mensual : ''}" disabled></div>
       <div class="field" style="grid-column:1/-1"><label>🩺 Ficha médica (opcional)</label><textarea id="aMedic" rows="2" placeholder="Lesiones, alergias, medicación...">${esc(a.medic_info || '')}</textarea></div>
       <div class="field" style="grid-column:1/-1"><label>📞 Contacto de emergencia (opcional)</label><input type="text" id="aEmer" placeholder="Nombre y teléfono" value="${esc(a.emergency_contact || '')}"></div>
+      ${a.categoria === 'kids' || a.categoria === 'juveniles' ? `<div class="field" style="grid-column:1/-1"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="aFotoOk" style="width:18px;height:18px" ${a.foto_ok ? 'checked' : ''}>
+        <span>Autorizado por un mayor para exponer fotos del menor (redes y muro)</span></label></div>` : ''}
       <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar</button></div>
     </form>`);
   function fillBelt() {
@@ -1433,7 +1455,9 @@ async function formAlumno(id) {
       cinturon: $('#aCinturon').value, categoria: $('#aCat').value, gi_pref: $('#aGi').value,
       tel: $('#aTel').value, nacimiento: $('#aNac').value,
       medic_info: $('#aMedic').value, emergency_contact: $('#aEmer').value,
-      tel_tutor: $('#aTutor')?.value || '', tel_2: $('#aTel2')?.value || '' };
+      tel_tutor: $('#aTutor')?.value || '', tel_2: $('#aTel2')?.value || '',
+      dni: $('#aDni')?.value.trim() || '', direccion: $('#aDir')?.value.trim() || '',
+      foto_ok: !!($('#aFotoOk')?.checked || false) };
     try {
       await api('/api/alumnos/' + a.id, { method: 'PUT', body });
       toast('Alumno actualizado ✓');
