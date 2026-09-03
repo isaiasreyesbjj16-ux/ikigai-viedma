@@ -28,20 +28,24 @@ self.addEventListener('fetch', (e) => {
 });
 
 self.addEventListener('push', (e) => {
-  let data = { title: 'IKIGAI VIEDMA', body: 'Tenés una nueva notificación' };
+  let data = {};
   try { data = e.data.json(); } catch (err) {}
+  const title = data.title || 'IKIGAI VIEDMA';
+  const body = data.body || '';
   const options = {
-    body: data.body || '',
+    body: body,
     icon: '/static/icons/icon-192.png',
     badge: '/static/icons/icon-192.png',
-    data: { url: '/' },
+    vibrate: [200, 100, 200],
+    renotify: true,
+    data: { url: data.url || '/app' },
   };
-  e.waitUntil(self.registration.showNotification(data.title || 'Academia', options));
+  e.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = (e.notification.data && e.notification.data.url) || '/';
+  const url = (e.notification.data && e.notification.data.url) || '/app';
   e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
     for (const client of list) {
       if ('focus' in client) return client.focus();
