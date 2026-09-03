@@ -223,6 +223,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
     mensaje TEXT,
+    adjunto TEXT,
+    adjunto_tipo TEXT,
     fecha TEXT
 );
 
@@ -332,6 +334,18 @@ def init_db():
         c.execute('ALTER TABLE videos ADD COLUMN data TEXT')
     if 'categoria' not in v_cols:
         c.execute('ALTER TABLE videos ADD COLUMN categoria TEXT DEFAULT \'adulto\'')
+    if DB_MODE == 'postgres':
+        cm_cols = [r[0] for r in c.execute(
+            "SELECT column_name AS name FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND table_name='chat_messages'").fetchall()]
+    elif DB_MODE == 'mysql':
+        cm_cols = [r[0] for r in c.execute('SHOW COLUMNS FROM chat_messages').fetchall()]
+    else:
+        cm_cols = [r[1] for r in c.execute('PRAGMA table_info(chat_messages)').fetchall()]
+    if 'adjunto' not in cm_cols:
+        c.execute('ALTER TABLE chat_messages ADD COLUMN adjunto TEXT')
+    if 'adjunto_tipo' not in cm_cols:
+        c.execute('ALTER TABLE chat_messages ADD COLUMN adjunto_tipo TEXT')
     defaults = {
         'academy_name': 'IKIGAI VIEDMA',
         'academy_code': 'BJJ2026',
@@ -1985,7 +1999,7 @@ def api_chat_mensajes(chat_id):
     if not chat or not miembro:
         return jsonify({'error': 'No tenés acceso a este chat'}), 403
     filas = db.execute(
-        'SELECT m.id, m.user_id, m.mensaje, m.fecha, us.nombre, us.foto '
+        'SELECT m.id, m.user_id, m.mensaje, m.adjunto, m.adjunto_tipo, m.fecha, us.nombre, us.foto '
         'FROM chat_messages m JOIN users us ON us.id=m.user_id '
         'WHERE m.chat_id=? ORDER BY m.id ASC LIMIT 200', (chat_id,)).fetchall()
     return jsonify({'mensajes': [dict(r) for r in filas], 'chat': dict(chat)})
@@ -1997,19 +2011,27 @@ def api_chat_enviar(chat_id):
     u = current_user()
     data = parse_json()
     msj = (data.get('mensaje') or '').strip()
-    if not msj:
-        return jsonify({'error': 'Escribí un mensaje'}), 400
+    adjunto = (data.get('adjunto') or '').strip()
+    adjunto_tipo = (data.get('adjunto_tipo') or '').strip()
+    if not msj and not adjunto:
+        return jsonify({'error': 'Escribí un mensaje o adjuntá una foto/video'}), 400
+    # solo permitir imagenes y videos en el adjunto
+    if adjunto and not (adjunto.startswith('data:image/') or adjunto.startswith('data:video/')):
+        return jsonify({'error': 'El adjunto debe ser una imagen o un video'}), 400
+    if len(adjunto) > 25 * 1024 * 1024:
+        return jsonify({'error': 'El archivo es muy grande (máx 25MB)'}), 400
     db = get_db()
     chat = db.execute('SELECT * FROM chats WHERE id=?', (chat_id,)).fetchone()
     if not chat or not db.execute('SELECT 1 FROM chat_members WHERE chat_id=? AND user_id=?', (chat_id, u['id'])).fetchone():
         return jsonify({'error': 'No tenés acceso a este chat'}), 403
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
-    db.execute('INSERT INTO chat_messages(chat_id, user_id, mensaje, fecha) VALUES(?,?,?,?)',
-               (chat_id, u['id'], msj, now))
+    db.execute('INSERT INTO chat_messages(chat_id, user_id, mensaje, adjunto, adjunto_tipo, fecha) VALUES(?,?,?,?,?,?)',
+               (chat_id, u['id'], msj or None, adjunto or None, adjunto_tipo or None, now))
     db.commit()
     try:
+        txt = adjunto_tipo if not msj else msj
         for m in db.execute('SELECT user_id FROM chat_members WHERE chat_id=? AND user_id<>?', (chat_id, u['id'])).fetchall():
-            notify(m['user_id'], 'Nuevo mensaje', '%s: %s' % (u['nombre'], msj), 'chat', push=True)
+            notify(m['user_id'], 'Nuevo mensaje', '%s: %s' % (u['nombre'], txt), 'chat', push=True)
     except Exception:
         pass
     return jsonify({'ok': True})

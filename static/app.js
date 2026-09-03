@@ -1827,6 +1827,8 @@ try { fetch('/api/settings').then(r => r.json()).then(s => {
    ===================================================================== */
 let CHAT_ACTIVO = null;
 let CHAT_TIMER = null;
+let CHAT_ADJ = null;
+let CHAT_LAST_MSG = 0;
 
 async function renderChat(el) {
   const d = await api('/api/chats').catch(() => ({ chats: [] }));
@@ -1894,11 +1896,7 @@ async function abrirChatId(cid) {
     CHAT_ACTIVO = null;
     return;
   }
-  const mensajes = (d.mensajes || []).map(m => `
-    <div class="chat-msg ${m.user_id === USER.id ? 'own' : ''}">
-      <div class="chat-bubble">${esc(m.mensaje)}</div>
-      <div class="chat-meta">${esc(m.nombre)} · ${esc(m.fecha)}</div>
-    </div>`).join('');
+  const mensajes = (d.mensajes || []).map(m => chatMsgHTML(m)).join('');
   // Activar la sección de chat sin volver a llamar a renderChat (que reemplazaría
   // esta conversación por la lista de chats al completar su fetch).
   $$('.sec').forEach(s => s.classList.remove('active'));
@@ -1917,14 +1915,33 @@ async function abrirChatId(cid) {
     <button class="btn ghost small mb" onclick="renderChat($('#sec-chat'))">← Volver a la lista</button>
     <div class="card">
       <div id="chatMsgs" style="max-height:55vh;overflow:auto;display:flex;flex-direction:column">${mensajes || '<div class="empty">Decí hola 👋</div>'}</div>
-      <div style="display:flex;gap:8px;margin-top:12px">
+      <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
+        <input type="file" id="chatFoto" accept="image/*,video/*" style="display:none">
+        <button class="btn ghost" onclick="$('#chatFoto').click()" title="Adjuntar foto o video">📎</button>
         <input id="chatInput" placeholder="Escribí un mensaje..." style="flex:1">
         <button class="btn primary" onclick="enviarChat()">Enviar</button>
       </div>
+      <div id="chatAdjVista" class="mt small" style="display:none;color:var(--muted)"></div>
     </div>`;
   const inp = $('#chatInput');
   const box = $('#chatMsgs'); box.scrollTop = box.scrollHeight;
+  const lastM = (d.mensajes && d.mensajes.length) ? d.mensajes[d.mensajes.length - 1].id : 0;
+  CHAT_LAST_MSG = lastM;
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') enviarChat(); });
+  const fInp = $('#chatFoto');
+  if (fInp) fInp.addEventListener('change', () => {
+    const f = fInp.files && fInp.files[0];
+    if (!f) return;
+    if (!/^image\/(png|jpe?g|webp|gif)|^video\/(mp4|webm|quicktime)/.test(f.type)) { toast('Elegí una foto o un video (mp4/webm)'); fInp.value = ''; return; }
+    if (f.size > 25 * 1024 * 1024) { toast('El archivo es muy grande (máx 25MB)'); fInp.value = ''; return; }
+    const r = new FileReader();
+    r.onload = () => {
+      CHAT_ADJ = { data: r.result, tipo: f.type.indexOf('image/') === 0 ? 'imagen' : 'video', nombre: f.name };
+      const v = $('#chatAdjVista');
+      if (v) { v.style.display = ''; v.textContent = '📎 Adjuntado: ' + f.name + (CHAT_ADJ.tipo === 'imagen' ? ' (foto)' : ' (video)'); }
+    };
+    r.readAsDataURL(f);
+  });
   if (CHAT_TIMER) clearInterval(CHAT_TIMER);
   CHAT_TIMER = setInterval(() => { if (CHAT_ACTIVO && $('#sec-chat') && !document.hidden) actualizarChatMsgs(); }, 5000);
 }
@@ -1933,22 +1950,45 @@ async function actualizarChatMsgs() {
   const d = await api('/api/chats/' + CHAT_ACTIVO + '/mensajes').catch(() => null);
   if (!d || !$('#chatMsgs')) return;
   const box = $('#chatMsgs');
+  const msgs = d.mensajes || [];
+  const nuevoUltimo = msgs.length ? msgs[msgs.length - 1].id : 0;
+  if (nuevoUltimo === CHAT_LAST_MSG) return; // sin cambios: no re-crear (evita cortar videos)
+  CHAT_LAST_MSG = nuevoUltimo;
   const eraAbajo = box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
-  box.innerHTML = (d.mensajes || []).map(m => `
-    <div class="chat-msg ${m.user_id === USER.id ? 'own' : ''}">
-      <div class="chat-bubble">${esc(m.mensaje)}</div>
-      <div class="chat-meta">${esc(m.nombre)} · ${esc(m.fecha)}</div>
-    </div>`).join('');
+  box.innerHTML = msgs.map(m => chatMsgHTML(m)).join('') || '<div class="empty">Decí hola 👋</div>';
   if (eraAbajo) box.scrollTop = box.scrollHeight;
+}
+
+function chatMsgHTML(m) {
+  const adj = m.adjunto ? (m.adjunto_tipo === 'video'
+    ? `<video controls playsinline preload="metadata" style="max-width:100%;max-height:260px;border-radius:10px;margin-top:6px;display:block"><source src="${esc(m.adjunto)}"></video>`
+    : `<img src="${esc(m.adjunto)}" style="max-width:100%;max-height:260px;border-radius:10px;margin-top:6px;display:block;cursor:pointer" onclick="abrirAdjunto(this.src)">`) : '';
+  const texto = m.mensaje ? `<div class="chat-bubble">${esc(m.mensaje)}</div>` : '';
+  return `<div class="chat-msg ${m.user_id === USER.id ? 'own' : ''}">
+      ${texto}
+      ${adj}
+      <div class="chat-meta">${esc(m.nombre)} · ${esc(m.fecha)}</div>
+    </div>`;
+}
+
+function abrirAdjunto(src) {
+  const isImg = src.indexOf('data:image/') === 0;
+  openModal(isImg
+    ? `<img src="${src}" style="width:100%;border-radius:10px">`
+    : `<video src="${src}" controls autoplay style="width:100%;border-radius:10px"></video>`);
 }
 
 async function enviarChat() {
   const inp = $('#chatInput');
   const msg = inp.value.trim();
-  if (!CHAT_ACTIVO || !msg) return;
+  const adj = CHAT_ADJ;
+  if (!CHAT_ACTIVO || (!msg && !adj)) return;
   inp.value = '';
+  CHAT_ADJ = null;
+  const v = $('#chatAdjVista');
+  if (v) { v.style.display = 'none'; v.textContent = ''; }
   try {
-    await api('/api/chats/' + CHAT_ACTIVO + '/mensajes', { method: 'POST', body: { mensaje: msg } });
+    await api('/api/chats/' + CHAT_ACTIVO + '/mensajes', { method: 'POST', body: { mensaje: msg, adjunto: adj ? adj.data : null, adjunto_tipo: adj ? adj.tipo : null } });
     actualizarChatMsgs();
   } catch (e) { toast(e.message); }
 }
