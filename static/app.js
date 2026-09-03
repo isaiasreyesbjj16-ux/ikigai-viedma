@@ -309,21 +309,48 @@ async function markRead(id) {
 }
 
 /* ---------- PUSH ---------- */
-async function setupPush() {
-  if (!('serviceWorker' in navigator)) return;
+async function _pushDiagLine(txt) {
+  const el = $('#pushDiag');
+  if (el) el.textContent = txt;
+}
+async function setupPush(verbose) {
+  if (!('serviceWorker' in navigator)) {
+    if (verbose) _pushDiagLine('✗ Este navegador no soporta Service Worker (necesitás Android/Chrome o navegador actualizado).');
+    return 0;
+  }
+  if (!('PushManager' in window)) {
+    if (verbose) _pushDiagLine('✗ Este navegador no soporta notificaciones push. Probá en Chrome y con la app instalada.');
+    return 0;
+  }
   try {
+    if (verbose) _pushDiagLine('Registrando service worker…');
     await navigator.serviceWorker.register('/sw.js');
+    if (verbose) _pushDiagLine('Pidiendo clave VAPID…');
     const keyRes = await (await fetch('/api/vapid_public_key')).json();
+    if (!keyRes.key) { if (verbose) _pushDiagLine('✗ El servidor no devolvió la clave VAPID.'); return 0; }
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
+    if (verbose) _pushDiagLine(sub ? 'Suscripción ya existía en el navegador.' : 'Creando nueva suscripción (pedí el permiso)…');
     if (!sub) {
       sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(keyRes.key),
       });
     }
-    await api('/api/push_subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
-  } catch (e) { /* push no disponible (http/https) o permiso denegado */ }
+    // si el permiso no está concedido, subscribe puede devolver null o lanzar
+    if (!sub) { if (verbose) _pushDiagLine('✗ No se pudo crear la suscripción (sin permiso). Activá las notificaciones en Ajustes del sitio.'); return 0; }
+    if (Notification && Notification.permission !== 'granted') {
+      if (verbose) _pushDiagLine('✗ Falta el permiso de notificaciones en el navegador. Tocá "Permitir" cuando Chrome lo pida.');
+      return 0;
+    }
+    if (verbose) _pushDiagLine('Guardando suscripción en el servidor…');
+    const r = await api('/api/push_subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+    if (verbose) _pushDiagLine('✓ Suscripción guardada correctamente. Ahora probá una notificación.');
+    return 1;
+  } catch (e) {
+    if (verbose) _pushDiagLine('✗ Error al activar: ' + (e && e.message ? e.message : e));
+    return 0;
+  }
 }
 function urlBase64ToUint8Array(base64) {
   const pad = '='.repeat((4 - base64.length % 4) % 4);
@@ -1807,16 +1834,16 @@ async function activarPush() {
   try {
     if (!('Notification' in window)) { toast('Este navegador no soporta notificaciones'); return; }
     if (Notification.permission === 'denied') { toast('Permiso denegado en el navegador. Entrá a Ajustes del sitio y permití las notificaciones.'); return; }
-    await setupPush();
-    toast('Notificaciones activadas ✓ Probá con el botón de abajo.');
+    const ok = await setupPush(true);
+    if (ok) toast('Notificaciones activadas ✓ Probá con el botón de abajo.');
   } catch (e) { toast('No se pudo activar: ' + e.message); }
 }
 async function perfilActivarPush() {
   try {
     if (!('Notification' in window)) { toast('Este navegador no soporta notificaciones'); return; }
     if (Notification.permission === 'denied') { toast('Permiso denegado en el navegador. Entrá a Ajustes del sitio y permití las notificaciones.'); return; }
-    await setupPush();
-    toast('Notificaciones activadas ✓ Probá con el botón de abajo.');
+    const ok = await setupPush(true);
+    if (ok) toast('Notificaciones activadas ✓ Probá con el botón de abajo.');
   } catch (e) { toast('No se pudo activar: ' + e.message); }
 }
 async function aplicarCuotaTodos() {
