@@ -15,7 +15,7 @@ from dbadapter import DB_MODE
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.db')
-app.config['MAX_CONTENT_LENGTH'] = 250 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 1100 * 1024 * 1024
 
 # Token secreto embebido en el QR físico de asistencia. Solo quien escanea
 # el QR del gimnasio (que contiene este token) puede registrar su asistencia.
@@ -394,45 +394,64 @@ def set_setting(key, value):
 # VAPID keys para push
 # ---------------------------------------------------------------------------
 
+def _generar_vapid():
+    """Genera un par de claves VAPID con cryptography: privada PKCS8 y publica SPKI."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+    sk = ec.generate_private_key(ec.SECP256R1())
+    priv = sk.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()).decode()
+    pub = sk.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+    return priv, pub
+
+
+def _vapid_valida(priv, pub):
+    """Devuelve True si la clave privada/publica se pueden cargar con cryptography."""
+    if not priv or not pub:
+        return False
+    try:
+        from cryptography.hazmat.primitives import serialization
+        serialization.load_pem_private_key(priv.encode(), password=None)
+        serialization.load_pem_public_key(pub.encode())
+        return True
+    except Exception:
+        return False
+
+
+def _vapid_reconstruida(priv, pub):
+    """Re-serializa un PEM valido normalizado (PKCS8/SPKI) desde la clave cargada."""
+    from cryptography.hazmat.primitives import serialization
+    sk = serialization.load_pem_private_key(priv.encode(), password=None)
+    priv2 = sk.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()).decode()
+    pub2 = sk.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+    return priv2, pub2
+
+
 def ensure_vapid():
     """Claves VAPID persistentes en la BD (Render pierde archivos al redeployar)."""
     priv = get_setting('vapid_private')
     pub = get_setting('vapid_public')
-    if not (priv and pub):
-        # Intento 1: py_vapid (API antiguo y moderno)
+    if not _vapid_valida(priv, pub):
+        priv, pub = _generar_vapid()
+        set_setting('vapid_private', priv)
+        set_setting('vapid_public', pub)
+    else:
+        # normalizar el formato por si quedo raro en una version anterior
         try:
-            from py_vapid import Vapid
-            v = Vapid()
-            try:
-                v.generate_keys()
-            except Exception:
-                pass
-            priv = v.private_pem()
-            pub = v.public_pem()
-            if isinstance(priv, bytes):
-                priv = priv.decode()
-            if isinstance(pub, bytes):
-                pub = pub.decode()
-        except Exception:
-            priv = pub = None
-        # Intento 2: fallback con cryptography, clave EC P-256
-        if not (priv and pub):
-            try:
-                from cryptography.hazmat.primitives.asymmetric import ec
-                from cryptography.hazmat.primitives import serialization
-                sk = ec.generate_private_key(ec.SECP256R1())
-                priv = sk.private_bytes(
-                    serialization.Encoding.PEM,
-                    serialization.PrivateFormat.PKCS8,
-                    serialization.NoEncryption()).decode()
-                pub = sk.public_key().public_bytes(
-                    serialization.Encoding.PEM,
-                    serialization.PublicFormat.SubjectPublicKeyInfo).decode()
-            except Exception:
-                priv = pub = None
-        if priv and pub:
+            priv, pub = _vapid_reconstruida(priv, pub)
             set_setting('vapid_private', priv)
             set_setting('vapid_public', pub)
+        except Exception:
+            pass
     # escribe archivos locales para pywebpush y compatibilidad
     for path, pem in ((VAPID_PRIVATE, priv), (VAPID_PUBLIC, pub)):
         try:
@@ -444,18 +463,17 @@ def ensure_vapid():
     # "raw point" P-256 descomprimido (65 bytes, 04||X||Y), NO el DER/SPKI.
     try:
         from cryptography.hazmat.primitives import serialization
-        pubkey = serialization.load_pem_public_key((pub or '').encode())
+        pubkey = serialization.load_pem_public_key(pub.encode())
         raw_point = pubkey.public_bytes(
             serialization.Encoding.X962,
             serialization.PublicFormat.UncompressedPoint)
         return base64.urlsafe_b64encode(raw_point).rstrip(b'=').decode()
     except Exception:
-        pass
-    pem = (pub or '').replace('-----BEGIN PUBLIC KEY-----', '').replace('-----END PUBLIC KEY-----', '').strip()
-    try:
-        return base64.urlsafe_b64encode(base64.b64decode(pem)).rstrip(b'=').decode()
-    except Exception:
-        return pem
+        pem = pub.replace('-----BEGIN PUBLIC KEY-----', '').replace('-----END PUBLIC KEY-----', '').strip()
+        try:
+            return base64.urlsafe_b64encode(base64.b64decode(pem)).rstrip(b'=').decode()
+        except Exception:
+            return pem
 
 
 def send_push(user_id, titulo, mensaje, extra=None, _diag=None):
@@ -473,38 +491,56 @@ def send_push(user_id, titulo, mensaje, extra=None, _diag=None):
             if _diag is not None:
                 _diag['error'] = 'Falta la clave privada VAPID en la base'
             return 0
-        from pywebpush import webpush, WebPushException
-        subs = get_db().execute('SELECT id, endpoint, p256dh, auth FROM push_subs WHERE user_id=?',
-                                (user_id,)).fetchall()
-        payload = json.dumps({'title': titulo, 'body': mensaje, **(extra or {})})
-        enviados = 0
-        for s in subs:
+        # Normalizar la clave con cryptography y escribirla a un archivo temporal
+        # limpio; pywebpush lee la ruta de forma confiable (sin error de formato).
+        from cryptography.hazmat.primitives import serialization
+        sk = serialization.load_pem_private_key(priv_pem.encode(), password=None)
+        priv_pem = sk.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption()).decode()
+        import tempfile, os
+        tmpf = tempfile.NamedTemporaryFile('w', suffix='.pem', delete=False)
+        tmpf.write(priv_pem)
+        tmpf.close()
+        try:
+            from pywebpush import webpush, WebPushException
+            subs = get_db().execute('SELECT id, endpoint, p256dh, auth FROM push_subs WHERE user_id=?',
+                                    (user_id,)).fetchall()
+            payload = json.dumps({'title': titulo, 'body': mensaje, **(extra or {})})
+            enviados = 0
+            for s in subs:
+                try:
+                    webpush(
+                        subscription_info={
+                            'endpoint': s['endpoint'],
+                            'keys': {'p256dh': s['p256dh'], 'auth': s['auth']}},
+                        data=payload,
+                        vapid_private_key=tmpf.name,
+                        vapid_claims={'sub': 'mailto:admin@academia.local'})
+                    enviados += 1
+                except WebPushException as wp:
+                    # Suscripciones vencidas/invalidas (410, 404, 403): borrarlas
+                    status = getattr(wp, 'response', None)
+                    code = status.status_code if status is not None else None
+                    if _diag is not None and not _diag.get('error'):
+                        _diag['error'] = 'WebPush HTTP %s: %s' % (
+                            code, getattr(wp, 'message', '') or wp)
+                    if code in (404, 410, 403):
+                        try:
+                            get_db().execute('DELETE FROM push_subs WHERE id=?', (s['id'],))
+                            get_db().commit()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    if _diag is not None and not _diag.get('error'):
+                        _diag['error'] = 'WebPush: %s' % e
+            return enviados
+        finally:
             try:
-                webpush(
-                    subscription_info={
-                        'endpoint': s['endpoint'],
-                        'keys': {'p256dh': s['p256dh'], 'auth': s['auth']}},
-                    data=payload,
-                    vapid_private_key=priv_pem,
-                    vapid_claims={'sub': 'mailto:admin@academia.local'})
-                enviados += 1
-            except WebPushException as wp:
-                # Suscripciones vencidas/invalidas (410, 404, 403): borrarlas
-                status = getattr(wp, 'response', None)
-                code = status.status_code if status is not None else None
-                if _diag is not None and not _diag.get('error'):
-                    _diag['error'] = 'WebPush HTTP %s: %s' % (
-                        code, getattr(wp, 'message', '') or wp)
-                if code in (404, 410, 403):
-                    try:
-                        get_db().execute('DELETE FROM push_subs WHERE id=?', (s['id'],))
-                        get_db().commit()
-                    except Exception:
-                        pass
-            except Exception as e:
-                if _diag is not None and not _diag.get('error'):
-                    _diag['error'] = 'WebPush: %s' % e
-        return enviados
+                os.remove(tmpf.name)
+            except Exception:
+                pass
     except Exception as e:
         if _diag is not None and not _diag.get('error'):
             _diag['error'] = 'send_push: %s' % e
@@ -1836,8 +1872,8 @@ def api_videos_upload():
     raw = f.read()
     if not raw:
         return jsonify({'error': 'El archivo está vacío'}), 400
-    if len(raw) > 25 * 1024 * 1024:
-        return jsonify({'error': 'El video es muy grande (máx 25MB). Para videos largos usá un link de YouTube.'}), 400
+    if len(raw) > 600 * 1024 * 1024:
+        return jsonify({'error': 'El video es muy grande (máx 600MB). Para videos largos usá un link de YouTube.'}), 400
     titulo = (request.form.get('titulo') or '').strip() or os.path.splitext(f.filename)[0]
     belt = (request.form.get('belt') or 'Todos').strip()
     categoria = (request.form.get('categoria') or 'adulto').strip()
