@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS users (
     direccion TEXT,
     dni TEXT,
     foto_ok INTEGER DEFAULT 0,
+    acepto_tyc TEXT,
     creado TEXT
 );
 
