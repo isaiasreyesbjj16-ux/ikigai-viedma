@@ -3,6 +3,7 @@ import io
 import base64
 import json
 import secrets
+import zipfile
 from datetime import datetime, date, timedelta
 
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template, g, send_from_directory, Response
@@ -96,6 +97,9 @@ CREATE TABLE IF NOT EXISTS users (
     security_a TEXT,
     tel_tutor TEXT,
     tel_2 TEXT,
+    direccion TEXT,
+    dni TEXT,
+    foto_ok INTEGER DEFAULT 0,
     creado TEXT
 );
 
@@ -296,7 +300,8 @@ def init_db():
     if 'foto' not in cols:
         c.execute('ALTER TABLE users ADD COLUMN foto TEXT')
     for col, ddl in [('tel', 'TEXT'), ('nacimiento', 'TEXT'), ('medic_info', 'TEXT'), ('emergency_contact', 'TEXT'),
-                     ('security_q', 'TEXT'), ('security_a', 'TEXT'), ('tel_tutor', 'TEXT'), ('tel_2', 'TEXT')]:
+                     ('security_q', 'TEXT'), ('security_a', 'TEXT'), ('tel_tutor', 'TEXT'), ('tel_2', 'TEXT'),
+                     ('direccion', 'TEXT'), ('dni', 'TEXT'), ('foto_ok', 'INTEGER')]:
         if col not in cols:
             c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
     if DB_MODE == 'postgres':
@@ -532,6 +537,9 @@ def user_public(u):
         'security_q': u['security_q'] if 'security_q' in u.keys() else None,
         'tel_tutor': u['tel_tutor'] if 'tel_tutor' in u.keys() else None,
         'tel_2': u['tel_2'] if 'tel_2' in u.keys() else None,
+        'direccion': u['direccion'] if 'direccion' in u.keys() else None,
+        'dni': u['dni'] if 'dni' in u.keys() else None,
+        'foto_ok': u['foto_ok'] if 'foto_ok' in u.keys() else None,
         'activo': u['activo'],
         'creado': u['creado'],
     }
@@ -870,12 +878,15 @@ def api_register():
     tel_tutor = (data.get('tel_tutor') or '').strip()
     if role == 'alumno' and categoria in ('kids', 'juveniles') and not tel_tutor:
         return jsonify({'error': 'Para menores (Kids/Juveniles) es obligatorio el telefono del padre, madre o tutor responsable.'}), 400
+    foto_ok = 1 if data.get('foto_ok') else 0
+    if role == 'alumno' and categoria in ('kids', 'juveniles') and not foto_ok:
+        return jsonify({'error': 'Para menores (Kids/Juveniles) debe autorizar el mayor, padre, madre o tutor que las fotos del menor puedan exponerse.'}), 400
     tel_2 = (data.get('tel_2') or '').strip() or None
 
     try:
         get_db().execute(
-            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, tel, nacimiento, medic_info, emergency_contact, tel_tutor, tel_2, creado)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, tel, nacimiento, medic_info, emergency_contact, tel_tutor, tel_2, direccion, dni, foto_ok, creado)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (username, generate_password_hash(password), role, nombre,
              to_int(data.get('edad')), to_float(data.get('peso')),
              data.get('cinturon'), categoria,
@@ -887,6 +898,9 @@ def api_register():
              (data.get('emergency_contact') or '').strip() or None,
              tel_tutor or None,
              tel_2,
+             (data.get('direccion') or '').strip() or None,
+             (data.get('dni') or '').strip() or None,
+             foto_ok,
              datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         get_db().commit()
     except dbadapter.IntegrityError:
@@ -1043,7 +1057,7 @@ def api_alumnos_update(uid):
     if not u:
         return jsonify({'error': 'Alumno no encontrado'}), 404
     get_db().execute(
-        """UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, activo=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=? WHERE id=?""",
+        """UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, activo=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=?, direccion=?, dni=?, foto_ok=? WHERE id=?""",
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
          data.get('categoria', u['categoria']), data.get('gi_pref', u['gi_pref']),
@@ -1053,7 +1067,10 @@ def api_alumnos_update(uid):
          data.get('medic_info', u['medic_info']),
          data.get('emergency_contact', u['emergency_contact']),
          (data.get('tel_tutor', u['tel_tutor']) or '').strip() or None,
-         (data.get('tel_2', u['tel_2']) or '').strip() or None, uid))
+         (data.get('tel_2', u['tel_2']) or '').strip() or None,
+         (data.get('direccion', u['direccion']) or '').strip() or None,
+         (data.get('dni', u['dni']) or '').strip() or None,
+         1 if data.get('foto_ok', u['foto_ok']) else 0, uid))
     get_db().commit()
     return jsonify({'ok': True})
 
@@ -1559,8 +1576,11 @@ def api_perfil_update():
     tel_tutor = (data.get('tel_tutor', u['tel_tutor']) or '').strip() or None
     if u['role'] == 'alumno' and cat in ('kids', 'juveniles') and not tel_tutor:
         return jsonify({'error': 'Para menores (Kids/Juveniles) es obligatorio el telefono del padre, madre o tutor responsable.'}), 400
+    foto_ok = data.get('foto_ok', u['foto_ok'])
+    if u['role'] == 'alumno' and cat in ('kids', 'juveniles') and not foto_ok:
+        return jsonify({'error': 'Para menores (Kids/Juveniles) debe autorizar el mayor, padre, madre o tutor que las fotos del menor puedan exponerse.'}), 400
     get_db().execute(
-        'UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=? WHERE id=?',
+        'UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=?, direccion=?, dni=?, foto_ok=? WHERE id=?',
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
          cat, data.get('gi_pref', u['gi_pref']),
@@ -1569,7 +1589,10 @@ def api_perfil_update():
          data.get('medic_info', u['medic_info']),
          data.get('emergency_contact', u['emergency_contact']),
          tel_tutor,
-         (data.get('tel_2', u['tel_2']) or '').strip() or None, u['id']))
+         (data.get('tel_2', u['tel_2']) or '').strip() or None,
+         (data.get('direccion', u['direccion']) or '').strip() or None,
+         (data.get('dni', u['dni']) or '').strip() or None,
+         1 if foto_ok else 0, u['id']))
     if data.get('password'):
         if len(data['password']) < 4:
             return jsonify({'error': 'La contrasena debe tener al menos 4 caracteres'}), 400
@@ -2475,6 +2498,133 @@ def qr_print_png():
 
 
 # ---------------------------------------------------------------------------
+
+@app.route('/api/exportar_alumnos')
+@role_required('admin', 'profesor')
+def api_exportar_alumnos():
+    rows = get_db().execute(
+        """SELECT u.*,
+            (SELECT COUNT(*) FROM asistencia a WHERE a.alumno_id=u.id AND a.presente=1) AS asistencias,
+            (SELECT COUNT(*) FROM pagos p WHERE p.alumno_id=u.id) AS pagos_totales
+           FROM users u WHERE u.role='alumno' AND u.activo=1 ORDER BY u.nombre""").fetchall()
+
+    def cel(v):
+        if v is None:
+            return ''
+        if isinstance(v, (int, float)):
+            return str(v)
+        return str(v)
+
+    headers = ['Nombre', 'DNI', 'Direccion / Domicilio', 'Telefono', 'Celular 2',
+               'Telefono tutor/padre', 'Email/Usuario',
+               'Fecha de nacimiento', 'Edad', 'Peso (kg)', 'Categoria', 'Cinturon / Faixa',
+               'Modalidad', 'Ficha medica', 'Contacto emergencia', 'Autoriza fotos (menores)',
+               'Asistencias', 'Total pagos registrados', 'Miembro desde']
+
+    data_rows = []
+    for r in rows:
+        cat = (r['categoria'] or '').lower()
+        if cat in ('kids', 'juveniles'):
+            aut_foto = 'SI' if r['foto_ok'] else 'NO'
+        else:
+            aut_foto = 'N/A (adulto)'
+        data_rows.append([
+            r['nombre'], r['dni'], r['direccion'], r['tel'], r['tel_2'], r['tel_tutor'],
+            r['username'], r['nacimiento'],
+            r['edad'], r['peso'], r['categoria'], r['cinturon'], r['gi_pref'],
+            r['medic_info'], r['emergency_contact'], aut_foto,
+            r['asistencias'], r['pagos_totales'],
+            (r['creado'] or '')[:10],
+        ])
+
+    from xml.sax.saxutils import escape as xesc
+
+    def x(row):
+        return '<row>' + ''.join(f'<c t="inlineStr"><is><t>{xesc(str(c))}</t></is></c>' for c in row) + '</row>'
+    sheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetData>'
+        + x(headers)
+        + ''.join(x(r) for r in data_rows)
+        + '</sheetData></worksheet>'
+    )
+
+    shared = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="0" uniqueCount="0"></sst>'
+    )
+
+    styles = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
+        '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
+        '<borders count="1"><border/></borders>'
+        '<cellStyleXfs count="1"><xf/></cellStyleXfs>'
+        '<cellXfs count="1"><xf/></cellXfs>'
+        '</styleSheet>'
+    )
+
+    def rels():
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+                '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+                '</Relationships>')
+
+    def content_types():
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+                '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+                '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+                '</Types>')
+
+    def workbook():
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+                'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                '<sheets><sheet name="Alumnos Activos" sheetId="1" r:id="rId1"/></sheets></workbook>')
+
+    def workbook_rels():
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+                '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+                '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
+                '</Relationships>')
+
+    def core():
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+                'xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" '
+                'xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+                '<dc:creator>IKIGAI VIEDMA</dc:creator>'
+                '<cp:lastModifiedBy>IKIGAI VIEDMA</cp:lastModifiedBy>'
+                '<dcterms:created xsi:type="dcterms:W3CDTF">' + datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ') + '</dcterms:created>'
+                '</cp:coreProperties>')
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', content_types())
+        z.writestr('_rels/.rels', rels())
+        z.writestr('docProps/core.xml', core())
+        z.writestr('xl/workbook.xml', workbook())
+        z.writestr('xl/_rels/workbook.xml.rels', workbook_rels())
+        z.writestr('xl/worksheets/sheet1.xml', sheet_xml)
+        z.writestr('xl/styles.xml', styles)
+        z.writestr('xl/sharedStrings.xml', shared)
+    buf.seek(0)
+
+    from flask import send_file
+    return send_file(buf, as_attachment=True, download_name='alumnos_activos.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
 
 if __name__ == '__main__':
     init_db()
