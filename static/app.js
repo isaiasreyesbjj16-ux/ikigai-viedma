@@ -403,18 +403,25 @@ async function marcarAsistencia(claseId) {
   } catch (err) { toast(err.message); }
 }
 
-async function marcarAsistenciaQR() {
+async function marcarAsistenciaQR(qrToken) {
   try {
+    const token = qrToken || new URLSearchParams(location.search).get('t') || '';
     const [horarios] = await Promise.all([api('/api/horarios')]);
     const hoyIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
     const hoyClases = horarios.horarios.filter(h => h.dia === hoyIdx);
     if (hoyClases.length === 0) { toast('No hay clases programadas para hoy'); return; }
     let marcadas = 0;
+    let error403 = false;
     for (const c of hoyClases) {
-      try { await api('/api/asistencia_yo', { method: 'POST', body: { clase_id: c.id } }); marcadas++; } catch(e) {}
+      try { await api('/api/asistencia_yo', { method: 'POST', body: { clase_id: c.id, qr_token: token } }); marcadas++; }
+      catch (e) { error403 = true; }
     }
-    toast(marcadas > 0 ? `Asistencia marcada ✓ (${marcadas} clase${marcadas > 1 ? 's' : ''})` : 'Ya tenías asistencia marcada');
-    renderInicio($('#sec-inicio'));
+    if (marcadas > 0) {
+      toast(`Asistencia marcada ✓ (${marcadas} clase${marcadas > 1 ? 's' : ''})`);
+      renderInicio($('#sec-inicio'));
+    } else {
+      toast(error403 ? 'QR no válido. Escaneá el QR físico del gimnasio.' : 'Ya tenías asistencia marcada');
+    }
   } catch (err) { toast('Error al marcar asistencia'); }
 }
 
@@ -482,8 +489,9 @@ function abrirScannerQR() {
       clearInterval(timer);
       timer = null;
       stream.getTracks().forEach(t => t.stop());
-      overlay.querySelector('#qrMsg').textContent = '✓ QR válido. Marcando asistencia...';
-      marcarAsistenciaQR();
+      const tParam = new URLSearchParams(code.data.split('?')[1] || '').get('t') || '';
+      overlay.querySelector('#qrMsg').textContent = tParam ? '✓ QR válido. Marcando asistencia...' : '⚠ QR sin token válido';
+      marcarAsistenciaQR(tParam);
       setTimeout(cerrar, 1600);
     }
   }
@@ -763,7 +771,7 @@ async function renderInicio(el) {
           ${hoyClases.length ? hoyClases.map(h => `
             <div class="clase-item ${h.tipo.toLowerCase()}">
               <span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span> · <span class="profe">${esc(h.profesor_nombre || 'Sin profesor')}</span>
-              <div style="margin-top:6px">${(asis.hoy || []).includes(h.id) ? '<span class="tag tag-al-dia">✓ Asistencia marcada</span>' : `<button class="btn primary small" onclick="marcarAsistencia(${h.id})">✅ Marcarme presente</button>`}</div>
+              <div style="margin-top:6px">${(asis.hoy || []).includes(h.id) ? '<span class="tag tag-al-dia">✓ Asistencia marcada</span>' : `<button class="btn primary small" onclick="abrirScannerQR()">📷 Marcar con QR</button>`}</div>
             </div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas. Mirá la sección Horarios.</div>'}
         </div>
 

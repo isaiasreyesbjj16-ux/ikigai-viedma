@@ -17,6 +17,10 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.db')
 app.config['MAX_CONTENT_LENGTH'] = 250 * 1024 * 1024
 
+# Token secreto embebido en el QR físico de asistencia. Solo quien escanea
+# el QR del gimnasio (que contiene este token) puede registrar su asistencia.
+QR_SECRET = os.environ.get('QR_SECRET', 'ikigai2024-nopuedesmarcardesdecasa')
+
 BELTS_ADULT = ['Blanco', 'Azul', 'Púrpura', 'Marrón', 'Negro']
 BELTS_KIDS = ['Gris', 'Amarillo', 'Naranja', 'Verde', 'Blanco']
 CATEGORIAS = ['adulto', 'juveniles', 'kids']
@@ -1479,6 +1483,9 @@ def api_asistencia_yo():
     data = parse_json()
     clase_id = to_int(data.get('clase_id'))
     fecha = data.get('fecha') or date.today().strftime('%Y-%m-%d')
+    # Seguridad: solo se puede marcar asistencia presentando el token del QR físico.
+    if not data.get('qr_token') or data.get('qr_token') != QR_SECRET:
+        return jsonify({'error': 'Debés escanear el QR del gimnasio para registrar tu asistencia.'}), 403
     if not clase_id:
         return jsonify({'error': 'Falta la clase'}), 400
     c = get_db().execute('SELECT * FROM classes WHERE id=?', (clase_id,)).fetchone()
@@ -2515,14 +2522,16 @@ def api_test_push():
 # ---------------------------------------------------------------------------
 
 @app.route('/qr_print')
+@role_required('admin', 'profesor')
 def qr_print():
     return render_template('qr_print.html')
 
 
 @app.route('/qr_print.png')
+@role_required('admin', 'profesor')
 def qr_print_png():
     import qrcode
-    url = request.host_url + '?qr=1'
+    url = request.host_url + '?qr=1&t=' + QR_SECRET
     img = qrcode.make(url)
     buf = io.BytesIO()
     img.save(buf, 'PNG')
