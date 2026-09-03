@@ -2509,8 +2509,9 @@ def api_push_subscribe():
     if not endpoint or not keys.get('p256dh') or not keys.get('auth'):
         return jsonify({'error': 'Suscripcion incompleta'}), 400
     try:
+        #upsert: re-suscribir siempre actualiza el usuario y las claves del endpoint
         get_db().execute(
-            'INSERT INTO push_subs(user_id, endpoint, p256dh, auth) VALUES(?,?,?,?)',
+            'INSERT OR REPLACE INTO push_subs(user_id, endpoint, p256dh, auth) VALUES(?,?,?,?)',
             (current_user()['id'], endpoint, keys['p256dh'], keys['auth']))
         get_db().commit()
     except dbadapter.IntegrityError:
