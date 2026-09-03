@@ -2519,14 +2519,21 @@ def api_push_subscribe():
     keys = sub.get('keys') or {}
     if not endpoint or not keys.get('p256dh') or not keys.get('auth'):
         return jsonify({'error': 'Suscripcion incompleta'}), 400
+    uid = current_user()['id']
     try:
-        #upsert: re-suscribir siempre actualiza el usuario y las claves del endpoint
-        get_db().execute(
-            'INSERT OR REPLACE INTO push_subs(user_id, endpoint, p256dh, auth) VALUES(?,?,?,?)',
-            (current_user()['id'], endpoint, keys['p256dh'], keys['auth']))
-        get_db().commit()
+        db = get_db()
+        existe = db.execute('SELECT id FROM push_subs WHERE endpoint=?', (endpoint,)).fetchone()
+        if existe:
+            db.execute('UPDATE push_subs SET user_id=?, p256dh=?, auth=? WHERE id=?',
+                       (uid, keys['p256dh'], keys['auth'], existe['id']))
+        else:
+            db.execute('INSERT INTO push_subs(user_id, endpoint, p256dh, auth) VALUES(?,?,?,?)',
+                       (uid, endpoint, keys['p256dh'], keys['auth']))
+        db.commit()
     except dbadapter.IntegrityError:
         pass
+    except Exception as e:
+        return jsonify({'error': 'Error al guardar la suscripción: %s' % e}), 500
     return jsonify({'ok': True})
 
 
