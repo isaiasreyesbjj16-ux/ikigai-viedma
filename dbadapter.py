@@ -139,10 +139,18 @@ class Cursor:
                         t = t[:-1]
                     target = t.split('INTO', 1)[1].lstrip().split(None, 1)[0].split('(', 1)[0].strip('"')
                     if target != 'settings':
-                        t += ' RETURNING id'
-                        self._cur.execute(t, params if params else None)
-                        row = self._cur.fetchone()
-                        self._lastrowid = row['id'] if row else None
+                        t2 = t + ' RETURNING id'
+                        try:
+                            self._cur.execute('SAVEPOINT sp_returning')
+                            self._cur.execute(t2, params if params else None)
+                            row = self._cur.fetchone()
+                            self._lastrowid = row['id'] if row else None
+                            self._cur.execute('RELEASE SAVEPOINT sp_returning')
+                        except psycopg.errors.UndefinedColumnError:
+                            # tabla sin columna 'id' (ej: chat_members): reintentar sin RETURNING
+                            self._cur.execute('ROLLBACK TO SAVEPOINT sp_returning')
+                            self._cur.execute(t, params if params else None)
+                            self._lastrowid = None
                     else:
                         self._cur.execute(t, params if params else None)
                         self._lastrowid = None
