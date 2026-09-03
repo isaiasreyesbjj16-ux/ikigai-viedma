@@ -313,14 +313,17 @@ async function setupPush() {
   if (!('serviceWorker' in navigator)) return;
   try {
     await navigator.serviceWorker.register('/sw.js');
-    const key = await (await fetch('/api/vapid_public_key')).json();
+    const keyRes = await (await fetch('/api/vapid_public_key')).json();
     const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(key.key),
-    });
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(keyRes.key),
+      });
+    }
     await api('/api/push_subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
-  } catch (e) { /* push no disponible (http/https) */ }
+  } catch (e) { /* push no disponible (http/https) o permiso denegado */ }
 }
 function urlBase64ToUint8Array(base64) {
   const pad = '='.repeat((4 - base64.length % 4) % 4);
@@ -1744,9 +1747,11 @@ async function renderConfig(el) {
       </form>
     </div>
     <div class="card">
-      <h3>Probar notificaciones push</h3>
-      <p class="small">Enviate una notificación de prueba a este dispositivo.</p>
-      <button class="btn ghost" onclick="testPush()">🔔 Probar notificación</button>
+      <h3>📲 Notificaciones push</h3>
+      <p class="small">Si no te llegan las notificaciones al celular, activá el permiso y probá una.</p>
+      <button class="btn primary btn-block" onclick="activarPush()">🔔 Activar notificaciones</button>
+      <button class="btn ghost btn-block mt" onclick="testPush()">🧪 Probar notificación</button>
+      <p class="small mt" id="pushDiag" style="color:var(--muted)"></p>
     </div>
     <div class="card">
       <h3>Actualizar cuota masiva</h3>
@@ -1780,9 +1785,23 @@ async function renderConfig(el) {
 }
 async function testPush() {
   try {
-    await api('/api/test_push', { method: 'POST' });
-    toast('Notificación enviada. Si no llega, revisá los permisos del navegador.');
-  } catch (e) { toast(e.message); }
+    const r = await api('/api/test_push', { method: 'POST' });
+    const el = $('#pushDiag');
+    if (el) el.textContent = `✓ Enviado a ${r.enviados} dispositivo(s) de ${r.suscripciones} suscripción(es). ¿Te llegó?`;
+    toast('Notificación enviada ✓ ¿Te llegó?');
+  } catch (e) {
+    toast(e.message);
+    const el = $('#pushDiag');
+    if (el) el.textContent = '✗ ' + e.message;
+  }
+}
+async function activarPush() {
+  try {
+    if (!('Notification' in window)) { toast('Este navegador no soporta notificaciones'); return; }
+    if (Notification.permission === 'denied') { toast('Permiso denegado en el navegador. Entrá a Ajustes del sitio y permití las notificaciones.'); return; }
+    await setupPush();
+    toast('Notificaciones activadas ✓ Probá con el botón de abajo.');
+  } catch (e) { toast('No se pudo activar: ' + e.message); }
 }
 async function aplicarCuotaTodos() {
   if (!confirm('¿Actualizar la cuota de TODOS los alumnos activos al valor de "Cuota mensual por defecto"? Se les notifica a cada uno.')) return;

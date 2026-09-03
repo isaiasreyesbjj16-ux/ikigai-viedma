@@ -382,16 +382,43 @@ def set_setting(key, value):
 
 def ensure_vapid():
     """Claves VAPID persistentes en la BD (Render pierde archivos al redeployar)."""
-    from py_vapid import Vapid
     priv = get_setting('vapid_private')
     pub = get_setting('vapid_public')
     if not (priv and pub):
-        v = Vapid()
-        v.generate_keys()
-        priv = v.private_pem().decode()
-        pub = v.public_pem().decode()
-        set_setting('vapid_private', priv)
-        set_setting('vapid_public', pub)
+        # Intento 1: py_vapid (API antiguo y moderno)
+        try:
+            from py_vapid import Vapid
+            v = Vapid()
+            try:
+                v.generate_keys()
+            except Exception:
+                pass
+            priv = v.private_pem()
+            pub = v.public_pem()
+            if isinstance(priv, bytes):
+                priv = priv.decode()
+            if isinstance(pub, bytes):
+                pub = pub.decode()
+        except Exception:
+            priv = pub = None
+        # Intento 2: fallback con cryptography, clave EC P-256
+        if not (priv and pub):
+            try:
+                from cryptography.hazmat.primitives.asymmetric import ec
+                from cryptography.hazmat.primitives import serialization
+                sk = ec.generate_private_key(ec.SECP256R1())
+                priv = sk.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption()).decode()
+                pub = sk.public_key().public_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+            except Exception:
+                priv = pub = None
+        if priv and pub:
+            set_setting('vapid_private', priv)
+            set_setting('vapid_public', pub)
     # escribe archivos locales para pywebpush y compatibilidad
     for path, pem in ((VAPID_PRIVATE, priv), (VAPID_PUBLIC, pub)):
         try:
@@ -399,7 +426,7 @@ def ensure_vapid():
                 f.write(pem)
         except OSError:
             pass
-    pem = pub.replace('-----BEGIN PUBLIC KEY-----', '').replace('-----END PUBLIC KEY-----', '').strip()
+    pem = (pub or '').replace('-----BEGIN PUBLIC KEY-----', '').replace('-----END PUBLIC KEY-----', '').strip()
     try:
         return base64.urlsafe_b64encode(base64.b64decode(pem)).rstrip(b'=').decode()
     except Exception:
@@ -411,11 +438,12 @@ def send_push(user_id, titulo, mensaje, extra=None):
     try:
         ensure_vapid()
         if not os.path.exists(VAPID_PRIVATE):
-            return
+            return 0
         from pywebpush import webpush, WebPushException
-        subs = get_db().execute('SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id=?',
+        subs = get_db().execute('SELECT id, endpoint, p256dh, auth FROM push_subs WHERE user_id=?',
                                 (user_id,)).fetchall()
         payload = json.dumps({'title': titulo, 'body': mensaje, **(extra or {})})
+        enviados = 0
         for s in subs:
             try:
                 webpush(
@@ -425,12 +453,22 @@ def send_push(user_id, titulo, mensaje, extra=None):
                     data=payload,
                     vapid_private_key=VAPID_PRIVATE,
                     vapid_claims={'sub': 'mailto:admin@academia.local'})
-            except WebPushException:
-                pass
+                enviados += 1
+            except WebPushException as wp:
+                # Suscripciones vencidas/invalidas (410, 404, 403): borrarlas
+                status = getattr(wp, 'response', None)
+                code = status.status_code if status is not None else None
+                if code in (404, 410, 403):
+                    try:
+                        get_db().execute('DELETE FROM push_subs WHERE id=?', (s['id'],))
+                        get_db().commit()
+                    except Exception:
+                        pass
             except Exception:
                 pass
+        return enviados
     except Exception:
-        pass
+        return 0
 
 
 def notify(user_id, titulo, mensaje, tipo='info', push=True):
@@ -2512,9 +2550,13 @@ def api_settings_aplicar_cuota():
 @app.route('/api/test_push', methods=['POST'])
 @login_required
 def api_test_push():
-    send_push(current_user()['id'], 'Prueba de notificacion',
-              'Si ves esto, las notificaciones push funcionan.')
-    return jsonify({'ok': True})
+    u = current_user()
+    n = get_db().execute('SELECT COUNT(*) AS n FROM push_subs WHERE user_id=?', (u['id'],)).fetchone()['n']
+    if not n:
+        return jsonify({'ok': False, 'error': 'Tu dispositivo no está suscrito a notificaciones. Abrí la app, andá a Configuración y tocá "Activar notificaciones" (o recargá la app).'}), 400
+    enviados = send_push(u['id'], '✅ Notificación de prueba',
+                         '¡Funciona! Si ves esto, las notificaciones push están activas.')
+    return jsonify({'ok': True, 'suscripciones': n, 'enviados': enviados})
 
 
 # ---------------------------------------------------------------------------
