@@ -1410,8 +1410,8 @@ def api_avisar_pago():
     if not monto:
         monto = to_float(u['cuota_mensual']) or 0
     comp = (data.get('comprobante') or '').strip()
-    if not comp.startswith('data:image/'):
-        return jsonify({'error': 'Tenés que subir el comprobante de pago (foto del recibo)'}), 400
+    if not (comp.startswith('data:image/') or comp.startswith('data:application/pdf')):
+        return jsonify({'error': 'Tenés que subir el comprobante de pago (foto, captura o PDF)'}), 400
     if len(comp) > 12 * 1024 * 1024:
         return jsonify({'error': 'El comprobante es muy grande (máx 12MB)'}), 400
     get_db().execute(
