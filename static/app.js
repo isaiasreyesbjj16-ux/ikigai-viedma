@@ -436,23 +436,44 @@ async function marcarAsistencia(claseId) {
 async function marcarAsistenciaQR(qrToken) {
   try {
     const token = qrToken || new URLSearchParams(location.search).get('t') || '';
+    if (!token) { toast('QR no válido. Escaneá el QR físico del gimnasio.'); return; }
     const [horarios] = await Promise.all([api('/api/horarios')]);
     const hoyIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
-    const hoyClases = horarios.horarios.filter(h => h.dia === hoyIdx);
+    const hoyClases = (horarios.horarios || []).filter(h => h.dia === hoyIdx);
     if (hoyClases.length === 0) { toast('No hay clases programadas para hoy'); return; }
-    let marcadas = 0;
-    let error403 = false;
-    for (const c of hoyClases) {
-      try { await api('/api/asistencia_yo', { method: 'POST', body: { clase_id: c.id, qr_token: token } }); marcadas++; }
-      catch (e) { error403 = true; }
-    }
-    if (marcadas > 0) {
-      toast(`Asistencia marcada ✓ (${marcadas} clase${marcadas > 1 ? 's' : ''})`);
-      renderInicio($('#sec-inicio'));
-    } else {
-      toast(error403 ? 'QR no válido. Escaneá el QR físico del gimnasio.' : 'Ya tenías asistencia marcada');
-    }
+    mostrarSelectorClase(hoyClases, token);
   } catch (err) { toast('Error al marcar asistencia'); }
+}
+
+function mostrarSelectorClase(hoyClases, token) {
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px';
+  ov.innerHTML = `
+    <div style="color:#fff;font-weight:700;font-size:16px;text-align:center">¿A qué clase asistís hoy?</div>
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:360px">
+      ${hoyClases.map(c => `<button class="qrclase" data-id="${c.id}" style="background:#e84393;color:#fff;border:none;padding:14px 18px;border-radius:12px;font-size:15px;font-weight:600">${esc(c.tipo)} · ${esc(c.hora)}</button>`).join('')}
+    </div>
+    <button id="qrSelCerrar" style="background:#d63031;color:#fff;border:none;padding:10px 24px;border-radius:12px">Cerrar</button>`;
+  document.body.appendChild(ov);
+  ov.querySelectorAll('.qrclase').forEach(btn => {
+    btn.onclick = async () => {
+      try {
+        btn.disabled = true;
+        btn.textContent = 'Marcando…';
+        const cid = parseInt(btn.dataset.id, 10);
+        await api('/api/asistencia_yo', { method: 'POST', body: { clase_id: cid, qr_token: token } });
+        toast('¡Asistencia marcada! ✓');
+        ov.remove();
+        renderInicio($('#sec-inicio')).catch(() => {});
+        renderMiAsistencia($('#sec-mi_asistencia')).catch(() => {});
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.txt || '';
+        toast(e && e.message ? e.message : 'Ya tenías asistencia marcada');
+      }
+    };
+  });
+  ov.querySelector('#qrSelCerrar').onclick = () => ov.remove();
 }
 
 /* ---------- ESCÁNER DE QR CON CÁMARA ---------- */
@@ -518,11 +539,9 @@ function abrirScannerQR() {
     if (code && code.data && code.data.indexOf('qr=1') !== -1) {
       clearInterval(timer);
       timer = null;
-      stream.getTracks().forEach(t => t.stop());
+      cerrar();
       const tParam = new URLSearchParams(code.data.split('?')[1] || '').get('t') || '';
-      overlay.querySelector('#qrMsg').textContent = tParam ? '✓ QR válido. Marcando asistencia...' : '⚠ QR sin token válido';
       marcarAsistenciaQR(tParam);
-      setTimeout(cerrar, 1600);
     }
   }
 }
