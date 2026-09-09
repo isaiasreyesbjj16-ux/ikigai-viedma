@@ -452,3 +452,39 @@ hint { font-size: 12px; color: var(--muted); }
 @media (prefers-color-scheme: light) {
   [data-theme="auto"] { }
 }
+
+/* ---------- MODO ACCESIBLE ---------- */
+body.acc { font-size: 18px; }
+body.acc .content { padding-bottom: 120px; }
+body.acc button,
+body.acc .btn,
+body.acc .bb-item,
+body.acc .tab { min-height: 48px; font-size: 17px; }
+body.acc .bb-item { min-height: 64px; }
+body.acc .bb-item .bb-ico { font-size: 26px; }
+body.acc input,
+body.acc select,
+body.acc textarea { font-size: 18px; min-height: 52px; }
+body.acc *:focus-visible { outline: 3px solid #ffb44d !important; outline-offset: 2px; border-radius: 6px; }
+body.acc .skip-link:focus,
+body.acc .firma-canvas:focus-visible { outline: 3px solid #ffb44d !important; }
+/* alta visibilidad / mayor contraste */
+body.acc { --muted: #9face0; }
+body.acc .tag { padding: 4px 9px; font-size: 12px; }
+body.acc .bell-badge, body.acc .badge { font-size: 13px; min-width: 22px; }
+/* estrellas numéricas accesibles */
+body.acc .stars .star.acc-star {
+  min-width: 52px; height: 52px; margin: 0 2px; border-radius: 10px;
+  background: rgba(255,255,255,.10); border: 2px solid var(--line);
+  color: #fff; font-size: 20px; font-weight: 700;
+}
+body.acc .stars .star.acc-star.sel,
+body.acc .stars .star.acc-star[aria-pressed="true"] {
+  background: var(--accent, #e05d13); border-color: var(--accent, #e05d13); color: #fff;
+}
+body.acc .stars .star.acc-star:focus-visible { outline: 3px solid #ffb44d !important; }
+/* firma por nombre escrito (sin canvas) */
+body.acc .firma-canvas { display: none; }
+body.acc .firma-acc[hidden] { display: block; }
+body.acc .firma-acc { display: block; }
+.firma-acc { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }

@@ -51,6 +51,32 @@ function toast(msg, ms = 3200) {
 
 function vib(ms) { if (navigator.vibrate) { try { navigator.vibrate(ms || 12); } catch (e) {} } }
 
+/* =====================================================================
+   MODO ACCESIBLE (personas no videntes / baja visión)
+   ===================================================================== */
+const ACC_KEY = 'ikigai_acc';
+function initAcc() {
+  let on = false;
+  try { on = localStorage.getItem(ACC_KEY) === '1'; } catch (e) {}
+  document.body.classList.toggle('acc', on);
+  $$('.acc-toggle').forEach(b => {
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function toggleAcc() {
+  const on = !document.body.classList.contains('acc');
+  document.body.classList.toggle('acc', on);
+  try { localStorage.setItem(ACC_KEY, on ? '1' : '0'); } catch (e) {}
+  $$('.acc-toggle').forEach(b => {
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  toast(on ? 'Modo accesible activado. Podés navegar con el lector de pantalla.' : 'Modo accesible desactivado.');
+  const act = $('.sec.active');
+  if (typeof showSec === 'function' && act) showSec(act.id.replace('sec-', ''));
+}
+
 function secHeader(title, sub) {
   return `<div class="sec-head"><span class="brand">IKIGAI · VIEDMA</span>
     <h2 class="sec-title">${title}</h2>${sub ? `<div class="sec-sub">${sub}</div>` : ''}</div>`;
@@ -104,6 +130,7 @@ document.addEventListener('keydown', (e) => {
 if ($('#tab-login')) {
   initLogin();
   setupFirmas();
+  initAcc();
 }
 function setupFirmas() {
   const conf = [
@@ -168,6 +195,28 @@ function limpiarFirma(quien) {
   const hid = document.getElementById(m.hid);
   if (cv) { cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); cv.style.outline = ''; }
   if (hid) hid.value = '';
+}
+function firmaPorNombre(quien) {
+  const map = { TyC: { cv: 'firmaCanvasTyC', hid: 'regFirmaTyC', inp: 'firmaTyCNombre' }, Foto: { cv: 'firmaCanvasFoto', hid: 'regFirmaFoto', inp: 'firmaFotoNombre' } };
+  const m = map[quien];
+  if (!m) return;
+  const cv = document.getElementById(m.cv);
+  const hid = document.getElementById(m.hid);
+  const inp = document.getElementById(m.inp);
+  if (!cv || !hid) return;
+  const nombre = (inp ? inp.value : '').trim();
+  if (!nombre) { toast('Escribí tu nombre y apellido en el recuadro para firmar'); if (inp) inp.focus(); return; }
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#11151c';
+  ctx.font = (nombre.length > 24 ? '30px' : '44px') + ' cursive';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(nombre.split(' ')[0] + (nombre.length > 24 ? '…' : ''), cv.width / 2, cv.height / 2);
+  hid.value = cv.toDataURL('image/png');
+  cv.style.outline = '2px solid var(--good)';
 }
 function initLogin() {
   const cats = ['adulto', 'juveniles', 'kids'];
@@ -272,6 +321,7 @@ if ($('#content')) initDashboard();
 
 function initDashboard() {
   const R = USER.role;
+  initAcc();
   $('#userRoleLabel').textContent = R === 'admin' ? 'Administrador' : R === 'profesor' ? 'Profesor' : 'Alumno';
   $('#academyName').textContent = window.ACADEMY_NAME || 'IKIGAI VIEDMA';
 
@@ -542,6 +592,7 @@ function setupInstall() {
 /* ---------- MI ASISTENCIA (alumno) ---------- */
 async function renderMiAsistencia(el) {
   const d = await api('/api/mi_asistencia');
+  const acc = document.body.classList.contains('acc');
   el.innerHTML = `
     ${secHeader('Mis asistencias')}
     <button class="btn primary btn-block mb" onclick="marcarAsistenciaDirecta()">📋 Marcar asistencia de hoy</button>
@@ -556,13 +607,21 @@ async function renderMiAsistencia(el) {
             </div>
             ${a.valorada
               ? `<div class="small" style="color:var(--good)">⭐ Valorada</div>`
-              : `<div class="flex space-between" style="align-items:center;margin-top:6px">
-                  <div class="stars" data-cid="${a.clase_id}" data-fecha="${esc(a.fecha)}">
-                    ${[1,2,3,4,5].map(n => `<button type="button" class="star" data-n="${n}" aria-label="${n} estrellas">☆</button>`).join('')}
-                  </div>
-                  <button type="button" class="btn ghost small" onclick="valorarClase(${a.clase_id})">Guardar ⭐</button>
-                </div>
-                <input class="comentario small" style="margin-top:4px;width:100%" placeholder="Comentario (opcional)">`}
+              : acc
+                  ? `<div class="flex space-between" style="align-items:center;margin-top:6px">
+                      <div class="stars" data-cid="${a.clase_id}" data-fecha="${esc(a.fecha)}" role="radiogroup" aria-label="Valoración de esta clase, de 1 a 5">
+                        ${[1,2,3,4,5].map(n => `<button type="button" class="star acc-star" data-n="${n}" role="radio" aria-pressed="false" aria-label="${n} de 5">${n}</button>`).join('')}
+                      </div>
+                      <button type="button" class="btn ghost small" onclick="valorarClase(${a.clase_id})">Guardar ⭐</button>
+                    </div>
+                    <input class="comentario small" style="margin-top:4px;width:100%" placeholder="Comentario (opcional)">`
+                  : `<div class="flex space-between" style="align-items:center;margin-top:6px">
+                      <div class="stars" data-cid="${a.clase_id}" data-fecha="${esc(a.fecha)}">
+                        ${[1,2,3,4,5].map(n => `<button type="button" class="star" data-n="${n}" aria-label="${n} estrellas">☆</button>`).join('')}
+                      </div>
+                      <button type="button" class="btn ghost small" onclick="valorarClase(${a.clase_id})">Guardar ⭐</button>
+                    </div>
+                    <input class="comentario small" style="margin-top:4px;width:100%" placeholder="Comentario (opcional)">`}
           </div>`).join('') : '<div class="empty">Todavía no tenés asistencias registradas.</div>'}
       </div>
     </div>`;
@@ -572,7 +631,15 @@ async function renderMiAsistencia(el) {
       if (!btn) return;
       const n = parseInt(btn.dataset.n, 10);
       s.dataset.n = n;
-      $$('.star', s).forEach((b, i) => { b.textContent = i < n ? '★' : '☆'; });
+      $$('.star', s).forEach((b, i) => {
+        const sel = (i + 1) <= n;
+        if (b.classList.contains('acc-star')) {
+          b.classList.toggle('sel', sel);
+          b.setAttribute('aria-pressed', sel ? 'true' : 'false');
+        } else {
+          b.textContent = i < n ? '★' : '☆';
+        }
+      });
     });
   });
 }
