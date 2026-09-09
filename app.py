@@ -3,6 +3,7 @@ import io
 import base64
 import json
 import secrets
+import time
 import zipfile
 from datetime import datetime, date, timedelta
 
@@ -283,6 +284,15 @@ CREATE TABLE IF NOT EXISTS evento_asistencias (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (evento_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS grados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alumno_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    cinturon TEXT,
+    fecha TEXT,
+    notas TEXT,
+    registrado_por INTEGER
+);
 """
 
 
@@ -309,9 +319,19 @@ def init_db():
     for col, ddl in [('tel', 'TEXT'), ('nacimiento', 'TEXT'), ('medic_info', 'TEXT'), ('emergency_contact', 'TEXT'),
                      ('security_q', 'TEXT'), ('security_a', 'TEXT'), ('tel_tutor', 'TEXT'), ('tel_2', 'TEXT'),
                      ('direccion', 'TEXT'), ('dni', 'TEXT'), ('foto_ok', 'INTEGER'),
-                     ('acepto_tyc', 'TEXT')]:
+                     ('acepto_tyc', 'TEXT'), ('proximo_examen', 'TEXT'), ('notas_internas', 'TEXT')]:
         if col not in cols:
             c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
+    if DB_MODE == 'postgres':
+        ev_cols = [r[0] for r in c.execute(
+            "SELECT column_name AS name FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND table_name='eventos'").fetchall()]
+    elif DB_MODE == 'mysql':
+        ev_cols = [r[0] for r in c.execute('SHOW COLUMNS FROM eventos').fetchall()]
+    else:
+        ev_cols = [r[1] for r in c.execute('PRAGMA table_info(eventos)').fetchall()]
+    if 'recordado' not in ev_cols:
+        c.execute('ALTER TABLE eventos ADD COLUMN recordado INTEGER DEFAULT 0')
     if DB_MODE == 'postgres':
         ap_cols = [r[0] for r in c.execute(
             "SELECT column_name AS name FROM information_schema.columns "
@@ -557,6 +577,67 @@ def notify(user_id, titulo, mensaje, tipo='info', push=True):
         send_push(user_id, titulo, mensaje)
 
 
+def aviso_cuotas_automatico():
+    """Si pasó el día de vencimiento y no se avisó este mes, manda push a los deudores.
+    Se llama en cada request (no hay cron en Render free); controla repetir con un flag."""
+    try:
+        hoy = date.today()
+        flag = get_setting('aviso_cuota_%d_%d' % (hoy.year, hoy.month), '0')
+        if flag == '1':
+            return 0
+        due_day = to_int(get_setting('due_day', '10')) or 10
+        if hoy.day < due_day:
+            return 0
+        deudores = get_db().execute(
+            """SELECT u.id, u.nombre FROM users u WHERE u.role='alumno' AND u.activo=1
+               AND NOT EXISTS (SELECT 1 FROM pagos p WHERE p.alumno_id=u.id AND p.mes=? AND p.anio=?)""",
+            (hoy.month, hoy.year)).fetchall()
+        enviados = 0
+        for d in deudores:
+            try:
+                notify(d['id'], '💸 Recordatorio de cuota',
+                       'Tu cuota de %d/%d está pendiente. Pagala cuando puedas.' % (hoy.month, hoy.year),
+                       'cuota', push=True)
+                enviados += 1
+            except Exception:
+                pass
+        set_setting('aviso_cuota_%d_%d' % (hoy.year, hoy.month), '1')
+        return enviados
+    except Exception:
+        return 0
+
+
+def aviso_eventos_hoy():
+    """Manda push recordando eventos que son mañana (a los que confirmaron asistencia).
+    Se llama en cada request; evita repetir con la columna recordado."""
+    try:
+        manana = (date.today() + timedelta(days=1)).strftime('%Y-%m-%d')
+        db = get_db()
+        evs = db.execute('SELECT * FROM eventos WHERE fecha_evento=? AND (recordado IS NULL OR recordado=0)',
+                         (manana,)).fetchall()
+        enviados = 0
+        for e in evs:
+            asistentes = db.execute(
+                'SELECT user_id FROM evento_asistencias WHERE evento_id=?', (e['id'],)).fetchall()
+            if not asistentes:
+                asistentes = db.execute(
+                    'SELECT id AS user_id FROM users WHERE role IN (\'admin\',\'profesor\')').fetchall()
+            for a in asistentes:
+                try:
+                    notify(a['user_id'], '📅 Recordatorio: %s' % (e['titulo'] or 'Evento'),
+                           'Mañana %s%s — no te lo pierdas.' % (
+                               e['fecha_evento'], ' a las ' + e['hora'] if e['hora'] else ''),
+                           'evento', push=True)
+                    enviados += 1
+                except Exception:
+                    pass
+            db.execute('UPDATE eventos SET recordado=1 WHERE id=?', (e['id'],))
+            db.commit()
+        return enviados
+    except Exception:
+        return 0
+
+
 def chequear_logros(user_id):
     """Notifica cada vez que el alumno cruza un múltiplo del umbral configurable."""
     th = to_int(get_setting('logro_asist', '50')) or 50
@@ -664,9 +745,29 @@ def user_public(u):
         'dni': u['dni'] if 'dni' in u.keys() else None,
         'foto_ok': u['foto_ok'] if 'foto_ok' in u.keys() else None,
         'acepto_tyc': u['acepto_tyc'] if 'acepto_tyc' in u.keys() else None,
+        'proximo_examen': u['proximo_examen'] if 'proximo_examen' in u.keys() else None,
         'activo': u['activo'],
         'creado': u['creado'],
     }
+
+
+STALE_SECONDS = int(os.environ.get('AVISOS_STALE', '600'))
+_ultimo_aviso = [0]
+
+
+@app.before_request
+def _avisos_periodicos():
+    # Sin cron en Render free: cada ~10 min el primer request dispara los avisos
+    # programados (recordatorio de cuota y eventos de mañana). Sin repetir gracias
+    # a flags por mes/dia en settings y a la columna recordado de eventos.
+    if request.path.startswith('/api/') and not request.path.startswith('/api/cron'):
+        try:
+            if time.time() - _ultimo_aviso[0] >= STALE_SECONDS:
+                _ultimo_aviso[0] = time.time()
+                aviso_cuotas_automatico()
+                aviso_eventos_hoy()
+        except Exception:
+            pass
 
 
 def cuota_status(alumno):
@@ -1160,6 +1261,10 @@ def api_alumnos():
         d['pagos_totales'] = r['pagos_totales']
         d['cuota'] = cuota_status(r)
         d['dias_deuda'] = dias_deuda(r)
+        if 'notas_internas' in r.keys():
+            d['notas_internas'] = r['notas_internas']
+        if 'proximo_examen' in r.keys():
+            d['proximo_examen'] = r['proximo_examen']
         alumnos.append(d)
     return jsonify({'alumnos': alumnos})
 
@@ -1290,6 +1395,19 @@ def api_profesores_delete(uid):
     get_db().execute('UPDATE classes SET profesor_id=NULL WHERE profesor_id=?', (uid,))
     # conserva pagos: profesor_id queda con SET NULL
     get_db().execute('DELETE FROM users WHERE id=?', (uid,))
+    get_db().commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/alumnos/<int:uid>/notas', methods=['PUT'])
+@role_required('admin', 'profesor')
+def api_alumno_notas(uid):
+    data = parse_json()
+    u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
+    if not u:
+        return jsonify({'error': 'Alumno no encontrado'}), 404
+    notas = (data.get('notas') or '').strip()
+    get_db().execute('UPDATE users SET notas_internas=? WHERE id=?', (notas, uid))
     get_db().commit()
     return jsonify({'ok': True})
 
@@ -2293,6 +2411,71 @@ def api_ranking():
                       'videos': vmap.get(r['id'], 0), 'completados': cmap.get(r['id'], 0), 'puntos': punt})
     lista.sort(key=lambda x: x['puntos'], reverse=True)
     return jsonify({'ranking': lista})
+
+
+# ---------------------------------------------------------------------------
+# Cinturones / exámenes de grado
+# ---------------------------------------------------------------------------
+
+@app.route('/api/mis_grados')
+@role_required('alumno')
+def api_mis_grados():
+    u = current_user()
+    db = get_db()
+    grados = db.execute(
+        'SELECT id, cinturon, fecha, notas FROM grados WHERE alumno_id=? ORDER BY id DESC',
+        (u['id'],)).fetchall()
+    return jsonify({'cinturon': u['cinturon'],
+                    'proximo_examen': u['proximo_examen'] if 'proximo_examen' in u.keys() else None,
+                    'grados': [dict(r) for r in grados]})
+
+
+@app.route('/api/alumnos/<int:uid>/grado', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_alumno_grado(uid):
+    data = parse_json()
+    u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
+    if not u:
+        return jsonify({'error': 'Alumno no encontrado'}), 404
+    cinturon = (data.get('cinturon') or '').strip()
+    if not cinturon:
+        return jsonify({'error': 'Elegí el cinturón'}), 400
+    fecha = (data.get('fecha') or date.today().strftime('%Y-%m-%d')).strip()
+    notas = (data.get('notas') or '').strip()
+    me = current_user()
+    db = get_db()
+    db.execute('INSERT INTO grados(alumno_id, cinturon, fecha, notas, registrado_por) VALUES(?,?,?,?,?)',
+               (uid, cinturon, fecha, notas, me['id']))
+    db.execute('UPDATE users SET cinturon=? WHERE id=?', (cinturon, uid))
+    db.commit()
+    try:
+        notify(uid, '🥋 Examen aprobado',
+               '¡Felicitaciones! Tu nuevo cinturón es %s (fecha: %s).' % (cinturon, fecha),
+               'logro', push=True)
+    except Exception:
+        pass
+    return jsonify({'ok': True})
+
+
+@app.route('/api/alumnos/<int:uid>/proximo_examen', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_alumno_proximo_examen(uid):
+    data = parse_json()
+    u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
+    if not u:
+        return jsonify({'error': 'Alumno no encontrado'}), 404
+    fecha = (data.get('fecha') or '').strip() or None
+    db = get_db()
+    db.execute('UPDATE users SET proximo_examen=? WHERE id=?', (fecha, uid))
+    db.commit()
+    if fecha:
+        try:
+            notify(uid, '🥋 Tenés examen de cinturón',
+                   'Tu próximo examen está agendado para el %s. ¡A prepararse!' % fecha,
+                   'logro', push=True)
+        except Exception:
+            pass
+    return jsonify({'ok': True})
 
 
 # ---------------------------------------------------------------------------
