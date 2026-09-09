@@ -405,7 +405,8 @@ function initDashboard() {
   const secParam = new URLSearchParams(location.search).get('sec');
   const seccionesValidas = ['inicio', 'perfil', 'horarios', 'pagos', 'mispagos', 'alumnos',
     'asistencia', 'deudores', 'profesores', 'config', 'mi_asistencia', 'videos', 'chat',
-    'muro', 'galeria', 'ranking', 'metas', 'encuestas', 'eventos', 'historial', 'familias', 'diario'];
+    'muro', 'galeria', 'ranking', 'metas', 'encuestas', 'eventos', 'historial', 'familias', 'diario',
+    'planes', 'estadisticas'];
   if (secParam && seccionesValidas.includes(secParam)) showSec(secParam);
   history.replaceState(null, '', location.pathname);
   if ('serviceWorker' in navigator) {
@@ -453,6 +454,7 @@ function showSec(name) {
     ranking: renderRanking, metas: renderMetas, encuestas: renderEncuestas,
     eventos: renderEventos, historial: renderHistorial,
     familias: renderFamilias, diario: renderDiario,
+    planes: renderPlanes, estadisticas: renderEstadisticas,
   };
   if (renderers[name]) renderers[name](el);
 }
@@ -591,10 +593,23 @@ function setupInstall() {
 
 /* ---------- MI ASISTENCIA (alumno) ---------- */
 async function renderMiAsistencia(el) {
-  const d = await api('/api/mi_asistencia');
+  const [d, stat] = await Promise.all([
+    api('/api/mi_asistencia'),
+    api('/api/mi_estadistica_asistencia').catch(() => null)]);
   const acc = document.body.classList.contains('acc');
   el.innerHTML = `
     ${secHeader('Mis asistencias')}
+    ${stat ? `<div class="feed-card">
+      <div class="small mb">📊 Mi constancia · % de las clases a las que asistí (últimos 6 meses)</div>
+      <div style="display:flex;gap:6px;align-items:flex-end;height:90px">${stat.serie.map((s, i) => {
+        const h = s.pct == null ? 6 : Math.max(6, Math.round(s.pct));
+        return `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%">
+          <div title="${s.pct == null ? 'Sin clases ese mes' : s.pct + '%'} (${s.asist}/${s.dias})" style="width:70%;height:${h}%;background:var(--accent2);border-radius:4px 4px 0 0;min-height:6px"></div>
+          <div class="small" style="margin-top:4px">${esc(stat.meses[i])}</div>
+        </div>`;
+      }).join('')}</div>
+      <div class="small" style="color:var(--muted);margin-top:6px">Asististe a <b>${stat.total}</b> clases en total.</div>
+    </div>` : ''}
     <button class="btn primary btn-block mb" onclick="marcarAsistenciaDirecta()">📋 Marcar asistencia de hoy</button>
     <div class="feed">
       <div class="feed-card">
@@ -1089,6 +1104,7 @@ async function renderInicio(el) {
           <button class="chip" onclick="showSec('videos')">🎥 Videos</button>
           <button class="chip" onclick="showSec('mispagos')">🧾 Mi cuota</button>
           <button class="chip" onclick="showSec('mi_asistencia')">✅ Mi asistencia</button>
+          <button class="chip" onclick="showSec('planes')">📋 Planes</button>
           <button class="chip" onclick="showSec('metas')">🎯 Mis metas</button>
           <button class="chip" onclick="showSec('muro')">📢 Muro</button>
           <button class="chip" onclick="showSec('chat')">💬 Chat</button>
@@ -1109,6 +1125,8 @@ async function renderInicio(el) {
       `<button class="chip" onclick="showSec('pagos')">💳 Registrar pago</button>`,
       `<button class="chip" onclick="showSec('alumnos')">🥋 Alumnos</button>`,
       `<button class="chip" onclick="showSec('asistencia')">✅ Asistencia</button>`,
+      `<button class="chip" onclick="showSec('estadisticas')">📊 Asistencias</button>`,
+      `<button class="chip" onclick="showSec('planes')">📋 Planes</button>`,
       `<button class="chip" onclick="showSec('deudores')">⚠️ Deudas</button>`,
       `<button class="chip" onclick="showSec('videos')">🎥 Videos</button>`];
     if (R === 'admin') chips.push(`<button class="chip" onclick="showSec('profesores')">🧑‍🏫 Profesores</button>`, `<button class="chip" onclick="showSec('config')">⚙️ Configuración</button>`);
@@ -1283,6 +1301,19 @@ async function renderPerfil(el) {
         <p class="small mt" id="pushDiag" style="color:var(--muted);margin-bottom:0"></p>
       </div>
 
+      ${me.role === 'alumno' ? `<div class="feed-card">
+        <div class="small mb">⏸ Pausa temporal</div>
+        ${me.en_pausa
+          ? `<p class="small" style="margin-bottom:8px">Estás de pausa${me.pausa_hasta ? ' <b>hasta el ' + esc(me.pausa_hasta) + '</b>' : ''}. Mientras dure la pausa <b>no se te cobra la cuota</b> ni contás como deudor.</p>
+             <button class="btn primary btn-block" onclick="cancelarPausaMi()">✅ Terminar mi pausa</button>`
+          : `<p class="small" style="color:var(--muted);margin-bottom:8px">¿Te vas de viaje o no vas a poder entrenar un tiempo? Activá una pausa y no se te cobra ni contás como deudor.</p>
+             <div class="grid2" style="margin-bottom:8px">
+               <div class="field" style="margin:0"><label>Desde</label><input type="date" id="pausaDesde" value="${new Date().toISOString().slice(0, 10)}"></div>
+               <div class="field" style="margin:0"><label>Hasta</label><input type="date" id="pausaHasta" value=""></div>
+             </div>
+             <button class="btn primary btn-block" onclick="activarPausaMi()">⏸ Activar pausa</button>`}
+      </div>` : ''}
+
       <div class="feed-card">
         <div class="small mb">📲 ¿Querés la app como si fuera de tu teléfono?</div>
         <button class="btn ghost" onclick="instalarManual()">📲 Instalar la app</button>
@@ -1377,6 +1408,26 @@ async function desactivarMiCuenta() {
     toast('Tu cuenta fue desactivada. ¡Esperamos verte pronto!');
     setTimeout(() => { location.href = '/'; }, 800);
   } catch (e) { toast(e.message); }
+}
+
+async function activarPausaMi() {
+  const desde = $('#pausaDesde').value;
+  const hasta = $('#pausaHasta').value;
+  if (!hasta) { toast('Indicá hasta qué día estás de pausa'); return; }
+  if (hasta < desde) { toast('La fecha "hasta" no puede ser anterior a "desde"'); return; }
+  try {
+    await api('/api/pausa', { method: 'POST', body: { desde: desde, hasta: hasta } });
+    toast('Pausa activada ✓ El profe fue avisado.');
+    renderPerfil($('#sec-perfil'));
+  } catch (err) { toast(err.message); }
+}
+
+async function cancelarPausaMi() {
+  try {
+    await api('/api/pausa', { method: 'DELETE' });
+    toast('Pausa terminada ✓');
+    renderPerfil($('#sec-perfil'));
+  } catch (err) { toast(err.message); }
 }
 
 /* =====================================================================
@@ -1857,6 +1908,7 @@ async function renderAlumnos(el) {
           <div class="small">Modalidad: <span class="tag ${(a.gi_pref || 'Ambas').toLowerCase() === 'amabas' ? 'alumno' : (a.gi_pref || 'Ambas').toLowerCase()}">${esc(a.gi_pref || 'Ambas')}</span></div>
           <div class="small">Cuota: <b>$${num(a.familia ? a.familia.cuota_final : a.cuota_mensual)}</b> · <span class="tag ${cls}">${lbl}</span></div>
           ${a.familia ? `<div class="small">👨‍👩‍👧 <b>${esc(a.familia.nombre)}</b> ${a.familia.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}${a.familia.descuento ? `<span class="tag tag-por-vencer">ahorra $${num(a.familia.descuento)}</span>` : ''}</div>` : ''}
+          ${a.en_pausa ? `<div class="small"><span class="tag tag-por-vencer">⏸ En pausa${a.pausa_hasta ? ' hasta ' + esc(a.pausa_hasta) : ''}</span></div>` : ''}
           <div class="small">🥋 <b>${a.asistencias}</b> asistencias</div>
           <div class="al-actions">
             <button class="btn ghost small" onclick="formAlumno(${a.id})">✏️</button>
@@ -2016,6 +2068,8 @@ async function formAlumno(id) {
       <div class="field"><label>Modalidad</label><select id="aGi">
         ${['Ambas', 'Gi', 'NoGi'].map(g => `<option ${a.gi_pref === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div>
       <div class="field"><label>Cuota mensual ($)</label><input type="number" step="0.01" id="aCuota" value="${a.cuota_mensual != null ? a.cuota_mensual : ''}" disabled></div>
+      <div class="field"><label>⏸ Pausa desde (fechas vacías = sin pausa)</label><input type="date" id="aPausaDesde" value="${a.pausa_desde || ''}"></div>
+      <div class="field"><label>⏸ Pausa hasta</label><input type="date" id="aPausaHasta" value="${a.pausa_hasta || ''}"></div>
       <div class="field" style="grid-column:1/-1"><label>🩺 Ficha médica (opcional)</label><textarea id="aMedic" rows="2" placeholder="Lesiones, alergias, medicación...">${esc(a.medic_info || '')}</textarea></div>
       <div class="field" style="grid-column:1/-1"><label>📞 Contacto de emergencia (opcional)</label><input type="text" id="aEmer" placeholder="Nombre y teléfono" value="${esc(a.emergency_contact || '')}"></div>
       ${a.categoria === 'kids' || a.categoria === 'juveniles' ? `<div class="field" style="grid-column:1/-1"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -2038,7 +2092,8 @@ async function formAlumno(id) {
       medic_info: $('#aMedic').value, emergency_contact: $('#aEmer').value,
       tel_tutor: $('#aTutor')?.value || '', tel_2: $('#aTel2')?.value || '',
       dni: $('#aDni')?.value.trim() || '', direccion: $('#aDir')?.value.trim() || '',
-      foto_ok: !!($('#aFotoOk')?.checked || false) };
+      foto_ok: !!($('#aFotoOk')?.checked || false),
+      pausa_desde: $('#aPausaDesde')?.value || '', pausa_hasta: $('#aPausaHasta')?.value || '' };
     try {
       await api('/api/alumnos/' + a.id, { method: 'PUT', body });
       toast('Alumno actualizado ✓');
@@ -2151,7 +2206,7 @@ async function renderDeudores(el) {
     ${secHeader('Alumnos con deuda')}
     <div class="card">
       <div class="flex space-between mb">
-        <span class="small">Alumnos sin pago del mes actual o por vencer.</span>
+        <span class="small">Alumnos sin pago del mes actual o por vencer. Los que están en pausa temporal no aparecen acá.</span>
         <button class="btn warn" onclick="notificarTodas()">🔔 Notificar a todos</button>
       </div>
       <div style="overflow:auto"><table>
@@ -2172,6 +2227,144 @@ async function notificarTodas() {
     const d = await api('/api/notify_deuda', { method: 'POST', body: {} });
     toast(`Recordatorio enviado a ${d.avisados} alumnos 🔔`);
   } catch (e) { toast(e.message); }
+}
+
+/* =====================================================================
+   ESTADISTICAS DE ASISTENCIA (staff)
+   ===================================================================== */
+async function renderEstadisticas(el) {
+  const d = await api('/api/estadisticas_asistencia');
+  el.innerHTML = `
+    ${secHeader('Estadísticas de asistencia', 'Comparecencia por alumno: % de clases a las que asistió sobre las dictadas, en los últimos 6 meses')}
+    <div class="card mb">
+      <div class="small mb">📅 Días que se dictaron clases por mes</div>
+      <div style="display:flex;gap:6px">${d.meses.map((m, i) => `
+        <div style="flex:1;text-align:center;padding:6px;background:var(--bg2);border-radius:8px">
+          <div class="small">${esc(m)}</div><b>${d.dias_con_clases[i]}</b>
+        </div>`).join('')}</div>
+    </div>
+    <div class="card">
+      <div style="overflow:auto"><table>
+        <tr><th>Alumno</th>${d.meses.map(m => `<th>${esc(m)}</th>`).join('')}<th>Total</th></tr>
+        ${d.alumnos.length ? d.alumnos.map(a => `
+          <tr>
+            <td><div class="flex" style="gap:8px">${avatarHTML(a.foto, a.nombre, 'sm')}<b>${esc(a.nombre)}</b></div> ${beltHTML(a.cinturon)}${a.en_pausa ? ' <span class="tag tag-por-vencer">⏸ en pausa</span>' : ''}</td>
+            ${a.serie.map(s => `
+              <td style="min-width:56px;text-align:center">
+                ${s.pct == null
+                  ? '<span class="small" style="color:var(--muted)">—</span>'
+                  : `<div style="height:34px;width:16px;background:var(--bg2);border-radius:4px;overflow:hidden;display:inline-block;vertical-align:bottom">
+                       <div style="height:${Math.max(8, s.pct)}%;width:100%;background:var(--accent2)" title="${s.pct}% (${s.asist}/${s.dias})"></div>
+                     </div>${s.pct}%`}
+              </td>`).join('')}
+            <td><b>${a.total_asist}</b></td>
+          </tr>`).join('') : '<tr><td colspan="' + (d.meses.length + 2) + '" class="empty">Todavía no hay alumnos activos.</td></tr>'}
+      </table></div>
+    </div>`;
+}
+
+/* =====================================================================
+   PLANES DEL PROFE
+   ===================================================================== */
+function fmtFechaISO(f) {
+  if (!f) return '';
+  const p = String(f).split('-');
+  return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : f;
+}
+
+async function renderPlanes(el) {
+  const R = USER.role;
+  const esStaff = R === 'admin' || R === 'profesor';
+  const semanaSel = $('#planSemana') ? $('#planSemana').value : '';
+  const d = await api('/api/planes' + (esStaff && semanaSel ? '?semana=' + semanaSel : ''));
+  el.innerHTML = `
+    ${secHeader('Planes del profe', esStaff ? 'Objetivo o plan de entrenamiento por semana, asignado a categoría y cinturón.' : 'El plan del profe para esta semana, para tu cinturón.')}
+    <div class="card mb">
+      <div class="flex space-between" style="align-items:center">
+        <span class="small">Semana del <b>${fmtFechaISO(d.semana_inicio)}</b> al <b>${fmtFechaISO(d.semana_fin)}</b></span>
+        ${esStaff ? `<div class="flex" style="gap:8px">
+          <input type="date" id="planSemana" class="small" value="${d.semana_inicio}" onchange="renderPlanes($('#sec-planes'))" aria-label="Elegir otra semana">
+          <button class="btn primary" onclick="formPlan()">＋ Crear plan</button>
+        </div>` : ''}
+      </div>
+    </div>
+    <div class="feed">
+      ${d.planes.length ? d.planes.map(p => `
+        <div class="feed-card">
+          <div class="flex space-between" style="align-items:flex-start">
+            <div>
+              <b>${esc(p.titulo)}</b>
+              ${esStaff ? ` <button class="btn ghost small" onclick="formPlan(${p.id})">✏️</button> <button class="btn bad small" onclick="borrarPlan(${p.id})">🗑</button>` : ''}
+              <div class="small" style="margin-top:4px">
+                <span class="tag ${p.categoria === 'todos' ? 'alumno' : p.categoria}">${p.categoria === 'todos' ? 'Todos' : esc(p.categoria)}</span>
+                <span class="tag ${p.cinturon === 'todos' ? 'alumno' : p.cinturon}">${p.cinturon === 'todos' ? 'Todos los cinturones' : esc(p.cinturon)}</span>
+                ${p.autor ? '<span style="color:var(--muted)">· ' + esc(p.autor) + '</span>' : ''}
+              </div>
+            </div>
+            ${R === 'alumno' ? `<button class="btn ${p.hecho ? 'good' : 'ghost'} small" onclick="togglePlanHecho(${p.id})">${p.hecho ? '✓ Lo hice' : 'Marca que lo hiciste'}</button>` : ''}
+          </div>
+          ${p.descripcion ? `<p class="small" style="white-space:pre-wrap;margin:8px 0 0">${esc(p.descripcion)}</p>` : ''}
+        </div>`).join('') : '<div class="empty">Todavía no hay planes para esta semana.</div>'}
+    </div>`;
+}
+
+function formPlan(id) {
+  const esNuevo = !id;
+  const catSel = CATEGORIAS.map(c => `<option value="${c}">${catLabel(c)}</option>`).join('');
+  const cintSel = BELTS_ADULT.concat(BELTS_KIDS).map(b => `<option>${esc(b)}</option>`).join('');
+  const lunesISO = (() => {
+    const dia = new Date();
+    const diff = (dia.getDay() === 0 ? 6 : dia.getDay() - 1);
+    return new Date(dia.getTime() - diff * 86400000).toISOString().slice(0, 10);
+  })();
+  openModal(`
+    <h3>${esNuevo ? '➕ Crear plan del profe' : '✏️ Editar plan'}</h3>
+    <form id="planForm" class="grid2">
+      <div class="field" style="grid-column:1/-1"><label>Título (objetivo del plan)</label><input id="plTitulo" required placeholder="Ej: Semana de claves de muñeca"></div>
+      <div class="field" style="grid-column:1/-1"><label>Descripción / qué practicar</label><textarea id="plDesc" rows="4" placeholder="Detallá el plan: técnica, series, lo que se espera lograr..."></textarea></div>
+      <div class="field"><label>Categoría</label><select id="plCat"><option value="todos">Todos</option>${catSel}</select></div>
+      <div class="field"><label>Cinturón</label><select id="plCintur"><option value="todos">Todos</option>${cintSel}</select></div>
+      <div class="field" style="grid-column:1/-1"><label>Semana (comienza el lunes de esa semana)</label><input type="date" id="plFecha" value="${lunesISO}"></div>
+      <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar plan</button></div>
+    </form>`);
+  if (!esNuevo) {
+    const semana = $('#planSemana') ? $('#planSemana').value : '';
+    api('/api/planes' + (semana ? '?semana=' + semana : '')).then(dd => {
+      const p = dd.planes.find(x => x.id === id);
+      if (!p) return;
+      $('#plTitulo').value = p.titulo || '';
+      $('#plDesc').value = p.descripcion || '';
+      $('#plCat').value = p.categoria || 'todos';
+      $('#plCintur').value = p.cinturon || 'todos';
+      $('#plFecha').value = p.fecha || lunesISO;
+    }).catch(() => {});
+  }
+  $('#planForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = { titulo: $('#plTitulo').value.trim(), descripcion: $('#plDesc').value,
+      categoria: $('#plCat').value, cinturon: $('#plCintur').value, fecha: $('#plFecha').value };
+    try {
+      if (esNuevo) { await api('/api/planes', { method: 'POST', body }); toast('Plan creado ✓'); }
+      else { await api('/api/planes/' + id, { method: 'PUT', body }); toast('Plan actualizado ✓'); }
+      closeModal(); renderPlanes($('#sec-planes'));
+    } catch (err) { toast(err.message); }
+  });
+}
+
+async function togglePlanHecho(id) {
+  try {
+    await api('/api/planes/' + id + '/hecho', { method: 'POST', body: {} });
+    renderPlanes($('#sec-planes'));
+  } catch (err) { toast(err.message); }
+}
+
+async function borrarPlan(id) {
+  if (!confirm('¿Eliminar este plan?')) return;
+  try {
+    await api('/api/planes/' + id, { method: 'DELETE' });
+    toast('Plan eliminado');
+    renderPlanes($('#sec-planes'));
+  } catch (err) { toast(err.message); }
 }
 
 /* =====================================================================
