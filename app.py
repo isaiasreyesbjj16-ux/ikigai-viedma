@@ -28,6 +28,7 @@ CATEGORIAS = ['adulto', 'juveniles', 'kids']
 TIPOS_CLASE = ['Gi', 'NoGi', 'Kids', 'Juveniles', 'Abierto']
 METODOS_PAGO = ['Efectivo', 'Transferencia', 'Débito', 'Crédito', 'Otro']
 DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+MESES_NOMBRE = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
 VAPID_PRIVATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vapid_private.pem')
 VAPID_PUBLIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vapid_public.pem')
@@ -114,6 +115,8 @@ CREATE TABLE IF NOT EXISTS users (
     firma_tyc TEXT,
     firma_foto TEXT,
     firma_fecha TEXT,
+    pausa_desde TEXT,
+    pausa_hasta TEXT,
     creado TEXT
 );
 
@@ -336,6 +339,25 @@ CREATE TABLE IF NOT EXISTS clase_valoraciones (
     comentario TEXT,
     UNIQUE (clase_id, alumno_id, fecha)
 );
+
+CREATE TABLE IF NOT EXISTS planes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    titulo TEXT NOT NULL,
+    descripcion TEXT,
+    categoria TEXT DEFAULT 'todos',
+    cinturon TEXT DEFAULT 'todos',
+    fecha TEXT,
+    autor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    activo INTEGER DEFAULT 1,
+    creado TEXT
+);
+
+CREATE TABLE IF NOT EXISTS plan_hecho (
+    plan_id INTEGER NOT NULL REFERENCES planes(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    fecha TEXT,
+    PRIMARY KEY (plan_id, user_id)
+);
 """
 
 
@@ -365,7 +387,8 @@ def init_db():
                      ('acepto_tyc', 'TEXT'), ('proximo_examen', 'TEXT'), ('notas_internas', 'TEXT'),
                      ('medic_enfermedades', 'TEXT'), ('medic_alergias', 'TEXT'), ('medic_medicacion', 'TEXT'),
                      ('medic_lesiones', 'TEXT'), ('ficha_fecha', 'TEXT'),
-                     ('firma_tyc', 'TEXT'), ('firma_foto', 'TEXT'), ('firma_fecha', 'TEXT')]:
+                     ('firma_tyc', 'TEXT'), ('firma_foto', 'TEXT'), ('firma_fecha', 'TEXT'),
+                     ('pausa_desde', 'TEXT'), ('pausa_hasta', 'TEXT')]:
         if col not in cols:
             c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
     if DB_MODE == 'postgres':
@@ -634,6 +657,8 @@ _NOTIF_LINK_POR_TIPO = {
     'familia': 'perfil',
     'examen': 'perfil',
     'video': 'videos',
+    'pausa': 'perfil',
+    'plan': 'planes',
 }
 
 
@@ -666,6 +691,8 @@ def aviso_cuotas_automatico():
             (hoy.month, hoy.year)).fetchall()
         enviados = 0
         for d in deudores:
+            if en_pausa(d):
+                continue
             try:
                 notify(d['id'], '💸 Recordatorio de cuota',
                        'Tu cuota de %d/%d está pendiente. Pagala cuando puedas.' % (hoy.month, hoy.year),
@@ -865,6 +892,9 @@ def user_public(u):
         'proximo_examen': u['proximo_examen'] if 'proximo_examen' in u.keys() else None,
         'activo': u['activo'],
         'creado': u['creado'],
+        'pausa_desde': u['pausa_desde'] if 'pausa_desde' in u.keys() else None,
+        'pausa_hasta': u['pausa_hasta'] if 'pausa_hasta' in u.keys() else None,
+        'en_pausa': en_pausa(u) if 'pausa_desde' in u.keys() else False,
     }
 
 
@@ -938,6 +968,25 @@ def calcular_demora(monto, mes=None, anio=None, fecha=None):
     return base, 0, base
 
 
+def en_pausa(alumno, fecha=None):
+    """True si el alumno está dentro del rango de pausa temporal (inclusive)."""
+    hoy = fecha or date.today()
+    if isinstance(alumno, dict):
+        get = lambda k: alumno.get(k)
+    else:
+        get = lambda k: alumno[k] if k in alumno.keys() else None
+    desde = get('pausa_desde')
+    hasta = get('pausa_hasta')
+    if not desde or not hasta:
+        return False
+    try:
+        d = datetime.strptime(str(desde)[:10], '%Y-%m-%d').date()
+        h = datetime.strptime(str(hasta)[:10], '%Y-%m-%d').date()
+    except Exception:
+        return False
+    return d <= hoy <= h
+
+
 def dias_deuda(alumno):
     hoy = date.today()
     pago = get_db().execute(
@@ -999,6 +1048,8 @@ def run_auto_mensajes():
         "SELECT * FROM users WHERE role='alumno' AND activo=1").fetchall()
     enviados = []
     for a in alumnos:
+        if en_pausa(a):
+            continue
         motivo = None
         if dias_sin_entrenar(a) >= inact_dias:
             motivo = 'inactividad'
@@ -1459,7 +1510,7 @@ def api_alumnos_update(uid):
     if not u:
         return jsonify({'error': 'Alumno no encontrado'}), 404
     get_db().execute(
-        """UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, activo=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=?, direccion=?, dni=?, foto_ok=? WHERE id=?""",
+        """UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, activo=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=?, direccion=?, dni=?, foto_ok=?, pausa_desde=?, pausa_hasta=? WHERE id=?""",
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
          data.get('categoria', u['categoria']), data.get('gi_pref', u['gi_pref']),
@@ -1472,8 +1523,15 @@ def api_alumnos_update(uid):
          (data.get('tel_2', u['tel_2']) or '').strip() or None,
          (data.get('direccion', u['direccion']) or '').strip() or None,
          (data.get('dni', u['dni']) or '').strip() or None,
-         1 if data.get('foto_ok', u['foto_ok']) else 0, uid))
+         1 if data.get('foto_ok', u['foto_ok']) else 0,
+         (data.get('pausa_desde', u['pausa_desde']) or '').strip() or None,
+         (data.get('pausa_hasta', u['pausa_hasta']) or '').strip() or None, uid))
     get_db().commit()
+    nuevo_pausa = bool((data.get('pausa_desde', u['pausa_desde']) or '').strip())
+    if nuevo_pausa and not en_pausa(u) and en_pausa(get_db().execute('SELECT * FROM users WHERE id=?', (uid,)).fetchone()):
+        notify(uid, '⏸ Pausa temporal',
+               'Registramos tu pausa. Mientras estés de pausa no se te cobra ni contás como deudor.',
+               'pausa', push=True, link='perfil')
     return jsonify({'ok': True})
 
 
@@ -1911,6 +1969,8 @@ def api_deudores():
         "SELECT * FROM users WHERE role='alumno' AND activo=1 ORDER BY nombre").fetchall()
     deudores = []
     for r in rows:
+        if en_pausa(r):
+            continue
         st = cuota_status(r)
         if st['estado'] in ('deuda', 'por_vencer'):
             deudores.append({
@@ -1930,8 +1990,8 @@ def api_notify_deuda():
     if alumno_id:
         ids = [alumno_id]
     else:
-        rows = get_db().execute("SELECT id FROM users WHERE role='alumno' AND activo=1").fetchall()
-        ids = [r['id'] for r in rows if cuota_status(r)['estado'] in ('deuda', 'por_vencer')]
+        rows = get_db().execute("SELECT * FROM users WHERE role='alumno' AND activo=1").fetchall()
+        ids = [r['id'] for r in rows if not en_pausa(r) and cuota_status(r)['estado'] in ('deuda', 'por_vencer')]
     who = current_user()['nombre']
     for aid in ids:
         alumno = get_db().execute('SELECT * FROM users WHERE id=?', (aid,)).fetchone()
@@ -2000,6 +2060,89 @@ def api_mi_asistencia():
         'SELECT clase_id FROM asistencia WHERE alumno_id=? AND fecha=? AND presente=1',
         (u['id'], hoy)).fetchall()]
     return jsonify({'asistencia': asis, 'total': total, 'hoy': hoy_ids, 'fecha_hoy': hoy})
+
+
+def _ultimos_meses(n=6):
+    """Lista de últimos n meses (anio, mes, label) desde hoy hacia atrás."""
+    hoy = date.today()
+    y, m = hoy.year, hoy.month
+    meses = []
+    for _ in range(n):
+        meses.append({'anio': y, 'mes': m, 'label': MESES_NOMBRE[m - 1]})
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    meses.reverse()
+    return meses
+
+
+def _rango_mes(mm):
+    primer = f'{mm["anio"]}-{mm["mes"]:02d}-01'
+    if mm['mes'] == 12:
+        ultimo = f'{mm["anio"] + 1}-01-01'
+    else:
+        ultimo = f'{mm["anio"]}-{mm["mes"] + 1:02d}-01'
+    return primer, ultimo
+
+
+def _serie_asistencia(alumno_id, meses):
+    """Porcentaje de comparecencia (%) por mes: asistencias del alumno / días con clases."""
+    db = get_db()
+    serie = []
+    for mm in meses:
+        primer, ultimo = _rango_mes(mm)
+        dias = db.execute(
+            'SELECT COUNT(DISTINCT fecha) AS n FROM asistencia WHERE presente=1 AND fecha>=? AND fecha<?',
+            (primer, ultimo)).fetchone()['n']
+        asist = db.execute(
+            'SELECT COUNT(*) AS n FROM asistencia WHERE alumno_id=? AND presente=1 AND fecha>=? AND fecha<?',
+            (alumno_id, primer, ultimo)).fetchone()['n']
+        serie.append({'asist': asist, 'dias': dias, 'pct': round(asist * 100 / dias) if dias else None})
+    return serie
+
+
+@app.route('/api/mi_estadistica_asistencia')
+@role_required('alumno')
+def api_mi_estadistica_asistencia():
+    u = current_user()
+    meses = _ultimos_meses()
+    serie = _serie_asistencia(u['id'], meses)
+    total = get_db().execute(
+        'SELECT COUNT(*) AS n FROM asistencia WHERE alumno_id=? AND presente=1', (u['id'],)).fetchone()['n']
+    return jsonify({'meses': [mm['label'] for mm in meses],
+                    'dias_con_clases': [x['dias'] for x in serie],
+                    'serie': serie, 'total': total})
+
+
+@app.route('/api/estadisticas_asistencia')
+@role_required('admin', 'profesor')
+def api_estadisticas_asistencia():
+    """Comparecencia por alumno (% de clases a las que asistió sobre las dictadas) en los últimos 6 meses."""
+    meses = _ultimos_meses()
+    db = get_db()
+    rows = db.execute(
+        """SELECT u.*,
+            (SELECT COUNT(*) FROM asistencia a WHERE a.alumno_id=u.id AND a.presente=1) AS total_asist
+           FROM users u WHERE u.role='alumno' AND u.activo=1
+           ORDER BY total_asist DESC LIMIT 40""").fetchall()
+    alumnos = []
+    for r in rows:
+        serie = _serie_asistencia(r['id'], meses)
+        d = user_public(r)
+        d['total_asist'] = r['total_asist']
+        d['en_pausa'] = en_pausa(r)
+        d['serie'] = serie
+        alumnos.append(d)
+    dias_con_clases = []
+    for mm in meses:
+        primer, ultimo = _rango_mes(mm)
+        dias_con_clases.append(db.execute(
+            'SELECT COUNT(DISTINCT fecha) AS n FROM asistencia WHERE presente=1 AND fecha>=? AND fecha<?',
+            (primer, ultimo)).fetchone()['n'])
+    return jsonify({'meses': [mm['label'] for mm in meses],
+                    'dias_con_clases': dias_con_clases,
+                    'alumnos': alumnos})
 
 
 @app.route('/api/clase_valorar', methods=['POST'])
@@ -2241,10 +2384,11 @@ def api_reporte():
         k = p['metodo'] or 'Otro'
         por_metodo[k] = por_metodo.get(k, 0) + (p['monto'] or 0)
     deudores = get_db().execute(
-        """SELECT u.id, u.nombre, u.cinturon, u.cuota_mensual FROM users u
+        """SELECT u.id, u.nombre, u.cinturon, u.cuota_mensual, u.pausa_desde, u.pausa_hasta FROM users u
            WHERE u.role='alumno' AND u.activo=1
            AND NOT EXISTS (SELECT 1 FROM pagos p WHERE p.alumno_id=u.id AND p.mes=? AND p.anio=?)""",
         (mes, anio)).fetchall()
+    deudores = [d for d in deudores if not en_pausa(d)]
     avisos_pend = get_db().execute(
         "SELECT COUNT(*) AS c FROM avisos_pago WHERE estado='pendiente'").fetchone()['c']
     # Porcentajes de alumnos
@@ -2274,11 +2418,12 @@ def api_reporte():
            GROUP BY u.id ORDER BY u.nombre""",
         (primer_dia, ultimo_dia)).fetchall()
     no_asistieron = get_db().execute(
-        """SELECT u.id, u.nombre, u.cinturon FROM users u
+        """SELECT u.id, u.nombre, u.cinturon, u.pausa_desde, u.pausa_hasta FROM users u
            WHERE u.role='alumno' AND u.activo=1
            AND NOT EXISTS (SELECT 1 FROM asistencia a WHERE a.alumno_id=u.id
                            AND a.presente=1 AND a.fecha>=? AND a.fecha<?)""",
         (primer_dia, ultimo_dia)).fetchall()
+    no_asistieron = [d for d in no_asistieron if not en_pausa(d)]
     cant_asistieron = len(asistieron)
     cant_no_asistieron = len(no_asistieron)
     pct_asistieron = round(cant_asistieron * 100 / total_alumnos) if total_alumnos else 0
@@ -2358,6 +2503,43 @@ def api_perfil_update():
             return jsonify({'error': 'La contrasena debe tener al menos 4 caracteres'}), 400
         get_db().execute('UPDATE users SET password_hash=? WHERE id=?',
                          (generate_password_hash(data['password']), u['id']))
+    get_db().commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/pausa', methods=['POST'])
+@role_required('alumno')
+def api_pausa_set():
+    """El alumno activa una pausa temporal: no se le cobra ni cuenta como deudor."""
+    u = current_user()
+    data = parse_json()
+    desde = (data.get('desde') or '').strip() or date.today().strftime('%Y-%m-%d')
+    hasta = (data.get('hasta') or '').strip()
+    if not hasta:
+        return jsonify({'error': 'Indicá hasta qué día estás de pausa'}), 400
+    try:
+        d = datetime.strptime(desde[:10], '%Y-%m-%d').date()
+        h = datetime.strptime(hasta[:10], '%Y-%m-%d').date()
+    except Exception:
+        return jsonify({'error': 'Formato de fecha inválido'}), 400
+    if h < d:
+        return jsonify({'error': 'La fecha "hasta" no puede ser anterior a "desde"'}), 400
+    get_db().execute('UPDATE users SET pausa_desde=?, pausa_hasta=? WHERE id=?',
+                     (desde[:10], hasta[:10], u['id']))
+    get_db().commit()
+    staff = get_db().execute("SELECT id FROM users WHERE role IN ('admin','profesor')").fetchall()
+    for s in staff:
+        notify(s['id'], '⏸ Pausa temporal',
+               f'{u["nombre"]} está de pausa desde el {desde[:10]} hasta el {hasta[:10]}.',
+               'pausa', push=True, link='alumnos')
+    return jsonify({'ok': True})
+
+
+@app.route('/api/pausa', methods=['DELETE'])
+@role_required('alumno')
+def api_pausa_delete():
+    u = current_user()
+    get_db().execute('UPDATE users SET pausa_desde=NULL, pausa_hasta=NULL WHERE id=?', (u['id'],))
     get_db().commit()
     return jsonify({'ok': True})
 
@@ -3301,6 +3483,133 @@ def api_push_subscribe():
     except Exception as e:
         return jsonify({'error': 'Error al guardar la suscripción: %s' % e}), 500
     return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Planes del profe
+# ---------------------------------------------------------------------------
+
+def _semana_actual():
+    hoy = date.today()
+    lunes = hoy - timedelta(days=hoy.weekday())
+    return lunes, lunes + timedelta(days=6)
+
+
+def _planes_semana(semana=None, user_id=None):
+    """Planes de la semana (por defecto la actual). Para alumno filtra por su categoría/cinturón."""
+    lunes, domingo = _semana_actual()
+    if semana:
+        try:
+            f = datetime.strptime(str(semana), '%Y-%m-%d').date()
+            lunes = f - timedelta(days=f.weekday())
+            domingo = lunes + timedelta(days=6)
+        except Exception:
+            lunes, domingo = _semana_actual()
+    db = get_db()
+    rows = db.execute(
+        """SELECT p.*, u.nombre AS autor_nombre FROM planes p
+           LEFT JOIN users u ON u.id=p.autor_id
+           WHERE p.activo=1 AND p.fecha>=? AND p.fecha<=? ORDER BY p.id DESC""",
+        (lunes.strftime('%Y-%m-%d'), domingo.strftime('%Y-%m-%d'))).fetchall()
+    hechos = set()
+    if user_id:
+        hechos = {r['plan_id'] for r in db.execute(
+            'SELECT plan_id FROM plan_hecho WHERE user_id=?', (user_id,)).fetchall()}
+    planes = []
+    perfil = None
+    if user_id:
+        perfil = get_db().execute('SELECT categoria, cinturon FROM users WHERE id=?', (user_id,)).fetchone()
+    for p in rows:
+        if user_id and perfil:
+            cat_ok = p['categoria'] in ('todos', None, '') or p['categoria'] == perfil['categoria']
+            cint_ok = p['cinturon'] in ('todos', None, '') or p['cinturon'] == perfil['cinturon']
+            if not (cat_ok and cint_ok):
+                continue
+        planes.append({
+            'id': p['id'], 'titulo': p['titulo'], 'descripcion': p['descripcion'],
+            'categoria': p['categoria'], 'cinturon': p['cinturon'], 'fecha': p['fecha'],
+            'autor': p['autor_nombre'], 'hecho': p['id'] in hechos,
+        })
+    return {'semana_inicio': lunes.strftime('%Y-%m-%d'), 'semana_fin': domingo.strftime('%Y-%m-%d'),
+            'planes': planes}
+
+
+@app.route('/api/planes')
+@login_required
+def api_planes():
+    u = current_user()
+    if u['role'] == 'alumno':
+        return jsonify(_planes_semana(user_id=u['id']))
+    semana = request.args.get('semana')
+    return jsonify(_planes_semana(semana=semana))
+
+
+@app.route('/api/planes', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_planes_crear():
+    data = parse_json()
+    titulo = (data.get('titulo') or '').strip()
+    if not titulo:
+        return jsonify({'error': 'El título es obligatorio'}), 400
+    lunes, _ = _semana_actual()
+    try:
+        if data.get('fecha'):
+            f = datetime.strptime(str(data['fecha']), '%Y-%m-%d').date()
+            lunes = f - timedelta(days=f.weekday())
+    except Exception:
+        pass
+    get_db().execute(
+        'INSERT INTO planes(titulo, descripcion, categoria, cinturon, fecha, autor_id, creado) VALUES(?,?,?,?,?,?,?)',
+        (titulo, (data.get('descripcion') or '').strip(),
+         data.get('categoria') or 'todos', data.get('cinturon') or 'todos',
+         lunes.strftime('%Y-%m-%d'), current_user()['id'],
+         datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    get_db().commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/planes/<int:pid>', methods=['PUT'])
+@role_required('admin', 'profesor')
+def api_planes_update(pid):
+    data = parse_json()
+    p = get_db().execute('SELECT * FROM planes WHERE id=?', (pid,)).fetchone()
+    if not p:
+        return jsonify({'error': 'Plan no encontrado'}), 404
+    get_db().execute(
+        'UPDATE planes SET titulo=?, descripcion=?, categoria=?, cinturon=?, fecha=? WHERE id=?',
+        ((data.get('titulo') or p['titulo']), data.get('descripcion', p['descripcion']),
+         data.get('categoria', p['categoria']), data.get('cinturon', p['cinturon']),
+         data.get('fecha', p['fecha']), pid))
+    get_db().commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/planes/<int:pid>', methods=['DELETE'])
+@role_required('admin', 'profesor')
+def api_planes_delete(pid):
+    p = get_db().execute('SELECT * FROM planes WHERE id=?', (pid,)).fetchone()
+    if not p:
+        return jsonify({'error': 'Plan no encontrado'}), 404
+    get_db().execute('DELETE FROM planes WHERE id=?', (pid,))
+    get_db().commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/planes/<int:pid>/hecho', methods=['POST'])
+@role_required('alumno')
+def api_planes_hecho(pid):
+    u = current_user()
+    db = get_db()
+    existe = db.execute('SELECT 1 FROM plan_hecho WHERE plan_id=? AND user_id=?', (pid, u['id'])).fetchone()
+    if existe:
+        db.execute('DELETE FROM plan_hecho WHERE plan_id=? AND user_id=?', (pid, u['id']))
+        hecho = False
+    else:
+        db.execute('INSERT INTO plan_hecho(plan_id, user_id, fecha) VALUES(?,?,?)',
+                   (pid, u['id'], datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        hecho = True
+    db.commit()
+    return jsonify({'ok': True, 'hecho': hecho})
 
 
 # ---------------------------------------------------------------------------
