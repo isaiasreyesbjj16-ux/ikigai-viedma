@@ -976,6 +976,12 @@ async function renderPerfil(el) {
 
       ${grid}
 
+      ${me.role === 'alumno' ? `<div class="feed-card">
+        <div class="small mb">🥋 Mi camino (grados)</div>
+        <div class="small" style="margin-bottom:8px">Cinturón actual: ${beltHTML(me.cinturon)}${me.proximo_examen ? ' · <b style="color:var(--accent2)">Próximo examen: ' + esc(me.proximo_examen) + '</b>' : ''}</div>
+        <div id="misGrados">Cargando…</div>
+      </div>` : ''}
+
       <div class="feed-card">
         <form id="perfilForm" class="grid2">
           <div class="field"><label>Nombre y apellido</label><input type="text" id="pNombre" value="${esc(me.nombre)}"></div>
@@ -1071,6 +1077,17 @@ async function renderPerfil(el) {
     } catch (err) { toast(err.message); }
   });
   setupFoto();
+  if (me.role === 'alumno') {
+    api('/api/mis_grados').then(d => {
+      const box = $('#misGrados');
+      if (!box) return;
+      box.innerHTML = (d.grados && d.grados.length
+        ? d.grados.map(g => `<div class="flex space-between small" style="padding:4px 0;border-bottom:1px dashed var(--line)">
+            <span>🥋 ${esc(g.cinturon)}</span><span style="color:var(--muted)">${esc(g.fecha || '')}${g.notas ? ' · ' + esc(g.notas) : ''}</span>
+          </div>`).join('')
+        : '<div class="small" style="color:var(--muted)">Todavía no tenés grados registrados.</div>');
+    }).catch(() => { const b = $('#misGrados'); if (b) b.textContent = '—'; });
+  }
 }
 
 function instalarManual() {
@@ -1552,6 +1569,8 @@ async function renderAlumnos(el) {
             <button class="btn ghost small" onclick="formAlumno(${a.id})">✏️</button>
             <button class="btn ghost small" onclick="cambiarCuota(${a.id},'${esc(a.nombre)}',${a.cuota_mensual || 0})">💲</button>
             <button class="btn ghost small" onclick="verFicha(${a.id},'${esc(a.nombre)}')">🩺</button>
+            <button class="btn ghost small" onclick="verGrado(${a.id},'${esc(a.nombre)}')">🥋</button>
+            <button class="btn ghost small" onclick="verNotas(${a.id},'${esc(a.nombre)}')">📝</button>
             <button class="btn good small" onclick="notificarDeuda(${a.id})">🔔</button>
             ${USER.role !== 'alumno' ? `<button class="btn ${a.activo ? 'bad' : 'good'} small" onclick="toggleActivo(${a.id},${a.activo ? 1 : 0})">${a.activo ? '🚫 Desactivar' : '✅ Reactivar'}</button>` : ''}
             ${USER.role === 'admin' ? `<button class="btn ghost small" onclick="reiniciarPassword(${a.id},'${esc(a.nombre)}')">🔑</button>` : ''}
@@ -1578,6 +1597,59 @@ async function verFicha(id, nombre) {
     ${a.medic_info ? `<p class="small" style="white-space:pre-wrap;background:var(--bg2);border-radius:8px;padding:10px"><b>Ficha médica:</b><br>${esc(a.medic_info)}</p>` : '<div class="empty">Sin ficha médica cargada.</div>'}
     ${a.emergency_contact ? `<p class="small" style="white-space:pre-wrap;background:var(--bg2);border-radius:8px;padding:10px"><b>📞 Contacto de emergencia:</b> ${esc(a.emergency_contact)}</p>` : ''}
     <button class="btn ghost btn-block" onclick="closeModal()">Cerrar</button>`);
+}
+
+async function verGrado(id, nombre) {
+  const a = (await api('/api/alumnos')).alumnos.find(x => x.id === id);
+  const belts = BELTS_POR_CAT[a.categoria] || BELTS_ADULT;
+  openModal(`
+    <h3>🥋 Examen de ${esc(nombre)}</h3>
+    <div class="small mb">Cinturón actual: ${beltHTML(a.cinturon)} · Próximo examen: <b>${a.proximo_examen ? esc(a.proximo_examen) : 'No agendado'}</b></div>
+    <form id="gradoForm" class="grid2">
+      <div class="field"><label>Nuevo cinturón</label><select id="gCinturon">${belts.map(b => `<option ${a.cinturon === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>
+      <div class="field"><label>Fecha del examen</label><input type="date" id="gFecha" value="${new Date().toISOString().slice(0, 10)}"></div>
+      <div class="field" style="grid-column:1/-1"><label>Notas</label><input type="text" id="gNotas" placeholder="Ej: aprobó katas perfecto"></div>
+      <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">✅ Registrar promoción</button></div>
+    </form>
+    <form id="exForm" style="margin-top:10px">
+      <div class="field"><label>Agendar próximo examen</label><div style="display:flex;gap:8px"><input type="date" id="gProx" class="flex:1"><button class="btn ghost" type="submit">Guardar</button></div></div>
+    </form>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+  $('#gradoForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/alumnos/' + id + '/grado', { method: 'POST', body: { cinturon: $('#gCinturon').value, fecha: $('#gFecha').value, notas: $('#gNotas').value } });
+      toast('Promoción registrada ✓ Se notificó al alumno');
+      closeModal();
+      renderAlumnos($('#sec-alumnos'));
+    } catch (err) { toast(err.message); }
+  });
+  $('#exForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/alumnos/' + id + '/proximo_examen', { method: 'POST', body: { fecha: $('#gProx').value } });
+      toast('Examen agendado ✓ Se notificó al alumno');
+      closeModal();
+      renderAlumnos($('#sec-alumnos'));
+    } catch (err) { toast(err.message); }
+  });
+}
+
+async function verNotas(id, nombre) {
+  const a = (await api('/api/alumnos')).alumnos.find(x => x.id === id);
+  openModal(`
+    <h3>📝 Notas internas de ${esc(nombre)}</h3>
+    <p class="small">Visibles solo para admin y profesores.</p>
+    <textarea id="notasTxt" rows="4" style="width:100%">${esc(a.notas_internas || '')}</textarea>
+    <button class="btn primary btn-block mt" id="notasBtn">Guardar</button>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+  $('#notasBtn').addEventListener('click', async () => {
+    try {
+      await api('/api/alumnos/' + id + '/notas', { method: 'PUT', body: { notas: $('#notasTxt').value } });
+      toast('Notas guardadas ✓');
+      closeModal();
+    } catch (err) { toast(err.message); }
+  });
 }
 
 async function toggleActivo(id, activo) {
