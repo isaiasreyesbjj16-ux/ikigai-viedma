@@ -17,6 +17,11 @@ echo.
 echo  Paso 3: subiendo el codigo...
 echo  (Si aparece una ventana de GitHub, inicia sesion y acepta)
 echo.
+echo  Paso 3a: trayendo cambios del remoto si los hay (evita el error "fetch first")...
+git pull --rebase origin main
+echo  (si no habia cambios nuevos, sigue normal)
+echo.
+echo  Paso 3b: subiendo el codigo...
 git push -u origin main
 echo.
 if %errorlevel%==0 (

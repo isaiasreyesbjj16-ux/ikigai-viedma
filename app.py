@@ -1995,6 +1995,38 @@ def api_estadisticas():
     return jsonify({'total_alumnos': total_alumnos, 'ingresos_mes': ingresos_mes, 'clases': clases})
 
 
+@app.route('/api/metricas_pagos')
+@role_required('admin', 'profesor')
+def api_metricas_pagos():
+    anio = to_int(request.args.get('anio')) or date.today().year
+    db = get_db()
+    total_alumnos = db.execute(
+        "SELECT COUNT(*) AS n FROM users WHERE role='alumno' AND activo=1").fetchone()['n']
+    serie = []
+    for mes in range(1, 13):
+        ingresos = db.execute(
+            'SELECT COALESCE(SUM(monto),0) AS n FROM pagos WHERE mes=? AND anio=?',
+            (mes, anio)).fetchone()['n']
+        cantidad = db.execute(
+            'SELECT COUNT(*) AS n FROM pagos WHERE mes=? AND anio=?',
+            (mes, anio)).fetchone()['n']
+        cant_pagaron = db.execute(
+            'SELECT COUNT(DISTINCT alumno_id) AS n FROM pagos WHERE mes=? AND anio=?',
+            (mes, anio)).fetchone()['n']
+        serie.append({
+            'mes': mes,
+            'ingresos': ingresos,
+            'cantidad': cantidad,
+            'cant_pagaron': cant_pagaron,
+            'deudores': max(0, total_alumnos - cant_pagaron),
+            'pct_pagaron': round(cant_pagaron * 100 / total_alumnos) if total_alumnos else 0,
+            'pct_morosidad': round((total_alumnos - cant_pagaron) * 100 / total_alumnos) if total_alumnos else 0,
+        })
+    total_ingresos = sum(s['ingresos'] for s in serie)
+    return jsonify({'anio': anio, 'total_alumnos': total_alumnos,
+                    'total_ingresos': total_ingresos, 'serie': serie})
+
+
 # ---------------------------------------------------------------------------
 # Chat + grupos por categoria
 # ---------------------------------------------------------------------------
@@ -2838,6 +2870,134 @@ def api_exportar_alumnos():
 
     from flask import send_file
     return send_file(buf, as_attachment=True, download_name='alumnos_activos.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/api/exportar_pagos')
+@role_required('admin', 'profesor')
+def api_exportar_pagos():
+    anio = to_int(request.args.get('anio')) or date.today().year
+    db = get_db()
+    total_alumnos = db.execute(
+        "SELECT COUNT(*) AS n FROM users WHERE role='alumno' AND activo=1").fetchone()['n']
+    resumen = []
+    for mes in range(1, 13):
+        pagos = db.execute('SELECT monto FROM pagos WHERE mes=? AND anio=?', (mes, anio)).fetchall()
+        cant_pagaron = db.execute(
+            'SELECT COUNT(DISTINCT alumno_id) AS n FROM pagos WHERE mes=? AND anio=?',
+            (mes, anio)).fetchone()['n']
+        ingresos = sum((p['monto'] or 0) for p in pagos)
+        deudores = max(0, total_alumnos - cant_pagaron)
+        resumen.append([
+            ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio',
+             'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][mes - 1],
+            ingresos, len(pagos),
+            cant_pagaron, deudores,
+            str(round(cant_pagaron * 100 / total_alumnos) if total_alumnos else 0) + '%',
+            str(round(deudores * 100 / total_alumnos) if total_alumnos else 0) + '%',
+        ])
+    rows_pagos = db.execute(
+        """SELECT p.id, p.fecha, u.nombre AS alumno, p.metodo, p.monto, p.mes, p.anio
+           FROM pagos p JOIN users u ON u.id=p.alumno_id
+           WHERE p.anio=? ORDER BY p.mes, p.fecha""", (anio,)).fetchall()
+
+    def xenc(v):
+        from xml.sax.saxutils import escape as xesc
+        return xesc(str(v))
+
+    def xrow(row):
+        return '<row>' + ''.join(f'<c t="inlineStr"><is><t>{xenc(c)}</t></is></c>' for c in row) + '</row>'
+
+    def sheet_xml(headers, rows):
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                '<sheetData>' + xrow(headers) + ''.join(xrow(r) for r in rows)
+                + '</sheetData></worksheet>')
+
+    headers_resumen = ['Mes', 'Total cobrado ($)', 'Cantidad pagos', 'Alumnos que pagaron',
+                       'Deudores', '% pagó', '% morosidad']
+    headers_detalle = ['ID', 'Fecha', 'Alumno', 'Método', 'Monto ($)', 'Mes', 'Año']
+    sh1 = sheet_xml(headers_resumen, resumen)
+    sh2 = sheet_xml(headers_detalle,
+                    [[p['id'], p['fecha'], p['alumno'], p['metodo'], p['monto'], p['mes'], p['anio']]
+                     for p in rows_pagos])
+
+    shared = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="0" uniqueCount="0"></sst>'
+    )
+    styles = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
+        '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
+        '<borders count="1"><border/></borders>'
+        '<cellStyleXfs count="1"><xf/></cellStyleXfs>'
+        '<cellXfs count="1"><xf/></cellXfs>'
+        '</styleSheet>'
+    )
+
+    def rels():
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+                '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+                '</Relationships>')
+
+    def content_types():
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+                '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+                '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+                '</Types>')
+
+    def workbook():
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+                'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                '<sheets><sheet name="Resumen anual" sheetId="1" r:id="rId1"/>'
+                '<sheet name="Detalle pagos" sheetId="2" r:id="rId2"/></sheets></workbook>')
+
+    def workbook_rels():
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+                '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>'
+                '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+                '<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
+                '</Relationships>')
+
+    def core():
+        return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+                'xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" '
+                'xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+                '<dc:creator>IKIGAI VIEDMA</dc:creator>'
+                '<cp:lastModifiedBy>IKIGAI VIEDMA</cp:lastModifiedBy>'
+                '<dcterms:created xsi:type="dcterms:W3CDTF">' + datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ') + '</dcterms:created>'
+                '</cp:coreProperties>')
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', content_types())
+        z.writestr('_rels/.rels', rels())
+        z.writestr('docProps/core.xml', core())
+        z.writestr('xl/workbook.xml', workbook())
+        z.writestr('xl/_rels/workbook.xml.rels', workbook_rels())
+        z.writestr('xl/worksheets/sheet1.xml', sh1)
+        z.writestr('xl/worksheets/sheet2.xml', sh2)
+        z.writestr('xl/styles.xml', styles)
+        z.writestr('xl/sharedStrings.xml', shared)
+    buf.seek(0)
+
+    from flask import send_file
+    return send_file(buf, as_attachment=True, download_name=f'pagos_{anio}.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
