@@ -1213,6 +1213,10 @@ async function renderPagos(el) {
         <div><h3 style="margin:0">📊 Reporte mensual de ingresos</h3><p class="small">Total cobrado, métodos usados y deudores del mes.</p></div>
         <button class="btn primary small" onclick="abrirReporte()">Ver reporte</button>
       </div>
+      <div class="flex mt" style="gap:8px">
+        <button class="btn ghost small" onclick="abrirMetricas()">📈 Métricas del año</button>
+        <button class="btn ghost small" onclick="exportarPagosExcel()">📥 Exportar pagos a Excel</button>
+      </div>
     </div>
     <div class="card">
       <h3>${R === 'profesor' ? 'Mis pagos recibidos' : 'Historial de pagos'}</h3>
@@ -1329,6 +1333,42 @@ function abrirReporte() {
         <button class="btn ghost btn-block" onclick="closeModal()">Cerrar</button>`;
     } catch (e) { toast(e.message); }
   });
+}
+
+function exportarPagosExcel() {
+  const hoy = new Date();
+  const anio = parseInt(prompt('Año a exportar:', String(hoy.getFullYear())), 10);
+  if (isNaN(anio)) return;
+  window.open('/api/exportar_pagos?anio=' + anio, '_blank');
+}
+
+async function abrirMetricas() {
+  const hoy = new Date();
+  const anio = parseInt(prompt('Año de las métricas:', String(hoy.getFullYear())), 10);
+  if (isNaN(anio)) return;
+  try {
+    const d = await api('/api/metricas_pagos?anio=' + anio);
+    const serie = d.serie || [];
+    const max = Math.max(1, ...serie.map(s => s.ingresos));
+    const MESES = ['E', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+    const bars = serie.map((s, i) => `
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0">
+        <div class="small" style="color:var(--muted);font-size:10px">$${num(s.ingresos)}</div>
+        <div title="${MESES[i]}·${anio}" style="width:14px;background:var(--accent2);border-radius:3px;height:${Math.max(2, Math.round(s.ingresos * 120 / max))}px;opacity:${s.ingresos ? '1' : '.25'};min-height:2px"></div>
+        <div class="small" style="color:var(--muted);font-size:9px">${MESES[i]}</div>
+      </div>`).join('');
+    openModal(`
+      <h3>📈 Ingresos ${anio}</h3>
+      <div class="stat-card"><div class="num">$${num(d.total_ingresos)}</div><div class="lbl">Total cobrado en el año</div></div>
+      <div class="small mb mt"><b>💰 Por mes</b> <span style="color:var(--muted)">(máx $${num(max)})</span></div>
+      <div style="display:flex;align-items:flex-end;gap:2px;height:150px;padding:8px 4px;border:1px solid var(--line);border-radius:8px">${bars}</div>
+      <div class="small mb mt" style="margin-top:14px"><b>🎯 Morosidad por mes</b> <span style="color:var(--muted)">(${d.total_alumnos} alumn${d.total_alumnos === 1 ? 'o' : 'os'} activ${d.total_alumnos === 1 ? 'o' : 'os'})</span></div>
+      ${serie.map((s, i) => `<div class="flex space-between small" style="padding:3px 0;border-bottom:1px dashed var(--line)">
+        <span>${MESES[i]}. — ${s.deudores} debiendo</span>
+        <b style="color:${s.pct_morosidad > 50 ? 'var(--bad)' : 'var(--good)'}">${s.pct_morosidad}%</b>
+      </div>`).join('')}
+      <button class="btn ghost btn-block" onclick="closeModal()">Cerrar</button>`);
+  } catch (e) { toast(e.message); }
 }
 function verComprobante(id) {
   const a = AVISOS_CACHE[id];
