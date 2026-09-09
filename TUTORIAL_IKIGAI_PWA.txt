@@ -10,12 +10,11 @@
 
 Opción A - Desde la PC:
   1. Abrí el navegador y entrá a: https://ikigai-viedma.onrender.com
-  2. (Si es la primera vez, dale a "Instalar app" o "Agregar a pantalla de inicio")
 
 Opción B - Desde el celular:
-  1. Abrí Chrome (o tu navegador) en el celular
+  1. Abrí Chrome (o tu navegador) en android y safari en apple 
   2. Entrá a: https://ikigai-viedma.onrender.com
-  3. Tocá los 3 puntos (menú) → "Agregar a pantalla de inicio"
+  3. Tocá los 3 puntos (menú) → "Agregar a pantalla de inicio" o Descargar app en android (seccion perfil)
   4. ¡Listo! Ahora aparece como una app en tu celular
 
 
