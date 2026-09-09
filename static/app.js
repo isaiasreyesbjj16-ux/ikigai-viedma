@@ -412,6 +412,7 @@ async function renderMiAsistencia(el) {
   const d = await api('/api/mi_asistencia');
   el.innerHTML = `
     ${secHeader('Mis asistencias')}
+    <button class="btn primary btn-block mb" onclick="marcarAsistenciaDirecta()">📋 Marcar asistencia de hoy</button>
     <div class="feed">
       <div class="feed-card">
         <div class="stat-card" style="margin-bottom:12px"><div class="num">${d.total}</div><div class="lbl">Clases a las que asistí</div></div>
@@ -441,27 +442,46 @@ async function marcarAsistenciaQR(qrToken) {
     const hoyIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
     const hoyClases = (horarios.horarios || []).filter(h => h.dia === hoyIdx);
     if (hoyClases.length === 0) { toast('No hay clases programadas para hoy'); return; }
-    mostrarSelectorClase(hoyClases, token);
+    mostrarSelectorClase(hoyClases, async (cid) => {
+      await api('/api/asistencia_yo', { method: 'POST', body: { clase_id: cid, qr_token: token } });
+    });
   } catch (err) { toast('Error al marcar asistencia'); }
 }
 
-function mostrarSelectorClase(hoyClases, token) {
+async function marcarAsistenciaDirecta() {
+  try {
+    const [horarios] = await Promise.all([api('/api/horarios')]);
+    const hoyIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
+    const hoyClases = (horarios.horarios || []).filter(h => h.dia === hoyIdx);
+    if (hoyClases.length === 0) { toast('No hay clases programadas para hoy'); return; }
+    mostrarSelectorClase(hoyClases, async (cid) => {
+      await api('/api/asistencia_directo', { method: 'POST', body: { clase_id: cid } });
+    });
+  } catch (err) { toast('Error al marcar asistencia'); }
+}
+
+function mostrarSelectorClase(hoyClases, marcar) {
   const ov = document.createElement('div');
+  ov.setAttribute('role', 'dialog');
+  ov.setAttribute('aria-modal', 'true');
+  ov.setAttribute('aria-label', 'Elegir la clase a la que asistís hoy');
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px';
   ov.innerHTML = `
-    <div style="color:#fff;font-weight:700;font-size:16px;text-align:center">¿A qué clase asistís hoy?</div>
+    <p style="color:#fff;font-weight:700;font-size:16px;text-align:center;margin:0">¿A qué clase asistís hoy?</p>
+    <div role="status" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)" id="selLive"></div>
     <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:360px">
-      ${hoyClases.map(c => `<button class="qrclase" data-id="${c.id}" style="background:#e84393;color:#fff;border:none;padding:14px 18px;border-radius:12px;font-size:15px;font-weight:600">${esc(c.tipo)} · ${esc(c.hora)}</button>`).join('')}
+      ${hoyClases.map(c => `<button class="selclase" data-id="${c.id}" data-txt="${esc(c.tipo)} · ${esc(c.hora)}" aria-label="${esc(c.tipo)} a las ${esc(c.hora)}, tocar para marcar asistencia" style="background:#e84393;color:#fff;border:none;padding:14px 18px;border-radius:12px;font-size:15px;font-weight:600">${esc(c.tipo)} · ${esc(c.hora)}</button>`).join('')}
     </div>
-    <button id="qrSelCerrar" style="background:#d63031;color:#fff;border:none;padding:10px 24px;border-radius:12px">Cerrar</button>`;
+    <button id="selCerrar" style="background:#d63031;color:#fff;border:none;padding:10px 24px;border-radius:12px">Cerrar</button>`;
   document.body.appendChild(ov);
-  ov.querySelectorAll('.qrclase').forEach(btn => {
+  ov.querySelectorAll('.selclase').forEach(btn => {
     btn.onclick = async () => {
       try {
         btn.disabled = true;
         btn.textContent = 'Marcando…';
         const cid = parseInt(btn.dataset.id, 10);
-        await api('/api/asistencia_yo', { method: 'POST', body: { clase_id: cid, qr_token: token } });
+        await marcar(cid);
+        $('#selLive').textContent = 'Asistencia marcada';
         toast('¡Asistencia marcada! ✓');
         ov.remove();
         renderInicio($('#sec-inicio')).catch(() => {});
@@ -469,11 +489,14 @@ function mostrarSelectorClase(hoyClases, token) {
       } catch (e) {
         btn.disabled = false;
         btn.textContent = btn.dataset.txt || '';
+        $('#selLive').textContent = e && e.message ? e.message : 'Ya tenías asistencia marcada';
         toast(e && e.message ? e.message : 'Ya tenías asistencia marcada');
       }
     };
   });
-  ov.querySelector('#qrSelCerrar').onclick = () => ov.remove();
+  ov.querySelector('#selCerrar').onclick = () => ov.remove();
+  const primer = ov.querySelector('.selclase');
+  if (primer) { try { primer.focus(); } catch (e) {} }
 }
 
 /* ---------- ESCÁNER DE QR CON CÁMARA ---------- */
