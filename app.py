@@ -2037,6 +2037,36 @@ def api_asistencia_dia():
     return jsonify({'presentes': [r['alumno_id'] for r in rows]})
 
 
+@app.route('/api/asistencia_por_dia', methods=['GET'])
+@role_required('admin', 'profesor')
+def api_asistencia_por_dia():
+    """Vista general: qué alumnos asistieron cada clase de un día (hoy, ayer, mañana, etc.)."""
+    fecha = request.args.get('fecha') or date.today().strftime('%Y-%m-%d')
+    try:
+        f = datetime.strptime(fecha, '%Y-%m-%d').date()
+    except Exception:
+        return jsonify({'error': 'Fecha inválida'}), 400
+    db = get_db()
+    clases = db.execute(
+        """SELECT c.id, c.hora, c.tipo, c.nivel, u.nombre AS profesor_nombre
+           FROM classes c LEFT JOIN users u ON u.id=c.profesor_id
+           WHERE c.dia=? ORDER BY c.hora""", (f.isoweekday(),)).fetchall()
+    rows = db.execute(
+        'SELECT clase_id, alumno_id FROM asistencia WHERE fecha=? AND presente=1', (fecha,)).fetchall()
+    por_clase = {}
+    for r in rows:
+        por_clase.setdefault(r['clase_id'], []).append(r['alumno_id'])
+    alumnos = {r['id']: r for r in db.execute(
+        "SELECT * FROM users WHERE role='alumno' AND activo=1").fetchall()}
+    res = []
+    for c in clases:
+        ids = por_clase.get(c['id'], [])
+        presentes = [user_public(alumnos[i]) for i in ids if i in alumnos]
+        res.append({'id': c['id'], 'hora': c['hora'], 'tipo': c['tipo'], 'nivel': c['nivel'],
+                    'profesor': c['profesor_nombre'], 'cantidad': len(presentes), 'presentes': presentes})
+    return jsonify({'fecha': fecha, 'dia': DIAS[f.weekday()], 'clases_dictadas': len(res), 'clases': res})
+
+
 @app.route('/api/mi_asistencia')
 @role_required('alumno')
 def api_mi_asistencia():
@@ -2364,6 +2394,31 @@ def api_asistencia_directo():
         (clase_id, u['id'], fecha))
     get_db().commit()
     chequear_logros(u['id'])
+    return jsonify({'ok': True})
+
+
+@app.route('/api/asistencia_desmarcar', methods=['POST'])
+@role_required('alumno')
+def api_asistencia_desmarcar():
+    """El alumno desmarca su asistencia de HOY (para errores del mismo día).
+    No se puede tocar asistencia de otros días."""
+    u = current_user()
+    data = parse_json()
+    clase_id = to_int(data.get('clase_id'))
+    if not clase_id:
+        return jsonify({'error': 'Falta la clase'}), 400
+    hoy = date.today().strftime('%Y-%m-%d')
+    db = get_db()
+    ex = db.execute(
+        'SELECT 1 FROM asistencia WHERE alumno_id=? AND clase_id=? AND fecha=?',
+        (u['id'], clase_id, hoy)).fetchone()
+    if not ex:
+        return jsonify({'error': 'No tenés marcada esa clase hoy.'}), 404
+    db.execute('DELETE FROM asistencia WHERE alumno_id=? AND clase_id=? AND fecha=?',
+               (u['id'], clase_id, hoy))
+    db.execute('DELETE FROM clase_valoraciones WHERE alumno_id=? AND clase_id=? AND fecha=?',
+               (u['id'], clase_id, hoy))
+    db.commit()
     return jsonify({'ok': True})
 
 

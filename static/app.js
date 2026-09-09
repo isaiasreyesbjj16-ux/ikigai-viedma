@@ -637,6 +637,7 @@ async function renderMiAsistencia(el) {
                       <button type="button" class="btn ghost small" onclick="valorarClase(${a.clase_id})">Guardar ⭐</button>
                     </div>
                     <input class="comentario small" style="margin-top:4px;width:100%" placeholder="Comentario (opcional)">`}
+            ${a.fecha === d.fecha_hoy ? `<button type="button" class="btn ghost small" style="margin-top:6px" onclick="desmarcarAsistencia(${a.clase_id})">↩ Desmarcar de hoy</button>` : ''}
           </div>`).join('') : '<div class="empty">Todavía no tenés asistencias registradas.</div>'}
       </div>
     </div>`;
@@ -705,6 +706,16 @@ async function marcarAsistenciaDirecta() {
       await api('/api/asistencia_directo', { method: 'POST', body: { clase_id: cid } });
     });
   } catch (err) { toast('Error al marcar asistencia'); }
+}
+
+async function desmarcarAsistencia(claseId) {
+  if (!confirm('¿Querés desmarcar tu asistencia de hoy? Sirve si la marcaste por error.')) return;
+  try {
+    await api('/api/asistencia_desmarcar', { method: 'POST', body: { clase_id: claseId } });
+    toast('Asistencia desmarcada ✓');
+    renderMiAsistencia($('#sec-mi_asistencia')).catch(() => {});
+    renderInicio($('#sec-inicio')).catch(() => {});
+  } catch (err) { toast(err.message); }
 }
 
 function mostrarSelectorClase(hoyClases, marcar) {
@@ -2157,7 +2168,18 @@ async function renderAsistencia(el) {
         <span class="marcador">✅ Presentes hoy: <b id="asCount">0</b></span>
         <button class="btn good" id="asGuardar" hidden>Guardar asistencia</button>
       </div>
+    </div>
+
+    <div class="card mt">
+      <div class="small mb">📅 Ver qué alumnos asistieron en un día (hoy, ayer, mañana o cualquier fecha)</div>
+      <div class="flex" style="gap:8px">
+        <input type="date" id="diaFecha" value="${hoy}" style="padding:10px;border-radius:9px;border:1px solid var(--line);background:var(--bg2);color:var(--txt);flex:1">
+        <button class="btn primary" id="diaVer">Ver asistencia</button>
+      </div>
+      <div id="diaResult" class="mt"></div>
     </div>`;
+
+  $('#diaVer').addEventListener('click', verAsistenciaDia);
 
   async function cargar() {
     const cid = +$('#asClase').value;
@@ -2195,6 +2217,33 @@ async function renderAsistencia(el) {
       toast(`Asistencia guardada: ${presentes.length} presentes ✓`);
     } catch (e) { toast(e.message); }
   });
+}
+
+async function verAsistenciaDia() {
+  const box = $('#diaResult');
+  const fecha = $('#diaFecha').value;
+  if (!fecha) { toast('Elegí una fecha'); return; }
+  box.innerHTML = '<div class="small" style="color:var(--muted)">Cargando…</div>';
+  let d;
+  try {
+    d = await api('/api/asistencia_por_dia?fecha=' + fecha);
+  } catch (e) {
+    box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+    return;
+  }
+  box.innerHTML = `
+    <div class="small mb">${esc(d.dia)} ${fecha} · <b>${d.clases_dictadas}</b> clase${d.clases_dictadas === 1 ? '' : 's'} ese día</div>
+    ${d.clases.length ? d.clases.map(c => `
+      <div style="padding:8px 0;border-bottom:1px solid var(--line)">
+        <div class="flex space-between">
+          <div><b>${esc(c.hora)}</b> · <span class="tag ${c.tipo.toLowerCase()}">${esc(c.tipo)}</span> · ${esc(c.nivel)}${c.profesor ? ' · <span class="profe">' + esc(c.profesor) + '</span>' : ''}</div>
+          <div class="small">✅ ${c.cantidad}</div>
+        </div>
+        ${c.presentes.length
+          ? `<div class="small" style="margin-top:4px">${c.presentes.map(p => `<span class="tag tag-al-dia">${esc(p.nombre)}</span>`).join(' ')}</div>`
+          : '<div class="small" style="color:var(--muted)">Sin asistencias marcadas</div>'}
+      </div>`).join('') : '<div class="empty">No hay clases cargadas para este día.</div>'}
+  `;
 }
 
 /* =====================================================================
