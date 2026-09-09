@@ -7,7 +7,7 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#11151c">
 <link rel="icon" href="/static/icons/icon-192.png">
-<link rel="stylesheet" href="/static/style.css?v=7">
+<link rel="stylesheet" href="/static/style.css?v=8">
 </head>
 <body class="login-body">
 
@@ -90,6 +90,25 @@
         </label>
         <p class="small" style="color:var(--muted)">Al tildar la casilla, el registro de tu aceptación (fecha y hora) queda guardado en la plataforma.</p>
       </div>
+
+      <div class="field" style="grid-column:1/-1">
+        <label>✍️ Firmá en el recuadro (firma en Términos y Condiciones) <span style="color:#ff9b8f" id="firmaTyCReq">(obligatorio para menores)</span></label>
+        <div class="firma-box">
+          <canvas id="firmaCanvasTyC" class="firma-canvas" width="600" height="160" aria-label="Recuadro para firmar los Términos y Condiciones"></canvas>
+          <button type="button" class="btn ghost small" onclick="limpiarFirma('TyC')">🧹 Limpiar</button>
+        </div>
+        <p class="small" style="color:var(--muted)">La firma digital es obligatoria para menores; para adultos es opcional (el tilde de aceptación es obligatorio para todos).</p>
+        <input type="hidden" id="regFirmaTyC" value="">
+      </div>
+      <div class="field" style="grid-column:1/-1">
+        <label>✍️ Autorización de fotos <span style="color:#ff9b8f" id="firmaFotoReq">(obligatorio para menores)</span></label>
+        <div class="firma-box">
+          <canvas id="firmaCanvasFoto" class="firma-canvas" width="600" height="160" aria-label="Recuadro para firmar la autorización de uso de fotos"></canvas>
+          <button type="button" class="btn ghost small" onclick="limpiarFirma('Foto')">🧹 Limpiar</button>
+        </div>
+        <p class="small" style="color:var(--muted)">Firma el padre, madre o tutor para menores; para adultos es opcional. Autoriza que las fotos del entrenamiento puedan publicarse en redes y muro del gimnasio.</p>
+        <input type="hidden" id="regFirmaFoto" value="">
+      </div>
       <button type="submit" class="btn primary btn-block">Crear mi cuenta</button>
     </form>
 
@@ -154,6 +173,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=7"></script>
+<script src="/static/app.js?v=8"></script>
 </body>
 </html>

@@ -50,6 +50,12 @@ def _mysql_translate(sql):
     sql = sql.replace('INSERT OR IGNORE', 'INSERT IGNORE')
     sql = sql.replace('INSERT OR REPLACE INTO', 'REPLACE INTO')
     sql = sql.replace('last_insert_rowid()', 'LAST_INSERT_ID()')
+    # INSERT ... ON CONFLICT (...) DO UPDATE SET a=excluded.a  ->  ON DUPLICATE KEY UPDATE a=VALUES(a)
+    m = re.search(r'(?is)\bON\s+CONFLICT\s*\(([^)]*)\)\s*DO\s*UPDATE\s*SET\s+(.+)$', sql)
+    if m:
+        assigns = m.group(2).strip().rstrip(';').strip()
+        assigns = re.sub(r'\bEXCLUDED\.(\w+)', r'VALUES(\1)', assigns, flags=re.I)
+        sql = sql[:m.start()].rstrip() + ' ON DUPLICATE KEY UPDATE ' + assigns
     sql = re.sub(r'\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b',
                  'INT NOT NULL AUTO_INCREMENT PRIMARY KEY', sql, flags=re.I)
     sql = sql.replace('username TEXT UNIQUE', 'username VARCHAR(100) UNIQUE')

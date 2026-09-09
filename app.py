@@ -106,6 +106,14 @@ CREATE TABLE IF NOT EXISTS users (
     dni TEXT,
     foto_ok INTEGER DEFAULT 0,
     acepto_tyc TEXT,
+    medic_enfermedades TEXT,
+    medic_alergias TEXT,
+    medic_medicacion TEXT,
+    medic_lesiones TEXT,
+    ficha_fecha TEXT,
+    firma_tyc TEXT,
+    firma_foto TEXT,
+    firma_fecha TEXT,
     creado TEXT
 );
 
@@ -318,6 +326,16 @@ CREATE TABLE IF NOT EXISTS diario (
     foto TEXT,
     UNIQUE (fecha)
 );
+
+CREATE TABLE IF NOT EXISTS clase_valoraciones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    clase_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    alumno_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    fecha TEXT NOT NULL,
+    estrellas INTEGER NOT NULL,
+    comentario TEXT,
+    UNIQUE (clase_id, alumno_id, fecha)
+);
 """
 
 
@@ -344,7 +362,10 @@ def init_db():
     for col, ddl in [('tel', 'TEXT'), ('nacimiento', 'TEXT'), ('medic_info', 'TEXT'), ('emergency_contact', 'TEXT'),
                      ('security_q', 'TEXT'), ('security_a', 'TEXT'), ('tel_tutor', 'TEXT'), ('tel_2', 'TEXT'),
                      ('direccion', 'TEXT'), ('dni', 'TEXT'), ('foto_ok', 'INTEGER'),
-                     ('acepto_tyc', 'TEXT'), ('proximo_examen', 'TEXT'), ('notas_internas', 'TEXT')]:
+                     ('acepto_tyc', 'TEXT'), ('proximo_examen', 'TEXT'), ('notas_internas', 'TEXT'),
+                     ('medic_enfermedades', 'TEXT'), ('medic_alergias', 'TEXT'), ('medic_medicacion', 'TEXT'),
+                     ('medic_lesiones', 'TEXT'), ('ficha_fecha', 'TEXT'),
+                     ('firma_tyc', 'TEXT'), ('firma_foto', 'TEXT'), ('firma_fecha', 'TEXT')]:
         if col not in cols:
             c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
     if DB_MODE == 'postgres':
@@ -414,6 +435,7 @@ def init_db():
         'auto_mensaje_activo': '0',
         'logro_asist': '50',
         'logro_videos': '25',
+        'asis_min_examen': '30',
         'mp_access_token': '',
         'wp_numero': '',
     }
@@ -688,6 +710,43 @@ def aviso_eventos_hoy():
         return 0
 
 
+def aviso_renovacion():
+    """Si un alumno llega al minimo de asistencias configurado (asis_min_examen),
+    avisa SOLO al staff (admin/profesores) que puede sugerir examen. Flag por alumno
+    evita repetir; se reset cuando el staff entrega el nuevo grado."""
+    try:
+        min_asist = to_int(get_setting('asis_min_examen', '30')) or 30
+        if min_asist <= 0:
+            return 0
+        db = get_db()
+        alumnos = db.execute(
+            "SELECT u.id, u.nombre, u.cinturon, COUNT(a.id) AS n "
+            "FROM users u LEFT JOIN asistencia a ON a.alumno_id=u.id "
+            "WHERE u.role='alumno' AND u.activo=1 "
+            "GROUP BY u.id HAVING n >= ?", (min_asist,)).fetchall()
+        staff = db.execute("SELECT id FROM users WHERE role IN ('admin','profesor')").fetchall()
+        if not staff:
+            return 0
+        enviados = 0
+        for al in alumnos:
+            key = 'avisado_examen_%d' % al['id']
+            if get_setting(key, '0') == '1':
+                continue
+            for s in staff:
+                try:
+                    notify(s['id'], '🥋 Renovación de cinturón',
+                           '%s ya tiene %d asistencias (cinturón %s). Está listo para rendir el próximo examen.' % (
+                               al['nombre'], al['n'], al['cinturon'] or 'blanco'),
+                           'logro', push=True, link='alumnos')
+                    enviados += 1
+                except Exception:
+                    pass
+            set_setting(key, '1')
+        return enviados
+    except Exception:
+        return 0
+
+
 def chequear_logros(user_id):
     """Notifica cada vez que el alumno cruza un múltiplo del umbral configurable."""
     th = to_int(get_setting('logro_asist', '50')) or 50
@@ -788,6 +847,14 @@ def user_public(u):
         'nacimiento': u['nacimiento'] if 'nacimiento' in u.keys() else None,
         'medic_info': u['medic_info'] if 'medic_info' in u.keys() else None,
         'emergency_contact': u['emergency_contact'] if 'emergency_contact' in u.keys() else None,
+        'medic_enfermedades': u['medic_enfermedades'] if 'medic_enfermedades' in u.keys() else None,
+        'medic_alergias': u['medic_alergias'] if 'medic_alergias' in u.keys() else None,
+        'medic_medicacion': u['medic_medicacion'] if 'medic_medicacion' in u.keys() else None,
+        'medic_lesiones': u['medic_lesiones'] if 'medic_lesiones' in u.keys() else None,
+        'ficha_fecha': u['ficha_fecha'] if 'ficha_fecha' in u.keys() else None,
+        'firma_tyc': u['firma_tyc'] if 'firma_tyc' in u.keys() else None,
+        'firma_foto': u['firma_foto'] if 'firma_foto' in u.keys() else None,
+        'firma_fecha': u['firma_fecha'] if 'firma_fecha' in u.keys() else None,
         'security_q': u['security_q'] if 'security_q' in u.keys() else None,
         'tel_tutor': u['tel_tutor'] if 'tel_tutor' in u.keys() else None,
         'tel_2': u['tel_2'] if 'tel_2' in u.keys() else None,
@@ -816,6 +883,7 @@ def _avisos_periodicos():
                 _ultimo_aviso[0] = time.time()
                 aviso_cuotas_automatico()
                 aviso_eventos_hoy()
+                aviso_renovacion()
         except Exception:
             pass
 
@@ -1173,10 +1241,19 @@ def api_register():
     if not data.get('acepto_tyc'):
         return jsonify({'error': 'Debés aceptar los Términos y Condiciones para crear tu cuenta.'}), 400
 
+    firma_tyc = (data.get('firma_tyc') or '').strip()
+    firma_foto = (data.get('firma_foto') or '').strip()
+    menor = role == 'alumno' and categoria in ('kids', 'juveniles')
+    if menor and not firma_tyc:
+        return jsonify({'error': 'Firmá en el recuadro de Términos y Condiciones para crear tu cuenta.'}), 400
+    if menor and not firma_foto:
+        return jsonify({'error': 'Para menores (Kids/Juveniles) el padre, madre o tutor debe firmar la autorización de fotos.'}), 400
+    firma_fecha = datetime.now().strftime('%d/%m/%Y %H:%M') if (firma_tyc or firma_foto) else None
+
     try:
         get_db().execute(
-            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, tel, nacimiento, medic_info, emergency_contact, tel_tutor, tel_2, direccion, dni, foto_ok, acepto_tyc, creado)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, tel, nacimiento, medic_info, emergency_contact, tel_tutor, tel_2, direccion, dni, foto_ok, acepto_tyc, firma_tyc, firma_foto, firma_fecha, creado)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (username, generate_password_hash(password), role, nombre,
              to_int(data.get('edad')), to_float(data.get('peso')),
              data.get('cinturon'), categoria,
@@ -1192,6 +1269,9 @@ def api_register():
              (data.get('dni') or '').strip() or None,
              foto_ok,
              datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+             firma_tyc or None,
+             firma_foto or None,
+             firma_fecha,
              datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         get_db().commit()
     except dbadapter.IntegrityError:
@@ -1237,17 +1317,26 @@ def api_me():
 @login_required
 def api_horarios():
     u = current_user()
-    rows = get_db().execute(
+    db = get_db()
+    rows = db.execute(
         """SELECT c.*, u.nombre AS profesor_nombre
            FROM classes c LEFT JOIN users u ON u.id=c.profesor_id
            ORDER BY c.dia, c.hora""").fetchall()
+    ratings = {}
+    if u['role'] in ('admin', 'profesor'):
+        for r in db.execute(
+                'SELECT clase_id, COUNT(*) AS n, COALESCE(AVG(estrellas),0) AS prom FROM clase_valoraciones GROUP BY clase_id').fetchall():
+            ratings[r['clase_id']] = {'n': r['n'], 'promedio': round(r['prom'] or 0, 1)}
     horarios = []
     for r in rows:
-        horarios.append({
+        item = {
             'id': r['id'], 'dia': r['dia'], 'dia_nombre': DIAS[r['dia']],
             'hora': r['hora'], 'tipo': r['tipo'], 'nivel': r['nivel'],
             'duracion': r['duracion'], 'profesor_id': r['profesor_id'],
-            'profesor_nombre': r['profesor_nombre']})
+            'profesor_nombre': r['profesor_nombre']}
+        if ratings:
+            item['rating'] = ratings.get(r['id'], {'n': 0, 'promedio': 0})
+        horarios.append(item)
     return jsonify({'horarios': horarios})
 
 
@@ -1477,6 +1566,33 @@ def api_alumno_notas(uid):
     notas = (data.get('notas') or '').strip()
     get_db().execute('UPDATE users SET notas_internas=? WHERE id=?', (notas, uid))
     get_db().commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/alumnos/<int:uid>/ficha', methods=['PUT'])
+@role_required('admin', 'profesor')
+def api_alumno_ficha(uid):
+    """El staff puede cargar/editar la ficha medica de un alumno (menores suelen no hacerlo solos)."""
+    data = parse_json()
+    u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
+    if not u:
+        return jsonify({'error': 'Alumno no encontrado'}), 404
+    db = get_db()
+    db.execute(
+        'UPDATE users SET medic_info=?, emergency_contact=?, medic_enfermedades=?, medic_alergias=?, medic_medicacion=?, medic_lesiones=?, ficha_fecha=? WHERE id=?',
+        ((data.get('medic_info') or '').strip() or None,
+         (data.get('emergency_contact') or '').strip() or None,
+         (data.get('medic_enfermedades') or '').strip() or None,
+         (data.get('medic_alergias') or '').strip() or None,
+         (data.get('medic_medicacion') or '').strip() or None,
+         (data.get('medic_lesiones') or '').strip() or None,
+         data.get('ficha_fecha') or datetime.now().strftime('%d/%m/%Y'),
+         uid))
+    db.commit()
+    try:
+        notify(uid, '🩺 Ficha médica', 'El profesor actualizó tu ficha médica. Revisala en tu perfil.', 'info', push=False)
+    except Exception:
+        pass
     return jsonify({'ok': True})
 
 
@@ -1865,21 +1981,85 @@ def api_asistencia_dia():
 @role_required('alumno')
 def api_mi_asistencia():
     u = current_user()
-    rows = get_db().execute(
-        """SELECT a.fecha, c.tipo, c.hora, c.dia, u.nombre AS profesor
+    db = get_db()
+    rows = db.execute(
+        """SELECT a.clase_id, a.fecha, c.tipo, c.hora, c.dia, u.nombre AS profesor
            FROM asistencia a JOIN classes c ON c.id=a.clase_id
            LEFT JOIN users u ON u.id=c.profesor_id
            WHERE a.alumno_id=? AND a.presente=1 ORDER BY a.fecha DESC""",
         (u['id'],)).fetchall()
-    asis = [{'fecha': r['fecha'], 'tipo': r['tipo'], 'hora': r['hora'],
-             'dia': DIAS[r['dia']], 'profesor': r['profesor']} for r in rows]
-    total = get_db().execute(
+    valoradas = {str(r['clase_id']) + '|' + r['fecha']: 1 for r in db.execute(
+        'SELECT clase_id, fecha FROM clase_valoraciones WHERE alumno_id=?', (u['id'],)).fetchall()}
+    asis = [{'clase_id': r['clase_id'], 'fecha': r['fecha'], 'tipo': r['tipo'], 'hora': r['hora'],
+             'dia': DIAS[r['dia']], 'profesor': r['profesor'],
+             'valorada': 1 if (str(r['clase_id']) + '|' + r['fecha']) in valoradas else 0} for r in rows]
+    total = db.execute(
         'SELECT COUNT(*) AS n FROM asistencia WHERE alumno_id=? AND presente=1', (u['id'],)).fetchone()['n']
     hoy = date.today().strftime('%Y-%m-%d')
-    hoy_ids = [r['clase_id'] for r in get_db().execute(
+    hoy_ids = [r['clase_id'] for r in db.execute(
         'SELECT clase_id FROM asistencia WHERE alumno_id=? AND fecha=? AND presente=1',
         (u['id'], hoy)).fetchall()]
     return jsonify({'asistencia': asis, 'total': total, 'hoy': hoy_ids, 'fecha_hoy': hoy})
+
+
+@app.route('/api/clase_valorar', methods=['POST'])
+@role_required('alumno')
+def api_clase_valorar():
+    """El alumno valora (1-5 estrellas + comentario) una clase a la que asistió.
+    Una sola valoración por clase+fecha (UPDATE si ya existía)."""
+    u = current_user()
+    data = parse_json()
+    clase_id = to_int(data.get('clase_id'))
+    fecha = (data.get('fecha') or '').strip()
+    estrellas = to_int(data.get('estrellas'))
+    comentario = (data.get('comentario') or '').strip()
+    if not clase_id or not fecha:
+        return jsonify({'error': 'Faltan datos de la clase'}), 400
+    if not estrellas or estrellas < 1 or estrellas > 5:
+        return jsonify({'error': 'Elegí entre 1 y 5 estrellas'}), 400
+    asistio = get_db().execute(
+        'SELECT 1 FROM asistencia WHERE alumno_id=? AND clase_id=? AND fecha=? AND presente=1',
+        (u['id'], clase_id, fecha)).fetchone()
+    if not asistio:
+        return jsonify({'error': 'Solo podés valorar clases a las que asististe'}), 403
+    db = get_db()
+    db.execute(
+        """INSERT INTO clase_valoraciones(clase_id, alumno_id, fecha, estrellas, comentario)
+           VALUES(?,?,?,?,?)
+           ON CONFLICT(clase_id, alumno_id, fecha) DO UPDATE SET
+             estrellas=excluded.estrellas, comentario=excluded.comentario""",
+        (clase_id, u['id'], fecha, estrellas, comentario))
+    db.commit()
+    try:
+        prof = db.execute(
+            'SELECT u.id FROM classes c LEFT JOIN users u ON u.id=c.profesor_id WHERE c.id=?',
+            (clase_id,)).fetchone()
+        if prof and prof['id']:
+            notify(prof['id'], '⭐ Nueva valoración de clase',
+                   '%s valoró tu clase de %s con %d/5 %s' % (
+                       u['nombre'], fecha, estrellas,
+                       ('— "' + comentario + '"') if comentario else ''),
+                   'info', push=False)
+    except Exception:
+        pass
+    return jsonify({'ok': True})
+
+
+@app.route('/api/clase_valoraciones/<int:clase_id>')
+@role_required('admin', 'profesor')
+def api_clase_valoraciones(clase_id):
+    """Staff: puntaje promedio y comentarios de una clase."""
+    db = get_db()
+    row = db.execute(
+        'SELECT COUNT(*) AS n, COALESCE(AVG(estrellas),0) AS prom FROM clase_valoraciones WHERE clase_id=?',
+        (clase_id,)).fetchone()
+    comentarios = db.execute(
+        """SELECT v.estrellas, v.comentario, v.fecha, u.nombre
+           FROM clase_valoraciones v JOIN users u ON u.id=v.alumno_id
+           WHERE v.clase_id=? ORDER BY v.id DESC LIMIT 20""",
+        (clase_id,)).fetchall()
+    return jsonify({'clase_id': clase_id, 'n': row['n'], 'promedio': round(row['prom'] or 0, 1),
+                    'comentarios': [dict(c) for c in comentarios]})
 
 
 @app.route('/api/historial_asistencia')
@@ -2154,7 +2334,7 @@ def api_perfil_update():
     if u['role'] == 'alumno' and cat in ('kids', 'juveniles') and not foto_ok:
         return jsonify({'error': 'Para menores (Kids/Juveniles) debe autorizar el mayor, padre, madre o tutor que las fotos del menor puedan exponerse.'}), 400
     get_db().execute(
-        'UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=?, direccion=?, dni=?, foto_ok=? WHERE id=?',
+        'UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=?, direccion=?, dni=?, foto_ok=?, medic_enfermedades=?, medic_alergias=?, medic_medicacion=?, medic_lesiones=?, ficha_fecha=? WHERE id=?',
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
          cat, data.get('gi_pref', u['gi_pref']),
@@ -2166,7 +2346,13 @@ def api_perfil_update():
          (data.get('tel_2', u['tel_2']) or '').strip() or None,
          (data.get('direccion', u['direccion']) or '').strip() or None,
          (data.get('dni', u['dni']) or '').strip() or None,
-         1 if foto_ok else 0, u['id']))
+         1 if foto_ok else 0,
+         data.get('medic_enfermedades', u['medic_enfermedades']),
+         data.get('medic_alergias', u['medic_alergias']),
+         data.get('medic_medicacion', u['medic_medicacion']),
+         data.get('medic_lesiones', u['medic_lesiones']),
+         data.get('ficha_fecha', u['ficha_fecha']),
+         u['id']))
     if data.get('password'):
         if len(data['password']) < 4:
             return jsonify({'error': 'La contrasena debe tener al menos 4 caracteres'}), 400
@@ -2740,6 +2926,7 @@ def api_alumno_grado(uid):
                (uid, cinturon, fecha, notas, me['id']))
     db.execute('UPDATE users SET cinturon=? WHERE id=?', (cinturon, uid))
     db.commit()
+    set_setting('avisado_examen_%d' % uid, '0')
     try:
         notify(uid, '🥋 Examen aprobado',
                '¡Felicitaciones! Tu nuevo cinturón es %s (fecha: %s).' % (cinturon, fecha),
@@ -3126,7 +3313,7 @@ def api_settings_get():
     u = current_user()
     keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_link', 'pago_alias',
             'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
-            'mp_access_token', 'wp_numero', 'desc_familiar']
+            'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar']
     if u['role'] == 'admin':
         keys += ['academy_color']
     return jsonify({k: get_setting(k) for k in keys})
@@ -3138,7 +3325,7 @@ def api_settings_put():
     data = parse_json()
     for k in ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'academy_color', 'pago_link', 'pago_alias',
               'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
-              'mp_access_token', 'wp_numero', 'desc_familiar']:
+              'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar']:
         if k in data and data[k] is not None:
             set_setting(k, data[k])
     return jsonify({'ok': True})
