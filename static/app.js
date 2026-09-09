@@ -101,7 +101,74 @@ document.addEventListener('keydown', (e) => {
 /* =====================================================================
    PAGINA DE LOGIN / REGISTRO
    ===================================================================== */
-if ($('#tab-login')) initLogin();
+if ($('#tab-login')) {
+  initLogin();
+  setupFirmas();
+}
+function setupFirmas() {
+  const conf = [
+    { canvas: 'firmaCanvasTyC', hidden: 'regFirmaTyC', done: 'firmaTyCHecha' },
+    { canvas: 'firmaCanvasFoto', hidden: 'regFirmaFoto', done: 'firmaFotoHecha' }
+  ];
+  conf.forEach(c => {
+    const cv = document.getElementById(c.canvas);
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    let drawing = false, last = null;
+    function pos(e) {
+      const r = cv.getBoundingClientRect();
+      const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+      const y = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+      return { x, y };
+    }
+    function startGrabar() {
+      const hid = document.getElementById(c.hidden);
+      if (hid && !hid.value) {
+        hid.value = cv.toDataURL('image/png');
+        cv.style.outline = '2px solid var(--good)';
+      }
+    }
+    cv.addEventListener('mousedown', e => {
+      drawing = true; last = pos(e);
+      cv.setPointerCapture && cv.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      startGrabar();
+    });
+    cv.addEventListener('mousemove', e => {
+      if (!drawing) return;
+      const p = pos(e);
+      ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#11151c';
+      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+      last = p;
+      startGrabar();
+    });
+    const stop = () => { drawing = false; last = null; };
+    cv.addEventListener('mouseup', stop);
+    cv.addEventListener('mouseleave', stop);
+    cv.addEventListener('touchstart', e => { e.preventDefault(); drawing = true; last = pos(e); startGrabar(); }, { passive: false });
+    cv.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if (!drawing) return;
+      const p = pos(e);
+      ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#11151c';
+      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+      last = p;
+      startGrabar();
+    }, { passive: false });
+    cv.addEventListener('touchend', stop);
+  });
+}
+function limpiarFirma(quien) {
+  const map = { TyC: { cv: 'firmaCanvasTyC', hid: 'regFirmaTyC' }, Foto: { cv: 'firmaCanvasFoto', hid: 'regFirmaFoto' } };
+  const m = map[quien];
+  if (!m) return;
+  const cv = document.getElementById(m.cv);
+  const hid = document.getElementById(m.hid);
+  if (cv) { cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); cv.style.outline = ''; }
+  if (hid) hid.value = '';
+}
 function initLogin() {
   const cats = ['adulto', 'juveniles', 'kids'];
   function fillBelts(sel, cat) {
@@ -112,12 +179,23 @@ function initLogin() {
   fillBelts($('#regProfeCinturon'), 'adulto');
   $('#regAlumnoCat').addEventListener('change', (e) => {
     fillBelts($('#regAlumnoCinturon'), e.target.value);
-    const menor = e.target.value === 'kids' || e.target.value === 'juveniles';
+    actualizarMenorFirma();
+  });
+  actualizarMenorFirma();
+
+  function actualizarMenorFirma() {
+    const sel = $('#regAlumnoCat');
+    if (!sel) return;
+    const menor = sel.value === 'kids' || sel.value === 'juveniles';
     const tf = $('#tutorFields');
     if (tf) tf.style.display = menor ? '' : 'none';
     const tt = $('#regAlumnoTelTutor');
     if (tt) tt.required = menor;
-  });
+    const req = $('#firmaFotoReq');
+    if (req) req.textContent = menor ? '(obligatorio para menores)' : '(opcional para adultos)';
+    const reqTyC = $('#firmaTyCReq');
+    if (reqTyC) reqTyC.textContent = menor ? '(obligatorio para menores)' : '(opcional para adultos)';
+  }
 
   $$('.tab').forEach(t => t.addEventListener('click', () => {
     $$('.tab').forEach(x => {
@@ -150,17 +228,24 @@ function initLogin() {
   $('#tab-reg-alumno').addEventListener('submit', async (e) => {
     e.preventDefault();
     const m = $('#loginMsg');
+    const cat = $('#regAlumnoCat').value;
+    const firmaTyC = $('#regFirmaTyC')?.value || '';
+    const firmaFoto = $('#regFirmaFoto')?.value || '';
+    const menor = cat === 'kids' || cat === 'juveniles';
+    if (menor && !firmaTyC) { msgShow(m, 'Firmá en el recuadro de Términos y Condiciones para crear tu cuenta.', false); return; }
+    if (menor && !firmaFoto) { msgShow(m, 'Para menores, el padre, madre o tutor debe firmar la autorización de fotos.', false); return; }
     try {
       const d = await api('/api/register', { method: 'POST', body: {
         role: 'alumno', username: $('#regAlumnoUser').value.trim(),
         password: $('#regAlumnoPass').value, nombre: $('#regAlumnoNombre').value.trim(),
         edad: $('#regAlumnoEdad').value, peso: $('#regAlumnoPeso').value,
-        categoria: $('#regAlumnoCat').value, cinturon: $('#regAlumnoCinturon').value,
+        categoria: cat, cinturon: $('#regAlumnoCinturon').value,
         gi_pref: $('#regAlumnoGi').value, tel: $('#regAlumnoTel')?.value || '',
         dni: $('#regAlumnoDni')?.value.trim() || '', direccion: $('#regAlumnoDir')?.value.trim() || '',
         tel_tutor: $('#regAlumnoTelTutor')?.value || '', tel_2: $('#regAlumnoTel2')?.value || '',
         foto_ok: !!($('#regAlumnoFoto')?.checked || false),
-        acepto_tyc: !!($('#regAlumnoTyC')?.checked || false) } });
+        acepto_tyc: !!($('#regAlumnoTyC')?.checked || false),
+        firma_tyc: firmaTyC, firma_foto: firmaFoto } });
       if (d.ok) location.href = '/app';
     } catch (err) { msgShow(m, err.message, false); }
   });
@@ -464,12 +549,45 @@ async function renderMiAsistencia(el) {
       <div class="feed-card">
         <div class="stat-card" style="margin-bottom:12px"><div class="num">${d.total}</div><div class="lbl">Clases a las que asistí</div></div>
         ${d.asistencia.length ? d.asistencia.map(a => `
-          <div class="flex space-between" style="padding:8px 0;border-bottom:1px solid var(--line)">
-            <div><b>${esc(a.dia)} ${esc(a.hora)}</b> · <span class="tag ${a.tipo.toLowerCase()}">${esc(a.tipo)}</span></div>
-            <div class="small">${esc(a.fecha)} · ${esc(a.profesor || 'Sin profesor')}</div>
+          <div style="padding:8px 0;border-bottom:1px solid var(--line)">
+            <div class="flex space-between">
+              <div><b>${esc(a.dia)} ${esc(a.hora)}</b> · <span class="tag ${a.tipo.toLowerCase()}">${esc(a.tipo)}</span></div>
+              <div class="small">${esc(a.fecha)} · ${esc(a.profesor || 'Sin profesor')}</div>
+            </div>
+            ${a.valorada
+              ? `<div class="small" style="color:var(--good)">⭐ Valorada</div>`
+              : `<div class="flex space-between" style="align-items:center;margin-top:6px">
+                  <div class="stars" data-cid="${a.clase_id}" data-fecha="${esc(a.fecha)}">
+                    ${[1,2,3,4,5].map(n => `<button type="button" class="star" data-n="${n}" aria-label="${n} estrellas">☆</button>`).join('')}
+                  </div>
+                  <button type="button" class="btn ghost small" onclick="valorarClase(${a.clase_id})">Guardar ⭐</button>
+                </div>
+                <input class="comentario small" style="margin-top:4px;width:100%" placeholder="Comentario (opcional)">`}
           </div>`).join('') : '<div class="empty">Todavía no tenés asistencias registradas.</div>'}
       </div>
     </div>`;
+  $$('.stars').forEach(s => {
+    s.addEventListener('click', (e) => {
+      const btn = e.target.closest('.star');
+      if (!btn) return;
+      const n = parseInt(btn.dataset.n, 10);
+      s.dataset.n = n;
+      $$('.star', s).forEach((b, i) => { b.textContent = i < n ? '★' : '☆'; });
+    });
+  });
+}
+
+async function valorarClase(claseId, fecha) {
+  const starsEl = document.querySelector('.stars[data-cid="' + claseId + '"]');
+  const estrellas = parseInt((starsEl ? starsEl.dataset.n : 0) || 0, 10);
+  if (!estrellas) { toast('Elegí la cantidad de estrellas (1 a 5)'); return; }
+  const fechaSel = fecha || (starsEl ? starsEl.dataset.fecha : '');
+  const comentario = starsEl ? starsEl.querySelector('.comentario')?.value || '' : '';
+  try {
+    await api('/api/clase_valorar', { method: 'POST', body: { clase_id: claseId, fecha: fechaSel, estrellas: estrellas, comentario: comentario } });
+    toast('¡Gracias por valorar la clase! ⭐');
+    renderMiAsistencia($('#sec-mi_asistencia')).catch(() => {});
+  } catch (err) { toast(err.message); }
 }
 
 async function marcarAsistencia(claseId) {
@@ -1060,13 +1178,30 @@ async function renderPerfil(el) {
             <input type="checkbox" id="pFotoOk" style="width:18px;height:18px" ${me.foto_ok ? 'checked' : ''}>
             <span>Autorizo como mayor/padre/madre/tutor que <b>las fotos de este/a menor puedan ser expuestas</b> (redes y muro). <span style="color:#ff9b8f">(obligatorio para menores)</span></span></label></div>` : ''}
           <div class="field" style="grid-column:1/-1"><label>📞 Contacto de emergencia (opcional)</label><input type="text" id="pEmer" placeholder="Nombre y teléfono" value="${esc(me.emergency_contact || '')}"></div>
+          <div class="field" style="grid-column:1/-1">
+            <div class="flex space-between" style="align-items:center">
+              <label>🩺 Mi ficha médica (responsable: vos)</label>
+              ${me.ficha_fecha ? `<span class="small" style="color:var(--muted)">Actualizada el ${esc(me.ficha_fecha)}</span>` : `<span class="tag tag-deuda">Sin completar</span>`}
+            </div>
+            <div class="grid2" style="margin-top:6px">
+              <div class="field" style="margin:0"><label style="font-weight:500">Enfermedades / condiciones</label><input id="pMedEnf" placeholder="Ej: asma, presión alta" value="${esc(me.medic_enfermedades || '')}"></div>
+              <div class="field" style="margin:0"><label style="font-weight:500">Alergias</label><input id="pMedAlergias" placeholder="Ej: penicilina, polvo" value="${esc(me.medic_alergias || '')}"></div>
+              <div class="field" style="margin:0"><label style="font-weight:500">Medicación actual</label><input id="pMedMed" placeholder="Ej: salbutamol, insulina" value="${esc(me.medic_medicacion || '')}"></div>
+              <div class="field" style="margin:0"><label style="font-weight:500">Lesiones / operaciones</label><input id="pMedLes" placeholder="Ej: rodilla operada 2024" value="${esc(me.medic_lesiones || '')}"></div>
+            </div>
+          </div>
           <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar cambios</button></div>
         </form>
       </div>
 
-      ${me.medic_info ? `<div class="feed-card">
+      ${(me.medic_enfermedades || me.medic_alergias || me.medic_medicacion || me.medic_lesiones || me.medic_info) ? `<div class="feed-card">
         <div class="small mb">🩺 Mi ficha médica</div>
-        <p class="small" style="white-space:pre-wrap;margin-bottom:0">${esc(me.medic_info)}</p>
+        ${me.ficha_fecha ? `<div class="small" style="color:var(--muted);margin-bottom:6px">Última actualización: ${esc(me.ficha_fecha)}</div>` : ''}
+        ${me.medic_enfermedades ? `<div class="small" style="margin-bottom:4px"><b>Enfermedades:</b> ${esc(me.medic_enfermedades)}</div>` : ''}
+        ${me.medic_alergias ? `<div class="small" style="margin-bottom:4px"><b>Alergias:</b> ${esc(me.medic_alergias)}</div>` : ''}
+        ${me.medic_medicacion ? `<div class="small" style="margin-bottom:4px"><b>Medicación:</b> ${esc(me.medic_medicacion)}</div>` : ''}
+        ${me.medic_lesiones ? `<div class="small" style="margin-bottom:4px"><b>Lesiones:</b> ${esc(me.medic_lesiones)}</div>` : ''}
+        ${me.medic_info ? `<p class="small" style="white-space:pre-wrap;margin:6px 0 0">${esc(me.medic_info)}</p>` : ''}
       </div>` : ''}
       ${me.emergency_contact ? `<div class="feed-card">
         <div class="small mb">📞 Contacto de emergencia</div>
@@ -1120,7 +1255,10 @@ async function renderPerfil(el) {
         peso: $('#pPeso').value, cinturon: $('#pCinturon').value,
         categoria: $('#pCat').value, gi_pref: $('#pGi').value,
         tel: $('#pTel').value, nacimiento: $('#pNac').value,
-        medic_info: $('#pMedic').value, emergency_contact: $('#pEmer').value,
+        medic_info: $('#pMedic')?.value || '', emergency_contact: $('#pEmer').value,
+        medic_enfermedades: $('#pMedEnf')?.value || '', medic_alergias: $('#pMedAlergias')?.value || '',
+        medic_medicacion: $('#pMedMed')?.value || '', medic_lesiones: $('#pMedLes')?.value || '',
+        ficha_fecha: new Date().toLocaleDateString('es-AR'),
         tel_tutor: $('#pTelTutor')?.value || '', tel_2: $('#pTel2')?.value || '',
         dni: $('#pDni')?.value.trim() || '', direccion: $('#pDir')?.value.trim() || '',
         foto_ok: !!($('#pFotoOk')?.checked || false),
@@ -1191,6 +1329,7 @@ async function renderHorarios(el) {
           <span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span>
           <div class="small">${esc(h.nivel)} · ${h.duracion}min</div>
           <div class="profe">🧑‍🏫 ${esc(h.profesor_nombre || 'Sin profesor')}</div>
+          ${R !== 'alumno' && h.rating ? `<button class="btn ghost small" style="margin-top:6px" onclick="verValoraciones(${h.id})">⭐ ${h.rating.promedio} (${h.rating.n})</button>` : ''}
           ${canEdit ? `<div class="flex" style="margin-top:6px">
             <button class="btn ghost small" onclick="editarHorario(${h.id},${h.dia},'${esc(h.hora)}','${esc(h.tipo)}','${esc(h.nivel)}',${h.profesor_id != null ? h.profesor_id : 'null'},${h.duracion})">✏️ Editar</button>
             ${R === 'admin' ? `<button class="btn bad small" onclick="borrarHorario(${h.id})">🗑</button>` : ''}
@@ -1241,6 +1380,22 @@ async function borrarHorario(id) {
   if (!confirm('¿Eliminar esta clase?')) return;
   await api('/api/horarios/' + id, { method: 'DELETE' }).catch(e => toast(e.message));
   toast('Clase eliminada'); renderHorarios($('#sec-horarios'));
+}
+
+async function verValoraciones(claseId) {
+  const d = await api('/api/clase_valoraciones/' + claseId);
+  openModal(`
+    <h3>⭐ Valoraciones de la clase</h3>
+    <div class="stat-card">
+      <div class="num">${d.promedio} <span class="small">/ 5</span></div>
+      <div class="lbl">Promedio · ${d.n} valoración${d.n === 1 ? '' : 'es'}</div>
+    </div>
+    ${d.comentarios.length ? d.comentarios.map(c => `
+      <div class="small" style="padding:8px;border-bottom:1px solid var(--line)">
+        <div><b>${'★'.repeat(c.estrellas)}${'☆'.repeat(5 - c.estrellas)}</b> · ${esc(c.nombre)} <span style="color:var(--muted)">· ${esc(c.fecha)}</span></div>
+        ${c.comentario ? `<div style="margin-top:4px">${esc(c.comentario)}</div>` : ''}
+      </div>`).join('') : '<div class="empty">Todavía no hay valoraciones para esta clase.</div>'}
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
 }
 let PROFESORES_CACHE = [];
 let AVISOS_CACHE = {};
@@ -1662,12 +1817,53 @@ function exportarAlumnosExcel() {
 
 async function verFicha(id, nombre) {
   const a = (await api('/api/alumnos')).alumnos.find(x => x.id === id);
+  const fichaLlena = a.medic_enfermedades || a.medic_alergias || a.medic_medicacion || a.medic_lesiones || a.medic_info;
+  const fila = (label, val) => val ? `<p class="small" style="margin:6px 0"><b>${label}:</b> ${esc(val)}</p>` : '';
   openModal(`
     <h3>🩺 Ficha de ${esc(nombre)}</h3>
     ${a.tel ? `<div class="small mb">📱 ${esc(a.tel)}</div>` : ''}
-    ${a.medic_info ? `<p class="small" style="white-space:pre-wrap;background:var(--bg2);border-radius:8px;padding:10px"><b>Ficha médica:</b><br>${esc(a.medic_info)}</p>` : '<div class="empty">Sin ficha médica cargada.</div>'}
-    ${a.emergency_contact ? `<p class="small" style="white-space:pre-wrap;background:var(--bg2);border-radius:8px;padding:10px"><b>📞 Contacto de emergencia:</b> ${esc(a.emergency_contact)}</p>` : ''}
+    ${a.ficha_fecha ? `<div class="small mb" style="color:var(--muted)">Actualizada el ${esc(a.ficha_fecha)}</div>` : ''}
+    ${fichaLlena ? `<div style="background:var(--bg2);border-radius:8px;padding:10px">
+        ${fila('🫀 Enfermedades', a.medic_enfermedades)}
+        ${fila('🤧 Alergias', a.medic_alergias)}
+        ${fila('💊 Medicación', a.medic_medicacion)}
+        ${fila('🦴 Lesiones', a.medic_lesiones)}
+        ${a.medic_info ? `<p class="small" style="margin:6px 0;white-space:pre-wrap"><b>Observaciones:</b> ${esc(a.medic_info)}</p>` : ''}
+      </div>` : '<div class="tag tag-deuda mb">⚠ Sin ficha médica cargada</div>'}
+    ${a.emergency_contact ? `<p class="small" style="background:var(--bg2);border-radius:8px;padding:10px;margin-top:8px"><b>📞 Contacto de emergencia:</b> ${esc(a.emergency_contact)}</p>` : ''}
+    <button class="btn ghost btn-block mt" onclick="editarFicha(${id},'${esc(nombre)}')">✏️ Completar / actualizar ficha</button>
     <button class="btn ghost btn-block" onclick="closeModal()">Cerrar</button>`);
+}
+
+async function editarFicha(id, nombre) {
+  const a = (await api('/api/alumnos')).alumnos.find(x => x.id === id);
+  const escv = (v) => esc((v || '').replace(/"/g, '&quot;'));
+  openModal(`
+    <h3>🩺 Editar ficha de ${esc(nombre)}</h3>
+    <form id="fichaForm" class="grid2">
+      <div class="field" style="grid-column:1/-1"><label>🫀 Enfermedades / condiciones</label><input id="fEnf" value="${escv(a.medic_enfermedades)}" placeholder="Ej: asma, presión alta"></div>
+      <div class="field"><label>🤧 Alergias</label><input id="fAlergias" value="${escv(a.medic_alergias)}" placeholder="Ej: penicilina"></div>
+      <div class="field"><label>💊 Medicación</label><input id="fMed" value="${escv(a.medic_medicacion)}" placeholder="Ej: salbutamol"></div>
+      <div class="field"><label>🦴 Lesiones / operaciones</label><input id="fLes" value="${escv(a.medic_lesiones)}" placeholder="Ej: rodilla"></div>
+      <div class="field" style="grid-column:1/-1"><label>Observaciones</label><textarea id="fObs" rows="3" placeholder="Cualquier otra cosa que debamos saber">${escv(a.medic_info)}</textarea></div>
+      <div class="field"><label>📞 Contacto de emergencia</label><input id="fEmer" value="${escv(a.emergency_contact)}" placeholder="Nombre y teléfono"></div>
+      <div class="field" style="grid-column:1/-1"><label>Fecha de la ficha</label><input type="date" id="fFecha" value="${a.ficha_fecha ? esc(a.ficha_fecha) : new Date().toISOString().slice(0,10)}"></div>
+      <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">💾 Guardar ficha</button></div>
+    </form>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+  $('#fichaForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/alumnos/' + id + '/ficha', { method: 'PUT', body: {
+        medic_enfermedades: $('#fEnf').value, medic_alergias: $('#fAlergias').value,
+        medic_medicacion: $('#fMed').value, medic_lesiones: $('#fLes').value,
+        medic_info: $('#fObs').value, emergency_contact: $('#fEmer').value,
+        ficha_fecha: $('#fFecha').value } });
+      toast('Ficha guardada ✓');
+      closeModal();
+      verFicha(id, nombre);
+    } catch (err) { toast(err.message); }
+  });
 }
 
 async function verGrado(id, nombre) {
@@ -1990,6 +2186,7 @@ async function renderConfig(el) {
         <div class="field"><label>Número WhatsApp de la academia (con código país)</label><input id="cWp" value="${esc(s.wp_numero || '')}" placeholder="549299..."></div>
         <div class="field"><label>Logro de asistencias (cada cuántas avisar)</label><input type="number" id="cLogroAsist" value="${esc(s.logro_asist ?? '50')}"></div>
         <div class="field"><label>Logro de videos vistos (cada cuántos avisar)</label><input type="number" id="cLogroVids" value="${esc(s.logro_videos ?? '25')}"></div>
+        <div class="field" style="grid-column:1/-1"><label>Asistencias para sugerir examen de cinturón</label><input type="number" id="cMinExamen" value="${esc(s.asis_min_examen ?? '30')}"><small class="hint">Cuando un alumno llega a esa cantidad, se avisa al staff (no al alumno) que está listo para el próximo examen. Se reinicia el aviso cuando se registra una promoción.</small></div>
         <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar configuración</button></div>
       </form>
     </div>
@@ -2026,7 +2223,7 @@ async function renderConfig(el) {
         academy_name: $('#cNombre').value, academy_color: $('#cColor').value,
         academy_code: $('#cCodigo').value, default_cuota: $('#cCuota').value,
         due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, desc_familiar: $('#cDescFamilia').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value,
-        mp_access_token: $('#cMpTk').value, wp_numero: $('#cWp').value, logro_asist: $('#cLogroAsist').value, logro_videos: $('#cLogroVids').value } });
+        mp_access_token: $('#cMpTk').value, wp_numero: $('#cWp').value, logro_asist: $('#cLogroAsist').value, logro_videos: $('#cLogroVids').value, asis_min_examen: $('#cMinExamen').value } });
       toast('Configuración guardada ✓');
       if (location.reload) { /* color aplicado al recargar */ }
       window.ACADEMY_NAME = $('#cNombre').value;
