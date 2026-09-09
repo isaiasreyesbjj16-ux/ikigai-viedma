@@ -7,7 +7,7 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#11151c">
 <link rel="icon" href="/static/icons/icon-192.png">
-<link rel="stylesheet" href="/static/style.css?v=6">
+<link rel="stylesheet" href="/static/style.css?v=7">
 </head>
 <body class="login-body">
 
@@ -17,10 +17,10 @@
     <h1 class="login-title" id="academyTitle">{{ academy_name or 'IKIGAI VIEDMA' }}</h1>
     <div class="login-slogan">CIENCIA Y ARTE DEL CONOCIMIENTO</div>
 
-    <div class="tabs">
-      <button class="tab active" data-tab="login">Ingresar</button>
-      <button class="tab" data-tab="reg-alumno">Soy alumno</button>
-      <button class="tab" data-tab="reg-profesor">Soy profesor</button>
+    <div class="tabs" role="tablist" aria-label="Acceso">
+      <button class="tab active" data-tab="login" role="tab" aria-selected="true">Ingresar</button>
+      <button class="tab" data-tab="reg-alumno" role="tab" aria-selected="false">Soy alumno</button>
+      <button class="tab" data-tab="reg-profesor" role="tab" aria-selected="false">Soy profesor</button>
     </div>
 
     <!-- LOGIN -->
@@ -154,6 +154,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=6"></script>
+<script src="/static/app.js?v=7"></script>
 </body>
 </html>

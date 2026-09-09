@@ -163,7 +163,8 @@ CREATE TABLE IF NOT EXISTS notificaciones (
     mensaje TEXT,
     tipo TEXT DEFAULT 'info',
     leida INTEGER DEFAULT 0,
-    fecha TEXT
+    fecha TEXT,
+    link TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS push_subs (
@@ -293,6 +294,30 @@ CREATE TABLE IF NOT EXISTS grados (
     notas TEXT,
     registrado_por INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS familias (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    titular_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    fecha TEXT
+);
+
+CREATE TABLE IF NOT EXISTS familia_miembros (
+    familia_id INTEGER NOT NULL REFERENCES familias(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    relacion TEXT DEFAULT 'familia',
+    PRIMARY KEY (familia_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS diario (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    fecha TEXT NOT NULL,
+    titulo TEXT,
+    texto TEXT,
+    foto TEXT,
+    UNIQUE (fecha)
+);
 """
 
 
@@ -366,6 +391,16 @@ def init_db():
         c.execute('ALTER TABLE chat_messages ADD COLUMN adjunto TEXT')
     if 'adjunto_tipo' not in cm_cols:
         c.execute('ALTER TABLE chat_messages ADD COLUMN adjunto_tipo TEXT')
+    if DB_MODE == 'postgres':
+        n_cols = [r[0] for r in c.execute(
+            "SELECT column_name AS name FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND table_name='notificaciones'").fetchall()]
+    elif DB_MODE == 'mysql':
+        n_cols = [r[0] for r in c.execute('SHOW COLUMNS FROM notificaciones').fetchall()]
+    else:
+        n_cols = [r[1] for r in c.execute('PRAGMA table_info(notificaciones)').fetchall()]
+    if 'link' not in n_cols:
+        c.execute('ALTER TABLE notificaciones ADD COLUMN link TEXT DEFAULT \'\'')
     defaults = {
         'academy_name': 'IKIGAI VIEDMA',
         'academy_code': 'BJJ2026',
@@ -567,14 +602,29 @@ def send_push(user_id, titulo, mensaje, extra=None, _diag=None):
         return 0
 
 
-def notify(user_id, titulo, mensaje, tipo='info', push=True):
+_NOTIF_LINK_POR_TIPO = {
+    'cuota': 'mispagos',
+    'pago': 'mispagos',
+    'logro': 'perfil',
+    'evento': 'eventos',
+    'chat': 'chat',
+    'auto': 'chat',
+    'familia': 'perfil',
+    'examen': 'perfil',
+    'video': 'videos',
+}
+
+
+def notify(user_id, titulo, mensaje, tipo='info', push=True, link=None):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if link is None:
+        link = _NOTIF_LINK_POR_TIPO.get(tipo, '')
     get_db().execute(
-        'INSERT INTO notificaciones(user_id, titulo, mensaje, tipo, fecha) VALUES(?,?,?,?,?)',
-        (user_id, titulo, mensaje, tipo, now))
+        'INSERT INTO notificaciones(user_id, titulo, mensaje, tipo, fecha, link) VALUES(?,?,?,?,?,?)',
+        (user_id, titulo, mensaje, tipo, now, link))
     get_db().commit()
     if push:
-        send_push(user_id, titulo, mensaje)
+        send_push(user_id, titulo, mensaje, extra={'url': '/app?sec=' + link if link else '/app'})
 
 
 def aviso_cuotas_automatico():
@@ -1249,11 +1299,20 @@ def api_horarios_delete(cid):
 @app.route('/api/alumnos')
 @role_required('admin', 'profesor')
 def api_alumnos():
-    rows = get_db().execute(
+    db = get_db()
+    rows = db.execute(
         """SELECT u.*,
             (SELECT COUNT(*) FROM asistencia a WHERE a.alumno_id=u.id AND a.presente=1) AS asistencias,
             (SELECT COUNT(*) FROM pagos p WHERE p.alumno_id=u.id) AS pagos_totales
            FROM users u WHERE u.role='alumno' ORDER BY u.nombre""").fetchall()
+    # mapa alumno -> familia (nombre, titular, relacion) y conteo de miembros
+    fam_map = {}
+    fam_count = {}
+    for fm in db.execute(
+        """SELECT fm.user_id, fm.relacion, f.id AS fam_id, f.nombre AS fam_nombre, f.titular_id
+           FROM familia_miembros fm JOIN familias f ON f.id=fm.familia_id""").fetchall():
+        fam_map[fm['user_id']] = fm
+        fam_count[fm['fam_id']] = fam_count.get(fm['fam_id'], 0) + 1
     alumnos = []
     for r in rows:
         d = user_public(r)
@@ -1265,6 +1324,15 @@ def api_alumnos():
             d['notas_internas'] = r['notas_internas']
         if 'proximo_examen' in r.keys():
             d['proximo_examen'] = r['proximo_examen']
+        fm = fam_map.get(r['id'])
+        if fm:
+            total = fam_count.get(fm['fam_id'], 1)
+            base, desc, final = familia_cuota(dict(r, es_titular=(1 if fm['titular_id'] == r['id'] else 0)), total)
+            d['familia'] = {'id': fm['fam_id'], 'nombre': fm['fam_nombre'],
+                            'relacion': fm['relacion'], 'es_titular': bool(fm['titular_id'] == r['id']),
+                            'cuota': base, 'descuento': desc, 'cuota_final': final}
+        else:
+            d['familia'] = None
         alumnos.append(d)
     return jsonify({'alumnos': alumnos})
 
@@ -1408,6 +1476,230 @@ def api_alumno_notas(uid):
         return jsonify({'error': 'Alumno no encontrado'}), 404
     notas = (data.get('notas') or '').strip()
     get_db().execute('UPDATE users SET notas_internas=? WHERE id=?', (notas, uid))
+    get_db().commit()
+    return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# Familias (grupos familiares)
+# ---------------------------------------------------------------------------
+
+def familia_cuota(miembro, total_miembros):
+    """Cuota de un miembro aplicando descuento familiar a los que no son el titular.
+    Descuento configurable en settings: desc_familiar (%)."""
+    pct = to_float(get_setting('desc_familiar', '10')) or 0
+    base = miembro.get('cuota_mensual') or 0
+    desc = 0
+    cuota_final = base
+    if miembro.get('es_titular') != 1 and total_miembros > 1 and pct > 0:
+        desc = round(base * pct / 100)
+        cuota_final = base - desc
+    return base, desc, cuota_final
+
+
+def familia_de(user_id):
+    """Devuelve (familia_id, nombre, titular_id) del usuario o (None,None,None)."""
+    row = get_db().execute(
+        """SELECT f.id, f.nombre, f.titular_id FROM familia_miembros fm
+           JOIN familias f ON f.id=fm.familia_id WHERE fm.user_id=?
+           LIMIT 1""", (user_id,)).fetchone()
+    if not row:
+        return None, None, None
+    return row['id'], row['nombre'], row['titular_id']
+
+
+@app.route('/api/familias')
+@role_required('admin', 'profesor')
+def api_familias():
+    db = get_db()
+    rows = db.execute('SELECT * FROM familias ORDER BY nombre').fetchall()
+    familias = []
+    for f in rows:
+        miem = db.execute(
+            """SELECT u.*, fm.relacion,
+                      (CASE WHEN f.titular_id=u.id THEN 1 ELSE 0 END) AS es_titular
+               FROM familia_miembros fm
+               JOIN users u ON u.id=fm.user_id
+               JOIN familias f ON f.id=fm.familia_id
+               WHERE fm.familia_id=? ORDER BY es_titular DESC, u.nombre""",
+            (f['id'],)).fetchall()
+        lista = []
+        total = 0
+        for m in miem:
+            base, desc, final = familia_cuota(dict(m), len(miem))
+            total += final
+            lista.append({'id': m['id'], 'nombre': m['nombre'], 'cinturon': m['cinturon'],
+                          'foto': m['foto'], 'relacion': m['relacion'],
+                          'es_titular': bool(m['es_titular']), 'cuota': base,
+                          'descuento': desc, 'cuota_final': final})
+        familias.append({'id': f['id'], 'nombre': f['nombre'], 'titular_id': f['titular_id'],
+                         'fecha': f['fecha'], 'miembros': lista, 'total': round(total, 2)})
+    return jsonify({'familias': familias})
+
+
+@app.route('/api/familias', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_familia_crear():
+    data = parse_json()
+    nombre = (data.get('nombre') or '').strip()
+    if not nombre:
+        return jsonify({'error': 'Poné un nombre al grupo familiar'}), 400
+    titular_id = to_int(data.get('titular_id'))
+    db = get_db()
+    cur = db.execute('INSERT INTO familias(nombre, fecha) VALUES(?,?)',
+                     (nombre, datetime.now().strftime('%Y-%m-%d %H:%M')))
+    fam_id = cur.lastrowid
+    if titular_id:
+        u = db.execute('SELECT * FROM users WHERE id=? AND role="alumno"', (titular_id,)).fetchone()
+        if u:
+            db.execute('INSERT INTO familia_miembros(familia_id, user_id, relacion) VALUES(?,?,?)',
+                       (fam_id, titular_id, 'Titular'))
+            db.execute('UPDATE familias SET titular_id=? WHERE id=?', (titular_id, fam_id))
+    db.commit()
+    if titular_id:
+        try:
+            notify(titular_id, '👨‍👩‍👧 Familia', 'Te agregamos al grupo familiar "%s".' % nombre, 'info', push=True)
+        except Exception:
+            pass
+    return jsonify({'ok': True, 'id': fam_id})
+
+
+@app.route('/api/familias/<int:fam_id>/miembros', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_familia_agregar(fam_id):
+    data = parse_json()
+    uid = to_int(data.get('user_id'))
+    if not uid:
+        return jsonify({'error': 'Falta el alumno'}), 400
+    relacion = (data.get('relacion') or 'Familiar').strip() or 'Familiar'
+    db = get_db()
+    f = db.execute('SELECT * FROM familias WHERE id=?', (fam_id,)).fetchone()
+    if not f:
+        return jsonify({'error': 'Grupo no encontrado'}), 404
+    u = db.execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
+    if not u:
+        return jsonify({'error': 'Alumno no encontrado'}), 404
+    # si el alumno ya está en otra familia, se la cambia
+    db.execute('DELETE FROM familia_miembros WHERE user_id=?', (uid,))
+    db.execute('INSERT INTO familia_miembros(familia_id, user_id, relacion) VALUES(?,?,?)',
+               (fam_id, uid, relacion))
+    if f['titular_id'] is None:
+        db.execute('UPDATE familias SET titular_id=? WHERE id=? AND titular_id IS NULL', (uid, fam_id))
+    db.commit()
+    try:
+        notify(uid, '👨‍👩‍👧 Familia', 'Te incorporamos al grupo familiar "%s".' % f['nombre'], 'info', push=True)
+    except Exception:
+        pass
+    return jsonify({'ok': True})
+
+
+@app.route('/api/familias/<int:fam_id>/miembros/<int:uid>', methods=['DELETE'])
+@role_required('admin', 'profesor')
+def api_familia_quitar(fam_id, uid):
+    db = get_db()
+    db.execute('DELETE FROM familia_miembros WHERE familia_id=? AND user_id=?', (fam_id, uid))
+    # si era titular, pasar a otro miembro o dejar sin titular
+    f = db.execute('SELECT * FROM familias WHERE id=?', (fam_id,)).fetchone()
+    if f and f['titular_id'] == uid:
+        resto = db.execute('SELECT user_id FROM familia_miembros WHERE familia_id=? LIMIT 1', (fam_id,)).fetchone()
+        db.execute('UPDATE familias SET titular_id=? WHERE id=?', (resto['user_id'] if resto else None, fam_id))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/familias/<int:fam_id>', methods=['DELETE'])
+@role_required('admin', 'profesor')
+def api_familia_borrar(fam_id):
+    db = get_db()
+    db.execute('DELETE FROM familias WHERE id=?', (fam_id,))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/familias/<int:fam_id>', methods=['PUT'])
+@role_required('admin', 'profesor')
+def api_familia_editar(fam_id):
+    data = parse_json()
+    nombre = (data.get('nombre') or '').strip()
+    db = get_db()
+    if not db.execute('SELECT id FROM familias WHERE id=?', (fam_id,)).fetchone():
+        return jsonify({'error': 'Grupo no encontrado'}), 404
+    if nombre:
+        db.execute('UPDATE familias SET nombre=? WHERE id=?', (nombre, fam_id))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mi_familia')
+@login_required
+def api_mi_familia():
+    u = current_user()
+    fam_id, nombre, titular_id = familia_de(u['id'])
+    db = get_db()
+    if not fam_id:
+        return jsonify({'familia': None, 'descuento': to_float(get_setting('desc_familiar', '10')) or 0})
+    miem = db.execute(
+        """SELECT u.*, fm.relacion,
+                  (CASE WHEN f.titular_id=u.id THEN 1 ELSE 0 END) AS es_titular
+           FROM familia_miembros fm
+           JOIN users u ON u.id=fm.user_id
+           JOIN familias f ON f.id=fm.familia_id
+           WHERE fm.familia_id=? ORDER BY es_titular DESC, u.nombre""", (fam_id,)).fetchall()
+    lista = []
+    for m in miem:
+        base, desc, final = familia_cuota(dict(m), len(miem))
+        lista.append({'id': m['id'], 'nombre': m['nombre'], 'cinturon': m['cinturon'],
+                      'foto': m['foto'], 'relacion': m['relacion'],
+                      'es_titular': bool(m['es_titular']), 'cuota': base,
+                      'descuento': desc, 'cuota_final': final})
+    descto = to_float(get_setting('desc_familiar', '10')) or 0
+    return jsonify({'familia': {'id': fam_id, 'nombre': nombre, 'titular_id': titular_id,
+                                'miembros': lista},
+                    'descuento': descto})
+
+
+# ---------------------------------------------------------------------------
+# Diario de la academia
+# ---------------------------------------------------------------------------
+
+@app.route('/api/diario')
+@login_required
+def api_diario():
+    rows = get_db().execute(
+        """SELECT d.*, u.nombre AS autor_nombre, u.foto AS autor_foto
+           FROM diario d JOIN users u ON u.id=d.user_id
+           ORDER BY d.fecha DESC, d.id DESC LIMIT 120""").fetchall()
+    return jsonify({'diario': [dict(r) for r in rows]})
+
+
+@app.route('/api/diario', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_diario_crear():
+    u = current_user()
+    data = parse_json()
+    titulo = (data.get('titulo') or '').strip()
+    texto = (data.get('texto') or '').strip()
+    if not titulo and not texto:
+        return jsonify({'error': 'Escribí al menos la crónica del día'}), 400
+    hoy = date.today().strftime('%Y-%m-%d')
+    db = get_db()
+    exist = db.execute('SELECT id FROM diario WHERE fecha=?', (hoy,)).fetchone()
+    if exist:
+        db.execute('UPDATE diario SET titulo=?, texto=?, user_id=? WHERE id=?',
+                   (titulo, texto, u['id'], exist['id']))
+        did = exist['id']
+    else:
+        cur = db.execute('INSERT INTO diario(user_id, fecha, titulo, texto) VALUES(?,?,?,?)',
+                         (u['id'], hoy, titulo, texto))
+        did = cur.lastrowid
+    db.commit()
+    return jsonify({'ok': True, 'id': did, 'fecha': hoy})
+
+
+@app.route('/api/diario/<int:did>', methods=['DELETE'])
+@role_required('admin', 'profesor')
+def api_diario_borrar(did):
+    get_db().execute('DELETE FROM diario WHERE id=?', (did,))
     get_db().commit()
     return jsonify({'ok': True})
 
@@ -2834,7 +3126,7 @@ def api_settings_get():
     u = current_user()
     keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_link', 'pago_alias',
             'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
-            'mp_access_token', 'wp_numero']
+            'mp_access_token', 'wp_numero', 'desc_familiar']
     if u['role'] == 'admin':
         keys += ['academy_color']
     return jsonify({k: get_setting(k) for k in keys})
@@ -2846,7 +3138,7 @@ def api_settings_put():
     data = parse_json()
     for k in ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'academy_color', 'pago_link', 'pago_alias',
               'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
-              'mp_access_token', 'wp_numero']:
+              'mp_access_token', 'wp_numero', 'desc_familiar']:
         if k in data and data[k] is not None:
             set_setting(k, data[k])
     return jsonify({'ok': True})

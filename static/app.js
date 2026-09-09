@@ -73,10 +73,30 @@ async function api(path, opts = {}) {
   return data;
 }
 
-function openModal(html) { $('#modalBody').innerHTML = html; $('#modal').hidden = false; }
-function closeModal() { $('#modal').hidden = true; }
+function focusFirst(el) {
+  if (!el) return null;
+  const f = el.querySelector('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"]), summary');
+  if (f) f.focus();
+  return f;
+}
+let _modalLastFocus = null;
+function openModal(html) {
+  _modalLastFocus = document.activeElement;
+  $('#modalBody').innerHTML = html;
+  $('#modal').hidden = false;
+  // accesibilidad: mover el foco al diálogo para que TalkBack lo lea
+  const f = focusFirst($('#modalBody')) || $('#modalClose');
+  if (f) f.focus();
+}
+function closeModal() {
+  $('#modal').hidden = true;
+  if (_modalLastFocus && document.body.contains(_modalLastFocus)) _modalLastFocus.focus();
+}
 $('#modalClose') && $('#modalClose').addEventListener('click', closeModal);
 $('#modal') && $('#modal').addEventListener('click', (e) => { if (e.target === $('#modal')) closeModal(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('#modal') && !$('#modal').hidden) closeModal();
+});
 
 /* =====================================================================
    PAGINA DE LOGIN / REGISTRO
@@ -100,9 +120,13 @@ function initLogin() {
   });
 
   $$('.tab').forEach(t => t.addEventListener('click', () => {
-    $$('.tab').forEach(x => x.classList.remove('active'));
+    $$('.tab').forEach(x => {
+      x.classList.remove('active');
+      x.setAttribute('aria-selected', 'false');
+    });
     $$('.tabpanel').forEach(x => x.classList.remove('active'));
     t.classList.add('active');
+    t.setAttribute('aria-selected', 'true');
     $('#tab-' + t.dataset.tab).classList.add('active');
     $('#loginMsg').className = 'msg';
   }));
@@ -242,6 +266,22 @@ function initDashboard() {
 
   showSec('inicio');
 
+  // abrir sección indicada en la URL (?sec=...) al volver de una notificación push
+  const secParam = new URLSearchParams(location.search).get('sec');
+  const seccionesValidas = ['inicio', 'perfil', 'horarios', 'pagos', 'mispagos', 'alumnos',
+    'asistencia', 'deudores', 'profesores', 'config', 'mi_asistencia', 'videos', 'chat',
+    'muro', 'galeria', 'ranking', 'metas', 'encuestas', 'eventos', 'historial', 'familias', 'diario'];
+  if (secParam && seccionesValidas.includes(secParam)) showSec(secParam);
+  history.replaceState(null, '', location.pathname);
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (ev) => {
+      if (ev.data && ev.data.type === 'ikigai-nav' && ev.data.url) {
+        const s = new URL(ev.data.url, location.origin).searchParams.get('sec');
+        if (s && seccionesValidas.includes(s)) showSec(s);
+      }
+    });
+  }
+
   // Si el usuario aún no aceptó los Términos y Condiciones, mostrarlos
   try {
     if (window.USER && !window.USER.acepto_tyc) {
@@ -277,6 +317,7 @@ function showSec(name) {
     chat: renderChat, muro: renderMuro, galeria: renderGaleria,
     ranking: renderRanking, metas: renderMetas, encuestas: renderEncuestas,
     eventos: renderEventos, historial: renderHistorial,
+    familias: renderFamilias, diario: renderDiario,
   };
   if (renderers[name]) renderers[name](el);
 }
@@ -297,15 +338,21 @@ async function loadNotifs() {
   const el = $('#notifList');
   if (!d.notificaciones.length) { el.innerHTML = '<div class="empty">Sin notificaciones</div>'; return; }
   el.innerHTML = d.notificaciones.map(n => `
-    <div class="notif-item ${n.leida ? '' : 'unread'}" onclick="markRead(${n.id})">
+    <button class="notif-item ${n.leida ? '' : 'unread'}" onclick="abrirNotif(${n.id},'${esc(n.link || '')}')">
       <span class="n-title">${esc(n.titulo)}</span>
       <span class="n-msg">${esc(n.mensaje)}</span>
-      <small>${esc(n.fecha)}</small>
-    </div>`).join('');
+      ${n.link ? `<small style="color:var(--accent2)">Tocá para abrir →</small>` : `<small>${esc(n.fecha)}</small>`}
+    </button>`).join('');
 }
 async function markRead(id) {
   await api('/api/notificaciones/' + id, { method: 'POST' }).catch(() => {});
   loadNotifs();
+}
+async function abrirNotif(id, link) {
+  await api('/api/notificaciones/' + id, { method: 'POST' }).catch(() => {});
+  $('#notifPanel').hidden = true;
+  if (link) showSec(link);
+  else loadNotifs();
 }
 
 /* ---------- PUSH ---------- */
@@ -862,6 +909,7 @@ async function renderInicio(el) {
           <button class="chip" onclick="showSec('chat')">💬 Chat</button>
           <button class="chip" onclick="showSec('eventos')">🗓️ Eventos</button>
           <button class="chip" onclick="showSec('encuestas')">📊 Encuestas</button>
+          <button class="chip" onclick="showSec('diario')">📓 Diario</button>
           <button class="chip" onclick="abrirScannerQR()">📷 Escanear QR</button>
         </div>
       </div>`;
@@ -879,6 +927,8 @@ async function renderInicio(el) {
       `<button class="chip" onclick="showSec('deudores')">⚠️ Deudas</button>`,
       `<button class="chip" onclick="showSec('videos')">🎥 Videos</button>`];
     if (R === 'admin') chips.push(`<button class="chip" onclick="showSec('profesores')">🧑‍🏫 Profesores</button>`, `<button class="chip" onclick="showSec('config')">⚙️ Configuración</button>`);
+    chips.push(`<button class="chip" onclick="showSec('familias')">👨‍👩‍👧 Familias</button>`);
+    chips.push(`<button class="chip" onclick="showSec('diario')">📓 Diario</button>`);
     chips.push(`<button class="chip" onclick="showSec('muro')">📢 Muro</button>`);
     chips.push(`<button class="chip" onclick="showSec('chat')">💬 Chat</button>`);
     chips.push(`<button class="chip" onclick="showSec('ranking')">🏆 Ranking</button>`);
@@ -981,6 +1031,8 @@ async function renderPerfil(el) {
         <div class="small" style="margin-bottom:8px">Cinturón actual: ${beltHTML(me.cinturon)}${me.proximo_examen ? ' · <b style="color:var(--accent2)">Próximo examen: ' + esc(me.proximo_examen) + '</b>' : ''}</div>
         <div id="misGrados">Cargando…</div>
       </div>` : ''}
+
+      <div class="feed-card" id="miFamiliaCard"></div>
 
       <div class="feed-card">
         <form id="perfilForm" class="grid2">
@@ -1087,6 +1139,24 @@ async function renderPerfil(el) {
           </div>`).join('')
         : '<div class="small" style="color:var(--muted)">Todavía no tenés grados registrados.</div>');
     }).catch(() => { const b = $('#misGrados'); if (b) b.textContent = '—'; });
+    api('/api/mi_familia').then(d => {
+      const box = $('#miFamiliaCard');
+      if (!box) return;
+      if (!d.familia) {
+        box.innerHTML = '';
+        return;
+      }
+      box.innerHTML = `
+        <div class="small mb">👨‍👩‍👧 Mi familia</div>
+        <div class="small" style="margin-bottom:8px"><b>${esc(d.familia.nombre)}</b> · ${d.familia.miembros.length} miembros</div>
+        ${d.familia.miembros.map(m => `
+          <div class="flex space-between" style="align-items:center;padding:6px 0;border-bottom:1px dashed var(--line)">
+            <span>${avatarHTML(m.foto, m.nombre, 'sm')} <b>${esc(m.nombre)}</b> ${m.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}
+              <span class="small" style="color:var(--muted)">· ${esc(m.relacion)}</span></span>
+            <span class="small">$${num(m.cuota_final)}/mes${m.descuento ? ' <span style="color:var(--good)">(-' + num(m.descuento) + ')</span>' : ''}</span>
+          </div>`).join('')}
+        <p class="small" style="color:var(--muted);margin-bottom:0">Si hay más de un miembro, los integrantes (excepto el titular) pagan con <b>${d.descuento}% de descuento</b>.</p>`;
+    }).catch(() => { const b = $('#miFamiliaCard'); if (b) b.innerHTML = ''; });
   }
 }
 
@@ -1563,7 +1633,8 @@ async function renderAlumnos(el) {
           <div class="al-nombre">${esc(a.nombre)}${a.activo ? '' : '<div><span class="tag tag-deuda">inactivo</span></div>'}</div>
           <div class="small" style="margin-top:4px">${beltHTML(a.cinturon)} · ${a.edad != null ? a.edad + ' años' : '—'}</div>
           <div class="small">Modalidad: <span class="tag ${(a.gi_pref || 'Ambas').toLowerCase() === 'amabas' ? 'alumno' : (a.gi_pref || 'Ambas').toLowerCase()}">${esc(a.gi_pref || 'Ambas')}</span></div>
-          <div class="small">Cuota: <b>$${num(a.cuota_mensual)}</b> · <span class="tag ${cls}">${lbl}</span></div>
+          <div class="small">Cuota: <b>$${num(a.familia ? a.familia.cuota_final : a.cuota_mensual)}</b> · <span class="tag ${cls}">${lbl}</span></div>
+          ${a.familia ? `<div class="small">👨‍👩‍👧 <b>${esc(a.familia.nombre)}</b> ${a.familia.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}${a.familia.descuento ? `<span class="tag tag-por-vencer">ahorra $${num(a.familia.descuento)}</span>` : ''}</div>` : ''}
           <div class="small">🥋 <b>${a.asistencias}</b> asistencias</div>
           <div class="al-actions">
             <button class="btn ghost small" onclick="formAlumno(${a.id})">✏️</button>
@@ -1912,6 +1983,7 @@ async function renderConfig(el) {
         <div class="field"><label>Cuota mensual por defecto ($)</label><input id="cCuota" value="${esc(s.default_cuota)}"></div>
         <div class="field"><label>Día de vencimiento (día del mes)</label><input type="number" id="cDue" value="${esc(s.due_day)}"></div>
         <div class="field"><label>Recargo por pago con demora (%)</label><input type="number" id="cDemora" value="${esc(s.cargo_demora_pct ?? '10')}" placeholder="10"></div>
+        <div class="field"><label>Descuento familiar (%)</label><input type="number" id="cDescFamilia" value="${esc(s.desc_familiar ?? '10')}" placeholder="10"><small class="hint">Se aplica a los miembros del grupo familiar excepto el titular (desde el 2° miembro).</small></div>
         <div class="field" style="grid-column:1/-1"><label>Link de pago en línea (ej: link de MercadoPago)</label><input id="cLink" value="${esc(s.pago_link || '')}" placeholder="https://link.mercadopago.com.ar/... (dejalo vacío para ocultar el botón de pago)"></div>
         <div class="field" style="grid-column:1/-1"><label>Alias o CVU para transferencia</label><input id="cAlias" value="${esc(s.pago_alias || '')}" placeholder="ej: academia.bjj.viedma (dejalo vacío para ocultarlo)"></div>
         <div class="field" style="grid-column:1/-1"><label>Access Token de MercadoPago (APP_USR-...) para el botón de pago en línea</label><input id="cMpTk" value="${esc(s.mp_access_token || '')}" placeholder="APP_USR-... (dejalo vacío para ocultar el botón de pago online)"></div>
@@ -1953,7 +2025,7 @@ async function renderConfig(el) {
       await api('/api/settings', { method: 'PUT', body: {
         academy_name: $('#cNombre').value, academy_color: $('#cColor').value,
         academy_code: $('#cCodigo').value, default_cuota: $('#cCuota').value,
-        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value,
+        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, desc_familiar: $('#cDescFamilia').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value,
         mp_access_token: $('#cMpTk').value, wp_numero: $('#cWp').value, logro_asist: $('#cLogroAsist').value, logro_videos: $('#cLogroVids').value } });
       toast('Configuración guardada ✓');
       if (location.reload) { /* color aplicado al recargar */ }
@@ -2573,6 +2645,180 @@ async function recPaso2(user) {
       overlayRecupCerrar();
       toast('Contraseña cambiada ✓ Ingresá con tu clave nueva.');
     }
+  } catch (e) { toast(e.message); }
+}
+
+/* =====================================================================
+   DIARIO DE LA ACADEMIA
+   ===================================================================== */
+async function renderDiario(el) {
+  const d = await api('/api/diario').catch(() => ({ diario: [] }));
+  const esStaff = USER.role === 'admin' || USER.role === 'profesor';
+  const hoy = new Date().toISOString().slice(0, 10);
+  const yaHoy = d.diario[0] && d.diario[0].fecha === hoy;
+  const entradas = d.diario.map(e => `
+    <div class="post-card">
+      <div class="post-head">
+        ${avatarHTML(e.autor_foto, e.autor_nombre, 'sm')} <b>${esc(e.autor_nombre)}</b>
+        <span class="small" style="color:var(--muted)">· ${esc(e.fecha)}</span>
+        ${esStaff ? `<button class="btn ghost small" style="margin-left:auto" onclick="borrarDiario(${e.id})">🗑</button>` : ''}
+      </div>
+      ${e.titulo ? `<h4 style="margin:8px 0 4px">${esc(e.titulo)}</h4>` : ''}
+      ${e.texto ? `<p class="small" style="white-space:pre-wrap;margin:6px 0 0">${esc(e.texto)}</p>` : ''}
+      ${e.foto ? `<img src="${esc(e.foto)}" style="max-width:100%;max-height:260px;border-radius:10px;margin-top:10px;object-fit:cover">` : ''}
+    </div>`).join('');
+  el.innerHTML = `
+    ${secHeader('📓 Diario de la academia', esStaff ? 'Escribí la crónica del día, lo que se trabajó y quiénes vinieron.' : 'La crónica diaria de lo que pasa en el dojo')}
+    ${esStaff ? `
+    <div class="card">
+      <div class="small mb">${yaHoy ? '✏️ Ya escribiste la crónica de hoy. Podés editarla:' : '📝 Crónica de hoy:'}</div>
+      <input id="diarioTitulo" placeholder="Título (ej: Trabajo de guardias)" value="${yaHoy ? esc(d.diario[0].titulo || '') : ''}" style="width:100%;margin-bottom:8px">
+      <textarea id="diarioTexto" rows="4" placeholder="Contá qué se trabajó hoy, quiénes vinieron, anécdotas..." style="width:100%">${yaHoy ? esc(d.diario[0].texto || '') : ''}</textarea>
+      <button class="btn primary btn-block mt" onclick="guardarDiario()">${yaHoy ? 'Actualizar crónica' : 'Guardar crónica de hoy'}</button>
+    </div>
+    ` : ''}
+    <div class="feed">
+      ${entradas || '<div class="empty">Todavía no hay entradas en el diario.</div>'}
+    </div>`;
+}
+
+async function guardarDiario() {
+  try {
+    await api('/api/diario', { method: 'POST', body: { titulo: $('#diarioTitulo').value, texto: $('#diarioTexto').value } });
+    toast('Crónica guardada ✓');
+    renderDiario($('#sec-diario'));
+  } catch (e) { toast(e.message); }
+}
+
+async function borrarDiario(id) {
+  if (!confirm('¿Eliminar esta entrada del diario?')) return;
+  try {
+    await api('/api/diario/' + id, { method: 'DELETE' });
+    toast('Entrada eliminada');
+    renderDiario($('#sec-diario'));
+  } catch (e) { toast(e.message); }
+}
+
+/* =====================================================================
+   FAMILIAS (grupos familiares)
+   ===================================================================== */
+async function renderFamilias(el) {
+  const d = await api('/api/familias').catch(() => ({ familias: [] }));
+  const alumnos = (await api('/api/alumnos').catch(() => ({ alumnos: [] }))).alumnos;
+  const usadas = new Set();
+  d.familias.forEach(f => (f.miembros || []).forEach(m => usadas.add(m.id)));
+  const libres = alumnos.filter(a => !usadas.has(a.id));
+  el.innerHTML = `
+    ${secHeader('👨‍👩‍👧 Grupos familiares', 'Agrupá familiares para cobrar la cuota con descuento a partir del 2° miembro')}
+    <div class="card">
+      <div class="flex space-between" style="align-items:center;gap:8px;margin-bottom:8px">
+        <div class="field" style="flex:1;margin:0"><label>Nombre del grupo</label><input id="famNombre" placeholder="Ej: Familia García"></div>
+        <div class="field" style="flex:1;margin:0"><label>Titular (primero)</label><select id="famTitular">
+          <option value="">— elegir —</option>
+          ${libres.map(a => `<option value="${a.id}">${esc(a.nombre)}</option>`).join('')}
+        </select></div>
+      </div>
+      <button class="btn primary btn-block" onclick="crearFamilia()">👨‍👩‍👧 Crear grupo familiar</button>
+    </div>
+    <div class="feed">
+      ${d.familias.length ? d.familias.map(f => `
+        <div class="post-card">
+          <div class="flex space-between" style="align-items:center">
+            <div><b>${esc(f.nombre)}</b> <span class="small" style="color:var(--muted)">· total <b>$${num(f.total)}</b>/mes</span></div>
+            <div>
+              <button class="btn ghost small" onclick="editarNombreFamilia(${f.id},'${esc(f.nombre)}')">✏️</button>
+              <button class="btn ghost small" onclick="verFamiliaModal(${f.id},'${esc(f.nombre)}')">➕</button>
+              <button class="btn bad small" onclick="borrarFamilia(${f.id},'${esc(f.nombre)}')">🗑</button>
+            </div>
+          </div>
+          ${(f.miembros || []).map(m => `
+            <div class="flex space-between" style="align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)">
+              <span>${avatarHTML(m.foto, m.nombre, 'sm')} <b>${esc(m.nombre)}</b> ${m.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}
+                <span class="small" style="color:var(--muted)">· ${esc(m.relacion)}</span></span>
+              <span class="small">$${num(m.cuota_final)}<br>${m.descuento ? '<span style="color:var(--good)">-' + num(m.descuento) + '</span>' : ''}</span>
+              <button class="btn ghost small" onclick="quitarMiembroFamilia(${f.id},${m.id},'${esc(m.nombre)}')">✕</button>
+            </div>`).join('') || '<div class="empty">Sin miembros</div>'}
+        </div>`).join('') : '<div class="empty">Todavía no hay grupos familiares. Creá el primero arriba.</div>'}
+    </div>`;
+}
+
+async function editarNombreFamilia(id, nombre) {
+  openModal(`
+    <h3>✏️ Renombrar grupo</h3>
+    <div class="field"><label>Nombre del grupo</label><input id="efNombre" value="${esc(nombre)}"></div>
+    <button class="btn primary btn-block" onclick="guardarNombreFamilia(${id})">Guardar</button>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+  $('#efNombre').focus();
+}
+async function guardarNombreFamilia(id) {
+  try {
+    await api('/api/familias/' + id, { method: 'PUT', body: { nombre: $('#efNombre').value } });
+    toast('Grupo renombrado ✓');
+    closeModal();
+    renderFamilias($('#sec-familias'));
+  } catch (e) { toast(e.message); }
+}
+async function borrarFamilia(id, nombre) {
+  if (!confirm('¿Eliminar el grupo familiar "' + nombre + '"?')) return;
+  try {
+    await api('/api/familias/' + id, { method: 'DELETE' });
+    toast('Grupo eliminado');
+    renderFamilias($('#sec-familias'));
+  } catch (e) { toast(e.message); }
+}
+async function quitarMiembroFamilia(fid, uid, nombre) {
+  if (!confirm('¿Sacar a ' + nombre + ' del grupo?')) return;
+  try {
+    await api('/api/familias/' + fid + '/miembros/' + uid, { method: 'DELETE' });
+    toast(nombre + ' fue sacado del grupo');
+    renderFamilias($('#sec-familias'));
+  } catch (e) { toast(e.message); }
+}
+async function crearFamilia() {
+  const nombre = $('#famNombre').value.trim();
+  if (!nombre) { toast('Poné un nombre al grupo'); return; }
+  try {
+    await api('/api/familias', { method: 'POST', body: { nombre, titular_id: $('#famTitular').value } });
+    toast('Grupo familiar creado ✓');
+    renderFamilias($('#sec-familias'));
+  } catch (e) { toast(e.message); }
+}
+async function verFamiliaModal(fid, nombre) {
+  const d = await api('/api/familias');
+  const f = d.familias.find(x => x.id === fid);
+  const libres = [];
+  try {
+    const a = (await api('/api/alumnos')).alumnos;
+    const usadas = new Set();
+    d.familias.forEach(x => (x.miembros || []).forEach(m => usadas.add(m.id)));
+    a.filter(x => !usadas.has(x.id)).forEach(x => libres.push(x));
+  } catch (e) {}
+  openModal(`
+    <h3>👨‍👩‍👧 ${esc(nombre)}</h3>
+    ${(f.miembros || []).map(m => `
+      <div class="flex space-between" style="align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)">
+        <span>${avatarHTML(m.foto, m.nombre, 'sm')} <b>${esc(m.nombre)}</b> <span class="small" style="color:var(--muted)">· ${esc(m.relacion)}</span> ${m.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}</span>
+        <button class="btn ghost small" onclick="quitarMiembroFamilia(${fid},${m.id},'${esc(m.nombre)}')">✕</button>
+      </div>`).join('')}
+    <div class="field mt"><label>Agregar miembro</label><select id="fmUser">
+      <option value="">— elegir alumno —</option>
+      ${libres.map(a => `<option value="${a.id}">${esc(a.nombre)}</option>`).join('')}
+    </select></div>
+    <div class="field"><label>Relación</label><select id="fmRel">
+      <option>Hijo/a</option><option>Hija</option><option>Pareja</option>
+      <option>Mamá</option><option>Papá</option><option>Hermano/a</option><option>Familiar</option>
+    </select></div>
+    <button class="btn primary btn-block" onclick="agregarMiembroFamilia(${fid})">➕ Agregar al grupo</button>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+}
+async function agregarMiembroFamilia(fid) {
+  const uid = $('#fmUser').value;
+  if (!uid) { toast('Elegí un alumno'); return; }
+  try {
+    await api('/api/familias/' + fid + '/miembros', { method: 'POST', body: { user_id: uid, relacion: $('#fmRel').value } });
+    toast('Miembro agregado ✓');
+    closeModal();
+    renderFamilias($('#sec-familias'));
   } catch (e) { toast(e.message); }
 }
 

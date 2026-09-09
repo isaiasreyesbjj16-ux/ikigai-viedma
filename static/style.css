@@ -141,6 +141,9 @@ body {
 .notif-item:last-child { border-bottom: 0; }
 .notif-item.unread { background: rgba(224,46,46,.12); border-left: 3px solid var(--accent); }
 .notif-item small { color: var(--muted); display: block; margin-top: 4px; font-size: 11px; }
+.notif-item[role="button"], button.notif-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: inherit; font: inherit; }
+.skip-link:focus { left: 8px; top: 8px; }
+.hint { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
 .notif-item .n-title { font-weight: 700; font-size: 13px; display: block; }
 .notif-item .n-msg { font-size: 13px; color: var(--muted); }
 

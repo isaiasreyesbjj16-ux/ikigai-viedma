@@ -1,5 +1,5 @@
 /* Service worker - Academia */
-const CACHE_NAME = 'ikigai-static-v2';
+const CACHE_NAME = 'ikigai-static-v3';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
@@ -56,7 +56,10 @@ self.addEventListener('notificationclick', (e) => {
   const url = (e.notification.data && e.notification.data.url) || '/app';
   e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
     for (const client of list) {
-      if ('focus' in client) return client.focus();
+      if ('focus' in client) {
+        client.postMessage({ type: 'ikigai-nav', url: url });
+        return client.focus();
+      }
     }
     return clients.openWindow(url);
   }));
