@@ -1613,6 +1613,27 @@ def api_asistencia_yo():
     return jsonify({'ok': True})
 
 
+@app.route('/api/asistencia_directo', methods=['POST'])
+@role_required('alumno')
+def api_asistencia_directo():
+    # Marcar asistencia sin QR fisico, para accesibilidad (TalkBack).
+    u = current_user()
+    data = parse_json()
+    clase_id = to_int(data.get('clase_id'))
+    fecha = data.get('fecha') or date.today().strftime('%Y-%m-%d')
+    if not clase_id:
+        return jsonify({'error': 'Falta la clase'}), 400
+    c = get_db().execute('SELECT * FROM classes WHERE id=?', (clase_id,)).fetchone()
+    if not c:
+        return jsonify({'error': 'Clase no encontrada'}), 404
+    get_db().execute(
+        'INSERT OR IGNORE INTO asistencia(clase_id, alumno_id, fecha, presente) VALUES(?,?,?,1)',
+        (clase_id, u['id'], fecha))
+    get_db().commit()
+    chequear_logros(u['id'])
+    return jsonify({'ok': True})
+
+
 @app.route('/api/reporte')
 @role_required('admin', 'profesor')
 def api_reporte():
