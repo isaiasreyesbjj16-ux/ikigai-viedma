@@ -1659,13 +1659,13 @@ def api_alumno_ficha(uid):
 # ---------------------------------------------------------------------------
 
 def familia_cuota(miembro, total_miembros):
-    """Cuota de un miembro aplicando descuento familiar a los que no son el titular.
-    Descuento configurable en settings: desc_familiar (%)."""
+    """Cuota de un miembro aplicando el descuento familiar a TODOS los integrantes
+    cuando el grupo tiene mas de un miembro. Descuento en settings: desc_familiar (%)."""
     pct = to_float(get_setting('desc_familiar', '10')) or 0
     base = miembro.get('cuota_mensual') or 0
     desc = 0
     cuota_final = base
-    if miembro.get('es_titular') != 1 and total_miembros > 1 and pct > 0:
+    if total_miembros > 1 and pct > 0:
         desc = round(base * pct / 100)
         cuota_final = base - desc
     return base, desc, cuota_final

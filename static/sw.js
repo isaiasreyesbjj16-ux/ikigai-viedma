@@ -1,5 +1,5 @@
 /* Service worker - Academia */
-const CACHE_NAME = 'ikigai-static-v10';
+const CACHE_NAME = 'ikigai-static-v11';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
