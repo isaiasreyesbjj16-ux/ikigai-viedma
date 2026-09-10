@@ -6,7 +6,7 @@ import json
 import secrets
 import time
 import zipfile
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template, g, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -499,6 +499,13 @@ def set_setting(key, value):
     get_db().commit()
 
 
+def _hoy_academy():
+    """Fecha de 'hoy' en la zona horaria de la academia (setting tz_offset en horas,
+    default -3 = Argentina). Así 'hoy' no cambia a las 21:00 por usar UTC."""
+    off = to_float(get_setting('tz_offset', '-3')) or 0
+    return (datetime.now(timezone.utc) + timedelta(hours=off)).date()
+
+
 # ---------------------------------------------------------------------------
 # VAPID keys para push
 # ---------------------------------------------------------------------------
@@ -687,7 +694,7 @@ def aviso_cuotas_automatico():
     """Si pasó el día de vencimiento y no se avisó este mes, manda push a los deudores.
     Se llama en cada request (no hay cron en Render free); controla repetir con un flag."""
     try:
-        hoy = date.today()
+        hoy = _hoy_academy()
         flag = get_setting('aviso_cuota_%d_%d' % (hoy.year, hoy.month), '0')
         if flag == '1':
             return 0
@@ -719,7 +726,7 @@ def aviso_eventos_hoy():
     """Manda push recordando eventos que son mañana (a los que confirmaron asistencia).
     Se llama en cada request; evita repetir con la columna recordado."""
     try:
-        manana = (date.today() + timedelta(days=1)).strftime('%Y-%m-%d')
+        manana = (_hoy_academy() + timedelta(days=1)).strftime('%Y-%m-%d')
         db = get_db()
         evs = db.execute('SELECT * FROM eventos WHERE fecha_evento=? AND (recordado IS NULL OR recordado=0)',
                          (manana,)).fetchall()
@@ -929,7 +936,7 @@ def _avisos_periodicos():
 
 def cuota_status(alumno):
     """Estado de la cuota del alumno en el mes actual."""
-    hoy = date.today()
+    hoy = _hoy_academy()
     pago = get_db().execute(
         'SELECT * FROM pagos WHERE alumno_id=? AND mes=? AND anio=? ORDER BY id DESC LIMIT 1',
         (alumno['id'], hoy.month, hoy.year)).fetchone()
@@ -957,7 +964,7 @@ def calcular_demora(monto, mes=None, anio=None, fecha=None):
     base = monto or 0
     if base <= 0:
         return base, 0, base
-    hoy = fecha or date.today()
+    hoy = fecha or _hoy_academy()
     due_day = to_int(get_setting('due_day', '10')) or 10
     pct = to_float(get_setting('cargo_demora_pct', '10')) or 0
     # Mes objetivo del pago (por defecto el mes actual)
@@ -979,7 +986,7 @@ def calcular_demora(monto, mes=None, anio=None, fecha=None):
 
 def en_pausa(alumno, fecha=None):
     """True si el alumno está dentro del rango de pausa temporal (inclusive)."""
-    hoy = fecha or date.today()
+    hoy = fecha or _hoy_academy()
     if isinstance(alumno, dict):
         get = lambda k: alumno.get(k)
     else:
@@ -997,7 +1004,7 @@ def en_pausa(alumno, fecha=None):
 
 
 def dias_deuda(alumno):
-    hoy = date.today()
+    hoy = _hoy_academy()
     pago = get_db().execute(
         'SELECT fecha FROM pagos WHERE alumno_id=? ORDER BY fecha DESC LIMIT 1',
         (alumno['id'],)).fetchone()
@@ -1020,7 +1027,7 @@ def dias_deuda(alumno):
 
 def dias_sin_entrenar(alumno):
     """Días desde la última asistencia marcada del alumno."""
-    hoy = date.today()
+    hoy = _hoy_academy()
     row = get_db().execute(
         "SELECT fecha FROM asistencia WHERE alumno_id=? AND presente=1 ORDER BY fecha DESC LIMIT 1",
         (alumno['id'],)).fetchone()
@@ -1069,7 +1076,7 @@ def run_auto_mensajes():
         # verificar que no se le haya enviado ya el mensaje automático (tipo 'auto')
         ya = get_db().execute(
             "SELECT 1 FROM notificaciones WHERE user_id=? AND tipo='auto' AND fecha LIKE ? LIMIT 1",
-            (a['id'], date.today().strftime('%Y-%m-%d') + '%')).fetchone()
+            (a['id'], _hoy_academy().strftime('%Y-%m-%d') + '%')).fetchone()
         if ya:
             continue
         notify(a['id'], '📣 Mensaje de la academia', texto, tipo='auto', push=True)
@@ -2048,7 +2055,8 @@ def api_diario():
         """SELECT d.*, u.nombre AS autor_nombre, u.foto AS autor_foto
            FROM diario d JOIN users u ON u.id=d.user_id
            ORDER BY d.fecha DESC, d.id DESC LIMIT 120""").fetchall()
-    return jsonify({'diario': [dict(r) for r in rows]})
+    return jsonify({'diario': [dict(r) for r in rows],
+                    'hoy': _hoy_academy().strftime('%Y-%m-%d')})
 
 
 @app.route('/api/diario', methods=['POST'])
@@ -2060,7 +2068,7 @@ def api_diario_crear():
     texto = (data.get('texto') or '').strip()
     if not titulo and not texto:
         return jsonify({'error': 'Escribí al menos la crónica del día'}), 400
-    hoy = date.today().strftime('%Y-%m-%d')
+    hoy = _hoy_academy().strftime('%Y-%m-%d')
     db = get_db()
     exist = db.execute('SELECT id FROM diario WHERE fecha=?', (hoy,)).fetchone()
     if exist:
@@ -2119,8 +2127,8 @@ def api_pagos_create():
     alumno_id = to_int(data.get('alumno_id'))
     profesor_id = to_int(data.get('profesor_id'))
     monto = to_float(data.get('monto'))
-    mes = to_int(data.get('mes')) or date.today().month
-    anio = to_int(data.get('anio')) or date.today().year
+    mes = to_int(data.get('mes')) or _hoy_academy().month
+    anio = to_int(data.get('anio')) or _hoy_academy().year
     if not alumno_id or not monto or monto <= 0:
         return jsonify({'error': 'Alumno y monto son obligatorios'}), 400
     if profesor_id == -1 or (profesor_id is None and (data.get('profesor_id') == -1)):
@@ -2218,7 +2226,7 @@ def api_notify_deuda():
 def api_asistencia_marcar():
     data = parse_json()
     clase_id = to_int(data.get('clase_id'))
-    fecha = (data.get('fecha') or date.today().strftime('%Y-%m-%d'))
+    fecha = (data.get('fecha') or _hoy_academy().strftime('%Y-%m-%d'))
     presentes = data.get('presentes') or []
     if not clase_id:
         return jsonify({'error': 'Selecciona una clase'}), 400
@@ -2236,7 +2244,7 @@ def api_asistencia_marcar():
 @role_required('admin', 'profesor')
 def api_asistencia_dia():
     clase_id = to_int(request.args.get('clase_id'))
-    fecha = request.args.get('fecha') or date.today().strftime('%Y-%m-%d')
+    fecha = request.args.get('fecha') or _hoy_academy().strftime('%Y-%m-%d')
     rows = get_db().execute('SELECT alumno_id FROM asistencia WHERE clase_id=? AND fecha=? AND presente=1',
                             (clase_id, fecha)).fetchall()
     return jsonify({'presentes': [r['alumno_id'] for r in rows]})
@@ -2246,7 +2254,7 @@ def api_asistencia_dia():
 @role_required('admin', 'profesor')
 def api_asistencia_por_dia():
     """Vista general: qué alumnos asistieron cada clase de un día (hoy, ayer, mañana, etc.)."""
-    fecha = request.args.get('fecha') or date.today().strftime('%Y-%m-%d')
+    fecha = request.args.get('fecha') or _hoy_academy().strftime('%Y-%m-%d')
     try:
         f = datetime.strptime(fecha, '%Y-%m-%d').date()
     except Exception:
@@ -2290,7 +2298,7 @@ def api_mi_asistencia():
              'valorada': 1 if (str(r['clase_id']) + '|' + r['fecha']) in valoradas else 0} for r in rows]
     total = db.execute(
         'SELECT COUNT(*) AS n FROM asistencia WHERE alumno_id=? AND presente=1', (u['id'],)).fetchone()['n']
-    hoy = date.today().strftime('%Y-%m-%d')
+    hoy = _hoy_academy().strftime('%Y-%m-%d')
     hoy_ids = [r['clase_id'] for r in db.execute(
         'SELECT clase_id FROM asistencia WHERE alumno_id=? AND fecha=? AND presente=1',
         (u['id'], hoy)).fetchall()]
@@ -2299,7 +2307,7 @@ def api_mi_asistencia():
 
 def _ultimos_meses(n=6):
     """Lista de últimos n meses (anio, mes, label) desde hoy hacia atrás."""
-    hoy = date.today()
+    hoy = _hoy_academy()
     y, m = hoy.year, hoy.month
     meses = []
     for _ in range(n):
@@ -2480,7 +2488,7 @@ def api_mis_pagos():
 def api_avisar_pago():
     u = current_user()
     data = parse_json()
-    hoy = date.today()
+    hoy = _hoy_academy()
     mes = to_int(data.get('mes')) or hoy.month
     anio = to_int(data.get('anio')) or hoy.year
     ex = get_db().execute(
@@ -2564,7 +2572,7 @@ def api_asistencia_yo():
     u = current_user()
     data = parse_json()
     clase_id = to_int(data.get('clase_id'))
-    fecha = data.get('fecha') or date.today().strftime('%Y-%m-%d')
+    fecha = data.get('fecha') or _hoy_academy().strftime('%Y-%m-%d')
     # Seguridad: solo se puede marcar asistencia presentando el token del QR físico.
     if not data.get('qr_token') or data.get('qr_token') != QR_SECRET:
         return jsonify({'error': 'Debés escanear el QR del gimnasio para registrar tu asistencia.'}), 403
@@ -2588,7 +2596,7 @@ def api_asistencia_directo():
     u = current_user()
     data = parse_json()
     clase_id = to_int(data.get('clase_id'))
-    fecha = data.get('fecha') or date.today().strftime('%Y-%m-%d')
+    fecha = data.get('fecha') or _hoy_academy().strftime('%Y-%m-%d')
     if not clase_id:
         return jsonify({'error': 'Falta la clase'}), 400
     c = get_db().execute('SELECT * FROM classes WHERE id=?', (clase_id,)).fetchone()
@@ -2612,7 +2620,7 @@ def api_asistencia_desmarcar():
     clase_id = to_int(data.get('clase_id'))
     if not clase_id:
         return jsonify({'error': 'Falta la clase'}), 400
-    hoy = date.today().strftime('%Y-%m-%d')
+    hoy = _hoy_academy().strftime('%Y-%m-%d')
     db = get_db()
     ex = db.execute(
         'SELECT 1 FROM asistencia WHERE alumno_id=? AND clase_id=? AND fecha=?',
@@ -2630,7 +2638,7 @@ def api_asistencia_desmarcar():
 @app.route('/api/reporte')
 @role_required('admin', 'profesor')
 def api_reporte():
-    hoy = date.today()
+    hoy = _hoy_academy()
     mes = to_int(request.args.get('mes')) or hoy.month
     anio = to_int(request.args.get('anio')) or hoy.year
     pagos = get_db().execute(
@@ -2704,7 +2712,7 @@ def api_reporte():
 @app.route('/api/cumpleanios')
 @login_required
 def api_cumpleanios():
-    hoy = date.today()
+    hoy = _hoy_academy()
     rows = get_db().execute(
         "SELECT id, nombre, nacimiento FROM users "
         "WHERE role='alumno' AND activo=1 AND nacimiento IS NOT NULL AND nacimiento != ''"
@@ -2773,7 +2781,7 @@ def api_pausa_set():
     """El alumno activa una pausa temporal: no se le cobra ni cuenta como deudor."""
     u = current_user()
     data = parse_json()
-    desde = (data.get('desde') or '').strip() or date.today().strftime('%Y-%m-%d')
+    desde = (data.get('desde') or '').strip() or _hoy_academy().strftime('%Y-%m-%d')
     hasta = (data.get('hasta') or '').strip()
     if not hasta:
         return jsonify({'error': 'Indicá hasta qué día estás de pausa'}), 400
@@ -3012,7 +3020,7 @@ def api_videos_delete(vid):
 @role_required('admin', 'profesor')
 def api_estadisticas():
     u = current_user()
-    hoy = date.today()
+    hoy = _hoy_academy()
     total_alumnos = get_db().execute(
         "SELECT COUNT(*) AS n FROM users WHERE role='alumno' AND activo=1").fetchone()['n']
     ingresos_mes = get_db().execute(
@@ -3036,7 +3044,7 @@ def api_estadisticas():
 @app.route('/api/metricas_pagos')
 @role_required('admin', 'profesor')
 def api_metricas_pagos():
-    anio = to_int(request.args.get('anio')) or date.today().year
+    anio = to_int(request.args.get('anio')) or _hoy_academy().year
     db = get_db()
     total_alumnos = db.execute(
         "SELECT COUNT(*) AS n FROM users WHERE role='alumno' AND activo=1").fetchone()['n']
@@ -3360,7 +3368,7 @@ def api_alumno_grado(uid):
     cinturon = (data.get('cinturon') or '').strip()
     if not cinturon:
         return jsonify({'error': 'Elegí el cinturón'}), 400
-    fecha = (data.get('fecha') or date.today().strftime('%Y-%m-%d')).strip()
+    fecha = (data.get('fecha') or _hoy_academy().strftime('%Y-%m-%d')).strip()
     notas = (data.get('notas') or '').strip()
     me = current_user()
     db = get_db()
@@ -3665,7 +3673,7 @@ def api_mp_webhook():
             parts = ext.split('-')
             alumno_id = int(parts[1])
             now = datetime.now().strftime('%Y-%m-%d %H:%M')
-            hoy = date.today()
+            hoy = _hoy_academy()
             db = get_db()
             cur = db.execute(
                 'INSERT INTO avisos_pago(alumno_id, monto, mes, anio, nota, comprobante, estado, fecha) '
@@ -3781,7 +3789,7 @@ def api_push_subscribe():
 # ---------------------------------------------------------------------------
 
 def _semana_actual():
-    hoy = date.today()
+    hoy = _hoy_academy()
     lunes = hoy - timedelta(days=hoy.weekday())
     return lunes, lunes + timedelta(days=6)
 
@@ -4140,7 +4148,7 @@ def api_exportar_alumnos():
 @app.route('/api/exportar_pagos')
 @role_required('admin', 'profesor')
 def api_exportar_pagos():
-    anio = to_int(request.args.get('anio')) or date.today().year
+    anio = to_int(request.args.get('anio')) or _hoy_academy().year
     db = get_db()
     total_alumnos = db.execute(
         "SELECT COUNT(*) AS n FROM users WHERE role='alumno' AND activo=1").fetchone()['n']

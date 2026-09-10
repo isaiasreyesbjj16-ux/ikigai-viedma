@@ -882,7 +882,7 @@ async function videoTerminado(e) {
 function videoCardHTML(v, isStaff) {
   const beltCls = 'tag ' + (v.belt === 'Todos' ? 'alumno' : 'nogi');
   const visto = v.visto ? ' visto' : '';
-  const staffBtns = isStaff ? `<div class="post-views" id="views-${v.id}"></div>` : '';
+  const staffBtns = isStaff ? `<div class="post-views" id="views-${v.id}" hidden></div>` : '';
   const vistoBtn = isStaff || v.tipo === 'link'
     ? `<button class="post-btn${visto}" onclick="marcarVisto(${v.id}, this, ${v.tipo === 'link'})">✓ Visto</button>`
     : `<button class="post-btn${visto}" ${v.completado ? '' : 'disabled style=opacity:.5'} onclick="marcarVisto(${v.id}, this)">✓ Visto</button>
@@ -944,24 +944,23 @@ async function renderVideos(el) {
       renderVideos(el);
     });
     beltSel.addEventListener('change', () => renderVideos(el));
-    videos.forEach(v => cargarVistos(v.id));
   }
 }
 
-async function cargarVistos(vid) {
-  try {
-    const d = await api('/api/videos/' + vid + '/views');
-    const el = $('#views-' + vid);
-    if (!el) return;
-    el.innerHTML = d.vistos.length
-      ? '<div class="small" style="color:var(--muted)">👁 Vieron: ' + d.vistos.map(x => '<b>' + esc(x.nombre) + '</b>').join(', ') + '</div>'
-      : '<div class="small" style="color:var(--muted)">Todavía nadie lo vio.</div>';
-  } catch (e) {}
-}
-
-async function toggleVistos(vid) {
+function toggleVistos(vid) {
   const el = $('#views-' + vid);
-  if (el) el.hidden = !el.hidden;
+  if (!el) return;
+  if (!el.dataset.cargado) {
+    el.dataset.cargado = '1';
+    api('/api/videos/' + vid + '/views').then(d => {
+      el.innerHTML = (d.vistos && d.vistos.length)
+        ? '<div class="small" style="color:var(--muted)">👁 Vieron: ' + d.vistos.map(x => '<b>' + esc(x.nombre) + '</b>').join(', ') + '</div>'
+        : '<div class="small" style="color:var(--muted)">Todavía nadie lo vio.</div>';
+    }).catch(() => {
+      el.innerHTML = '<div class="small" style="color:var(--muted)">No se pudo cargar quién lo vio.</div>';
+    });
+  }
+  el.hidden = !el.hidden;
 }
 
 async function marcarVisto(vid, btn) {
