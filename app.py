@@ -1833,6 +1833,178 @@ def api_mi_familia():
 
 
 # ---------------------------------------------------------------------------
+# Control parental self-service: modo Padre / tutora del menor
+# ---------------------------------------------------------------------------
+
+def _mi_familia_resumen():
+    """Familia propia (solo si soy el titular) con detalle de los hijos/as vinculados."""
+    u = current_user()
+    fam_id, nombre, titular_id = familia_de(u['id'])
+    if not fam_id or titular_id != u['id']:
+        return None, []
+    db = get_db()
+    hijos = []
+    for r in db.execute(
+            """SELECT ux.*, fm.relacion FROM familia_miembros fm
+               JOIN users ux ON ux.id=fm.user_id
+               WHERE fm.familia_id=? AND fm.user_id<>? AND fm.relacion='hijo/a'
+               ORDER BY ux.nombre""", (fam_id, u['id'])).fetchall():
+        d = user_public(dict(r))
+        d['relacion'] = r['relacion'] or 'hijo/a'
+        if r['role'] == 'alumno':
+            d['cuota'] = cuota_status(dict(r))
+            d['asistencias'] = db.execute(
+                'SELECT COUNT(*) AS n FROM asistencia WHERE alumno_id=? AND presente=1', (r['id'],)).fetchone()['n']
+            d['ultima_fecha'] = db.execute(
+                'SELECT MAX(fecha) AS f FROM asistencia WHERE alumno_id=? AND presente=1', (r['id'],)).fetchone()['f']
+        hijos.append(d)
+    return {'id': fam_id, 'nombre': nombre}, hijos
+
+
+def _crear_grupo_familiar_si_hace_falta():
+    """Si el usuario no pertenece a ninguna familia, crea una con él/ella como titular."""
+    u = current_user()
+    if familia_de(u['id'])[0]:
+        return familia_de(u['id'])[0]
+    db = get_db()
+    cur = db.execute('INSERT INTO familias(nombre, titular_id, fecha) VALUES(?,?,?)',
+                     (u['nombre'] + ' y familia', u['id'],
+                      datetime.now().strftime('%Y-%m-%d %H:%M')))
+    fam_id = cur.lastrowid
+    db.execute('INSERT INTO familia_miembros(familia_id, user_id, relacion) VALUES(?,?,?)',
+               (fam_id, u['id'], 'titular'))
+    db.commit()
+    return fam_id
+
+
+@app.route('/api/mis_hijos')
+@role_required('alumno')
+def api_mis_hijos():
+    fam, hijos = _mi_familia_resumen()
+    return jsonify({'familia': fam, 'hijos': hijos})
+
+
+@app.route('/api/familia', methods=['POST'])
+@role_required('alumno')
+def api_familia_activar():
+    """Activa el 'modo Padre': me vuelvo titular de un grupo familiar."""
+    _crear_grupo_familiar_si_hace_falta()
+    fam, hijos = _mi_familia_resumen()
+    return jsonify({'ok': True, 'familia': fam, 'hijos': hijos})
+
+
+@app.route('/api/familia/hijos', methods=['POST'])
+@role_required('alumno')
+def api_familia_hijo_alta():
+    """Alta de una cuenta de menor (Kids/Juveniles) creada desde el perfil del padre."""
+    u = current_user()
+    data = parse_json()
+    username = (data.get('username') or '').strip()
+    password = data.get('password') or ''
+    nombre = (data.get('nombre') or '').strip()
+    if not username or not password or not nombre:
+        return jsonify({'error': 'Completa usuario, contrasena, nombre del menor y contrasena'}), 400
+    if len(password) < 4:
+        return jsonify({'error': 'La contrasena debe tener al menos 4 caracteres'}), 400
+    if get_db().execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
+        return jsonify({'error': 'Ese usuario ya existe. Si es la cuenta de tu hijo/a, usa "Vincular cuenta".'}), 400
+
+    categoria = data.get('categoria') or 'kids'
+    if categoria not in ('kids', 'juveniles'):
+        return jsonify({'error': 'Solo se pueden dar de alta menores (Kids/Juveniles) desde el perfil de un padre'}), 400
+    tel_tutor = (data.get('tel_tutor') or '').strip() or u['tel'] or u['tel_2'] or ''
+    if not tel_tutor:
+        return jsonify({'error': 'Cargá primero tu telefono en tu perfil para poder ser el tutor responsable.'}), 400
+    if not data.get('foto_ok'):
+        return jsonify({'error': 'Para menores (Kids/Juveniles) debe autorizar el mayor, padre, madre o tutor que las fotos del menor puedan exponerse.'}), 400
+    if not data.get('firma_tyc'):
+        return jsonify({'error': 'Firmá en los Términos y Condiciones para crear la cuenta del menor.'}), 400
+    if not data.get('firma_foto'):
+        return jsonify({'error': 'Para menores, el padre, madre o tutor debe firmar la autorización de fotos.'}), 400
+    firma_fecha = datetime.now().strftime('%d/%m/%Y %H:%M')
+
+    fam_id = _crear_grupo_familiar_si_hace_falta()
+    db = get_db()
+    try:
+        cur = db.execute(
+            """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, tel, nacimiento, medic_info, emergency_contact, tel_tutor, tel_2, direccion, dni, foto_ok, acepto_tyc, firma_tyc, firma_foto, firma_fecha, creado)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (username, generate_password_hash(password), 'alumno', nombre,
+             to_int(data.get('edad')), to_float(data.get('peso')),
+             data.get('cinturon') or 'Blanco', categoria,
+             data.get('gi_pref') or 'Ambas', None,
+             tel_tutor, (data.get('nacimiento') or '').strip() or None,
+             (data.get('medic_info') or '').strip() or None,
+             (data.get('emergency_contact') or '').strip() or None,
+             tel_tutor, None, None, (data.get('dni') or '').strip() or None,
+             1, datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+             data.get('firma_tyc'), data.get('firma_foto'), firma_fecha,
+             datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        db.commit()
+        new_id = cur.lastrowid
+    except dbadapter.IntegrityError:
+        return jsonify({'error': 'Ese usuario ya existe'}), 400
+    db.execute('INSERT OR IGNORE INTO familia_miembros(familia_id, user_id, relacion) VALUES(?,?,?)',
+               (fam_id, new_id, 'hijo/a'))
+    db.commit()
+    return jsonify({'ok': True, 'id': new_id})
+
+
+@app.route('/api/familia/vincular', methods=['POST'])
+@role_required('alumno')
+def api_familia_vincular():
+    """El padre vincula la cuenta YA CREADA de su hijo/a menor, validando el tel_tutor."""
+    u = current_user()
+    data = parse_json()
+    username = (data.get('username') or '').strip()
+    if not username:
+        return jsonify({'error': 'Ingresá el usuario de la cuenta del menor'}), 400
+    db = get_db()
+    h = db.execute('SELECT * FROM users WHERE username=? AND role=?', (username, 'alumno')).fetchone()
+    if not h:
+        return jsonify({'error': 'No existe un alumno con ese usuario'}), 404
+    if h['id'] == u['id']:
+        return jsonify({'error': 'Esa cuenta es tuya'}), 400
+    if h['categoria'] not in ('kids', 'juveniles'):
+        return jsonify({'error': 'Solo se pueden vincular cuentas de menores (Kids/Juveniles)'}), 400
+    mis_tels = {t for t in (u['tel'], u['tel_2']) if t}
+    if h['tel_tutor'] and h['tel_tutor'] not in mis_tels:
+        return jsonify({'error': 'Esa cuenta está a nombre de otro tutor. Pedile al profe/admin que la vincule.'}), 403
+    fam_id, _, titular_id = familia_de(u['id'])
+    if fam_id and titular_id != u['id']:
+        return jsonify({'error': 'Sos miembro de la familia de ' + ('otra persona') + '. Pedile al titular que agregue a tu hijo.'}), 403
+    if not fam_id:
+        fam_id = _crear_grupo_familiar_si_hace_falta()
+    try:
+        db.execute('INSERT INTO familia_miembros(familia_id, user_id, relacion) VALUES(?,?,?)',
+                   (fam_id, h['id'], 'hijo/a'))
+        db.commit()
+    except dbadapter.IntegrityError:
+        return jsonify({'error': 'Ese alumno ya está vinculado a tu grupo familiar'}), 400
+    return jsonify({'ok': True, 'id': h['id']})
+
+
+@app.route('/api/familia/hijos/<int:uid>', methods=['DELETE'])
+@role_required('alumno')
+def api_familia_hijo_quitar(uid):
+    u = current_user()
+    db = get_db()
+    fam_id, _, titular_id = familia_de(u['id'])
+    if not fam_id or titular_id != u['id']:
+        return jsonify({'error': 'No sos el titular del grupo familiar'}), 403
+    if uid == u['id']:
+        return jsonify({'error': 'No podés desvincularte solo de tu grupo'}), 400
+    ex = db.execute(
+        'SELECT 1 FROM familia_miembros WHERE familia_id=? AND user_id=? AND relacion="hijo/a"',
+        (fam_id, uid)).fetchone()
+    if not ex:
+        return jsonify({'error': 'Ese alumno no está vinculado como hijo/a'}), 404
+    db.execute('DELETE FROM familia_miembros WHERE familia_id=? AND user_id=?', (fam_id, uid))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
 # Diario de la academia
 # ---------------------------------------------------------------------------
 
