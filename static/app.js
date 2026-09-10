@@ -1431,7 +1431,7 @@ async function renderMiFamilia(box) {
         ${soyTitular ? `<button class="btn primary" onclick="abrirAltaHijo()">➕ Alta de hijo/a menor</button>
         <button class="btn ghost" onclick="vincularHijo()">🔗 Vincular cuenta existente</button>` : ''}
       </div>
-      <p class="small" style="color:var(--muted);margin-bottom:0;margin-top:6px">Si hay más de un miembro, los integrantes (excepto el titular) pagan con <b>${d.descuento}% de descuento</b>.</p>`;
+      <p class="small" style="color:var(--muted);margin-bottom:0;margin-top:6px">Con 2 o más integrantes, <b>todos</b> pagan con <b>${d.descuento}% de descuento</b>.</p>`;
   } catch (e) {
     box.innerHTML = '';
   }
@@ -2602,7 +2602,7 @@ async function renderConfig(el) {
         <div class="field"><label>Cuota mensual por defecto ($)</label><input id="cCuota" value="${esc(s.default_cuota)}"></div>
         <div class="field"><label>Día de vencimiento (día del mes)</label><input type="number" id="cDue" value="${esc(s.due_day)}"></div>
         <div class="field"><label>Recargo por pago con demora (%)</label><input type="number" id="cDemora" value="${esc(s.cargo_demora_pct ?? '10')}" placeholder="10"></div>
-        <div class="field"><label>Descuento familiar (%)</label><input type="number" id="cDescFamilia" value="${esc(s.desc_familiar ?? '10')}" placeholder="10"><small class="hint">Se aplica a los miembros del grupo familiar excepto el titular (desde el 2° miembro).</small></div>
+        <div class="field"><label>Descuento familiar (%)</label><input type="number" id="cDescFamilia" value="${esc(s.desc_familiar ?? '10')}" placeholder="10"><small class="hint">Se aplica a TODOS los integrantes del grupo familiar cuando hay 2 o más miembros.</small></div>
         <div class="field" style="grid-column:1/-1"><label>Link de pago en línea (ej: link de MercadoPago)</label><input id="cLink" value="${esc(s.pago_link || '')}" placeholder="https://link.mercadopago.com.ar/... (dejalo vacío para ocultar el botón de pago)"></div>
         <div class="field" style="grid-column:1/-1"><label>Alias o CVU para transferencia</label><input id="cAlias" value="${esc(s.pago_alias || '')}" placeholder="ej: academia.bjj.viedma (dejalo vacío para ocultarlo)"></div>
         <div class="field" style="grid-column:1/-1"><label>Access Token de MercadoPago (APP_USR-...) para el botón de pago en línea</label><input id="cMpTk" value="${esc(s.mp_access_token || '')}" placeholder="APP_USR-... (dejalo vacío para ocultar el botón de pago online)"></div>
@@ -3329,7 +3329,7 @@ async function renderFamilias(el) {
   d.familias.forEach(f => (f.miembros || []).forEach(m => usadas.add(m.id)));
   const libres = alumnos.filter(a => !usadas.has(a.id));
   el.innerHTML = `
-    ${secHeader('👨‍👩‍👧 Grupos familiares', 'Agrupá familiares para cobrar la cuota con descuento a partir del 2° miembro')}
+    ${secHeader('👨‍👩‍👧 Grupos familiares', 'Agrupá familiares para cobrar la cuota con descuento a todos los integrantes')}
     <div class="card">
       <div class="flex space-between" style="align-items:center;gap:8px;margin-bottom:8px">
         <div class="field" style="flex:1;margin:0"><label>Nombre del grupo</label><input id="famNombre" placeholder="Ej: Familia García"></div>
