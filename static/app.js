@@ -2894,7 +2894,10 @@ async function renderMuro(el) {
   el.innerHTML = `
     ${secHeader('📢 Muro de la academia')}
     <div class="card">
-      <textarea id="muroTexto" placeholder="¿Qué está pasando en la academia? Compartí algo..." style="width:100%;min-height:70px"></textarea>
+      <textarea id="muroTexto" placeholder="¿Qué está pasando? Si subís una lucha, contá de quién es: nombres, categoría, premios..." style="width:100%;min-height:70px"></textarea>
+      <div class="small" style="color:var(--muted);margin:6px 0">🎥 ¿Subís una lucha? Pegá el link de YouTube o elegí un archivo, y escribí de quién es la lucha arriba.</div>
+      <input type="text" id="muroLink" placeholder="Link de YouTube de la lucha (ej: https://youtube.com/watch?v=...)" style="width:100%;margin-bottom:6px">
+      <input type="file" id="muroVideo" accept="video/mp4,video/webm,video/ogg,video/quicktime" style="margin-bottom:6px">
       <input type="file" id="muroFoto" accept="image/*" style="margin-top:8px">
       <button class="btn primary btn-block mt" onclick="publicarMuro()">Publicar</button>
     </div>
@@ -2907,9 +2910,19 @@ async function renderMuro(el) {
             ${p.user_id === USER.id ? `<button class="btn ghost small" style="margin-left:auto" onclick="borrarMuro(${p.id})">🗑</button>` : ''}
           </div>
           ${p.texto ? `<p style="margin:8px 0">${esc(p.texto)}</p>` : ''}
+          ${p.video ? muroVideoHTML(p.video) : ''}
           ${(p.fotos || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${p.fotos.slice(0,4).map(f => `<img src="${esc(f)}" style="max-width:150px;max-height:150px;border-radius:8px;object-fit:cover">`).join('')}</div>` : ''}
         </div>`).join('') : '<div class="empty">Todavía no hay publicaciones.</div>'}
     </div>`;
+}
+
+function muroVideoHTML(v) {
+  if (v.tipo === 'link') {
+    const yid = youtubeId(v.url);
+    if (yid) return `<div class="post-media"><iframe src="https://www.youtube.com/embed/${yid}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>`;
+    return `<div class="post-media post-media-link"><a href="${esc(v.url)}" target="_blank" rel="noopener">🎬 ${esc(v.url)}</a></div>`;
+  }
+  return `<div class="post-media"><video controls preload="metadata" playsinline><source src="${esc(v.url)}"></video></div>`;
 }
 
 async function publicarMuro() {
@@ -2919,9 +2932,21 @@ async function publicarMuro() {
   if (file) {
     try { foto = await leerArchivoBase64(file); } catch (e) {}
   }
-  if (!texto && !foto) { toast('Escribí algo o subí una foto'); return; }
+  const link = $('#muroLink').value.trim();
+  const vfile = $('#muroVideo').files && $('#muroVideo').files[0];
+  let video = null;
+  if (link && vfile) { toast('Elegí una sola lucha: link de YouTube O archivo'); return; }
+  if (link) video = { link };
+  else if (vfile) {
+    try {
+      const dataUrl = await leerArchivoBase64(vfile);
+      if (!String(dataUrl).startsWith('data:video/')) { toast('El archivo debe ser un video'); return; }
+      video = { archivo: dataUrl };
+    } catch (e) { toast('No se pudo leer el video'); return; }
+  }
+  if (!texto && !foto && !video) { toast('Escribí algo, subí una foto o un video'); return; }
   try {
-    await api('/api/muro', { method: 'POST', body: { texto, fotos: foto ? [foto] : [] } });
+    await api('/api/muro', { method: 'POST', body: { texto, fotos: foto ? [foto] : [], video } });
     toast('Publicado ✓');
     renderMuro($('#sec-muro'));
   } catch (e) { toast(e.message); }

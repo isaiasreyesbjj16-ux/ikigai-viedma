@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import base64
 import json
 import secrets
@@ -251,6 +252,14 @@ CREATE TABLE IF NOT EXISTS muro (
 CREATE TABLE IF NOT EXISTS muro_fotos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     muro_id INTEGER REFERENCES muro(id) ON DELETE CASCADE,
+    data TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS muro_videos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    muro_id INTEGER REFERENCES muro(id) ON DELETE CASCADE,
+    tipo TEXT DEFAULT 'link',
+    url TEXT DEFAULT '',
     data TEXT DEFAULT ''
 );
 
@@ -3397,14 +3406,15 @@ def api_alumno_proximo_examen(uid):
 @app.route('/api/muro')
 @login_required
 def api_muro():
-    filas = get_db().execute(
+    db = get_db()
+    filas = db.execute(
         'SELECT m.*, us.nombre, us.cinturon, us.foto '
         'FROM muro m JOIN users us ON us.id=m.user_id ORDER BY m.id DESC LIMIT 100').fetchall()
-    db = get_db()
     out = []
     for r in filas:
         fotos = [f['data'] for f in db.execute('SELECT data FROM muro_fotos WHERE muro_id=?', (r['id'],)).fetchall()]
-        out.append({**dict(r), 'fotos': fotos})
+        v = db.execute('SELECT url, tipo FROM muro_videos WHERE muro_id=? ORDER BY id LIMIT 1', (r['id'],)).fetchone()
+        out.append({**dict(r), 'fotos': fotos, 'video': dict(v) if v else None})
     return jsonify({'muro': out})
 
 
@@ -3415,8 +3425,15 @@ def api_muro_crear():
     data = parse_json()
     texto = (data.get('texto') or '').strip()
     fotos = data.get('fotos') or []
-    if not texto and not fotos:
-        return jsonify({'error': 'Escribí algo o subí una foto'}), 400
+    video = data.get('video') or {}
+    link = (video.get('link') or '').strip()
+    archivo = video.get('archivo') or ''
+    if not texto and not fotos and not link and not archivo:
+        return jsonify({'error': 'Escribí algo, subí una foto o un video de una lucha'}), 400
+    if link and archivo:
+        return jsonify({'error': 'Elegí un solo video: link de YouTube O archivo'}), 400
+    if isinstance(archivo, str) and archivo and not archivo.startswith('data:video/'):
+        return jsonify({'error': 'Formato de video no válido'}), 400
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     db = get_db()
     cur = db.execute('INSERT INTO muro(user_id, texto, fecha) VALUES(?,?,?)', (u['id'], texto, now))
@@ -3424,6 +3441,12 @@ def api_muro_crear():
     for f in fotos[:5]:
         if isinstance(f, str) and f.startswith('data:image/'):
             db.execute('INSERT INTO muro_fotos(muro_id, data) VALUES(?,?)', (mid, f))
+    if link:
+        db.execute('INSERT INTO muro_videos(muro_id, tipo, url, data) VALUES(?,?,?,?)', (mid, 'link', link, ''))
+    elif archivo:
+        vid = db.execute('INSERT INTO muro_videos(muro_id, tipo, url, data) VALUES(?,?,?,?)',
+                         (mid, 'upload', '/api/muro_video/0', archivo)).lastrowid
+        db.execute('UPDATE muro_videos SET url=? WHERE id=?', ('/api/muro_video/%d' % vid, vid))
     db.commit()
     return jsonify({'ok': True, 'id': mid})
 
@@ -3433,9 +3456,26 @@ def api_muro_crear():
 def api_muro_borrar(muro_id):
     u = current_user()
     db = get_db()
+    db.execute('DELETE FROM muro_videos WHERE muro_id=?', (muro_id,))
     db.execute('DELETE FROM muro WHERE id=? AND user_id=?', (muro_id, u['id']))
     db.commit()
     return jsonify({'ok': True})
+
+
+@app.route('/api/muro_video/<int:muro_vid>')
+@login_required
+def api_muro_video(muro_vid):
+    r = get_db().execute('SELECT data FROM muro_videos WHERE id=?', (muro_vid,)).fetchone()
+    if not r or not r['data']:
+        return jsonify({'error': 'Video no encontrado'}), 404
+    m = re.match(r'^data:([^;]+);base64,(.+)$', r['data'], re.S)
+    if not m:
+        return jsonify({'error': 'Video dañado'}), 500
+    try:
+        raw = base64.b64decode(m.group(2))
+    except Exception:
+        return jsonify({'error': 'Video dañado'}), 500
+    return Response(raw, mimetype=m.group(1), headers={'Accept-Ranges': 'bytes'})
 
 
 # ---------------------------------------------------------------------------
