@@ -1386,25 +1386,131 @@ async function renderPerfil(el) {
           </div>`).join('')
         : '<div class="small" style="color:var(--muted)">Todavía no tenés grados registrados.</div>');
     }).catch(() => { const b = $('#misGrados'); if (b) b.textContent = '—'; });
-    api('/api/mi_familia').then(d => {
-      const box = $('#miFamiliaCard');
-      if (!box) return;
-      if (!d.familia) {
-        box.innerHTML = '';
-        return;
-      }
-      box.innerHTML = `
-        <div class="small mb">👨‍👩‍👧 Mi familia</div>
-        <div class="small" style="margin-bottom:8px"><b>${esc(d.familia.nombre)}</b> · ${d.familia.miembros.length} miembros</div>
-        ${d.familia.miembros.map(m => `
-          <div class="flex space-between" style="align-items:center;padding:6px 0;border-bottom:1px dashed var(--line)">
-            <span>${avatarHTML(m.foto, m.nombre, 'sm')} <b>${esc(m.nombre)}</b> ${m.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}
-              <span class="small" style="color:var(--muted)">· ${esc(m.relacion)}</span></span>
-            <span class="small">$${num(m.cuota_final)}/mes${m.descuento ? ' <span style="color:var(--good)">(-' + num(m.descuento) + ')</span>' : ''}</span>
-          </div>`).join('')}
-        <p class="small" style="color:var(--muted);margin-bottom:0">Si hay más de un miembro, los integrantes (excepto el titular) pagan con <b>${d.descuento}% de descuento</b>.</p>`;
-    }).catch(() => { const b = $('#miFamiliaCard'); if (b) b.innerHTML = ''; });
+    renderMiFamilia($('#miFamiliaCard'));
   }
+}
+
+async function renderMiFamilia(box) {
+  if (!box) return;
+  try {
+    const [d, hijos] = await Promise.all([api('/api/mi_familia'), api('/api/mis_hijos').catch(() => ({ familia: null, hijos: [] }))]);
+    if (!d.familia) {
+      box.innerHTML = `
+        <div class="small mb">👨‍👩‍👧 Plan familiar (modo Padre)</div>
+        <p class="small" style="color:var(--muted);margin:0">Si entrenás con tu hija/o menor, podés crear un grupo familiar y gestionar su cuenta desde tu perfil.</p>
+        <button class="btn primary btn-block mt" onclick="activarModoPadre()">🤝 Soy padre/madre: crear grupo</button>`;
+      return;
+    }
+    const soyTitular = d.familia.titular_id === USER.id;
+    box.innerHTML = `
+      <div class="small mb">👨‍👩‍👧 Mi familia</div>
+      <div class="small" style="margin-bottom:8px"><b>${esc(d.familia.nombre)}</b> · ${d.familia.miembros.length} miembro${d.familia.miembros.length === 1 ? '' : 's'}</div>
+      ${d.familia.miembros.map(m => `
+        <div class="flex space-between" style="align-items:center;padding:6px 0;border-bottom:1px dashed var(--line)">
+          <span>${avatarHTML(m.foto, m.nombre, 'sm')} <b>${esc(m.nombre)}</b> ${m.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}
+            <span class="small" style="color:var(--muted)">· ${esc(m.relacion)}</span></span>
+          <span class="small">$${num(m.cuota_final)}/mes${m.descuento ? ' <span style="color:var(--good)">(-' + num(m.descuento) + ')</span>' : ''}</span>
+        </div>`).join('')}
+      ${soyTitular && hijos.hijos && hijos.hijos.length ? `
+        <div class="small mb mt" style="font-weight:700">👶 Hijos/as a mi cargo</div>
+        ${hijos.hijos.map(h => `
+          <div style="padding:6px 0;border-bottom:1px dashed var(--line)">
+            <div class="flex space-between" style="align-items:center">
+              <span>${avatarHTML(h.foto, h.nombre, 'sm')} <b>${esc(h.nombre)}</b>
+                ${h.en_pausa ? '<span class="tag tag-pausa">⏸ En pausa</span>' : ''}
+                <span class="small" style="color:var(--muted)">· ${esc(catLabel(h.categoria))} · ${beltHTML(h.cinturon)}</span></span>
+              <button class="btn ghost small" onclick="quitarHijo(${h.id})" title="Desvincular">🗑</button>
+            </div>
+            <div class="small" style="margin-top:4px">
+              <span class="tag ${h.cuota ? (h.cuota.estado === 'al_dia' ? 'tag-al-dia' : h.cuota.estado === 'por_vencer' ? 'tag-por-vencer' : 'tag-deuda') : 'tag-al-dia'}">${h.cuota && h.cuota.estado === 'al_dia' ? '💰 Cuota al día' : h.cuota && h.cuota.estado === 'por_vencer' ? '💰 Cuota por vencer' : '💰 Debe la cuota'}</span>
+              <span class="tag tag-alumno">🥋 ${h.asistencias} clases</span>
+              ${h.ultima_fecha ? `<span style="color:var(--muted)">última: ${esc(h.ultima_fecha)}</span>` : ''}
+            </div>
+          </div>`).join('')}` : ''}
+      <div class="flex mt" style="gap:8px;flex-wrap:wrap">
+        ${soyTitular ? `<button class="btn primary" onclick="abrirAltaHijo()">➕ Alta de hijo/a menor</button>
+        <button class="btn ghost" onclick="vincularHijo()">🔗 Vincular cuenta existente</button>` : ''}
+      </div>
+      <p class="small" style="color:var(--muted);margin-bottom:0;margin-top:6px">Si hay más de un miembro, los integrantes (excepto el titular) pagan con <b>${d.descuento}% de descuento</b>.</p>`;
+  } catch (e) {
+    box.innerHTML = '';
+  }
+}
+
+async function activarModoPadre() {
+  try {
+    await api('/api/familia', { method: 'POST' });
+    toast('Grupo familiar creado 👨‍👩‍👧');
+    renderMiFamilia($('#miFamiliaCard'));
+  } catch (err) { toast(err.message); }
+}
+
+function abrirAltaHijo() {
+  openModal(`
+    <h3>👶 Alta de hijo/a menor</h3>
+    <form id="hijoForm" class="grid2">
+      <div class="field" style="grid-column:1/-1"><label>Nombre y apellido del menor</label><input id="hNombre" required placeholder="Ej: Martina Pérez"></div>
+      <div class="field"><label>Usuario (para que ingrese)</label><input id="hUsuario" required placeholder="Ej: martina2026"></div>
+      <div class="field"><label>Contraseña</label><input type="password" id="hPassword" required placeholder="Mínimo 4 caracteres"></div>
+      <div class="field"><label>Edad</label><input type="number" id="hEdad" required min="3" max="17"></div>
+      <div class="field"><label>Categoría</label><select id="hCat">
+        <option value="kids">Kids (niños/as)</option>
+        <option value="juveniles">Juveniles</option></select></div>
+      <div class="field"><label>Cinturón / Faixa</label><select id="hBelt">
+        ${BELTS_ADULT.map(b => `<option>${esc(b)}</option>`).join('')}</select></div>
+      <div class="field" style="grid-column:1/-1"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="hFotoOk" style="width:18px;height:18px">
+        <span>Autorizo como mayor/padre/madre que <b>las fotos de este/a menor puedan ser expuestas</b> (redes y muro). <span style="color:#ff9b8f">(obligatorio)</span></span></label></div>
+      <div class="field" style="grid-column:1/-1"><label>✍️ Firmá Términos y Condiciones (nombre del padre/madre)</label><input id="hFirmaTyC" required placeholder="Tu nombre y apellido"></div>
+      <div class="field" style="grid-column:1/-1"><label>✍️ Firmá autorización de fotos (nombre del padre/madre)</label><input id="hFirmaFoto" required placeholder="Tu nombre y apellido"></div>
+      <p class="small" style="grid-column:1/-1;color:var(--muted);margin:0">El teléfono del tutor responsable será el de tu perfil.</p>
+      <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Crear cuenta del menor</button></div>
+    </form>`);
+  const CATS = { kids: BELTS_KIDS, juveniles: BELTS_JUV };
+  $('#hCat').addEventListener('change', () => {
+    const opts = CATS[$('#hCat').value] || BELTS_ADULT;
+    $('#hBelt').innerHTML = opts.map(b => `<option>${esc(b)}</option>`).join('');
+  });
+  $('#hijoForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/familia/hijos', { method: 'POST', body: {
+        nombre: $('#hNombre').value.trim(), username: $('#hUsuario').value.trim(),
+        password: $('#hPassword').value, edad: +$('#hEdad').value,
+        categoria: $('#hCat').value, cinturon: $('#hBelt').value,
+        foto_ok: $('#hFotoOk').checked, firma_tyc: $('#hFirmaTyC').value.trim(),
+        firma_foto: $('#hFirmaFoto').value.trim() } });
+      closeModal(); toast('Cuenta del menor creada y vinculada ✓');
+      renderMiFamilia($('#miFamiliaCard'));
+    } catch (err) { toast(err.message); }
+  });
+}
+
+function vincularHijo() {
+  openModal(`
+    <h3>🔗 Vincular cuenta existente</h3>
+    <div class="small" style="color:var(--muted);margin-bottom:10px">Ingresá el <b>usuario</b> con el que tu hijo/a ya se registró (Kids/Juveniles). El teléfono del tutor de esa cuenta debe coincidir con el de tu perfil.</div>
+    <form id="vincForm">
+      <div class="field"><label>Usuario del menor</label><input id="vkUsuario" required placeholder="Ej: martina2026"></div>
+      <div class="field"><button class="btn primary btn-block" type="submit">Vincular</button></div>
+    </form>`);
+  $('#vincForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/familia/vincular', { method: 'POST', body: { username: $('#vkUsuario').value.trim() } });
+      closeModal(); toast('Cuenta vinculada ✓');
+      renderMiFamilia($('#miFamiliaCard'));
+    } catch (err) { toast(err.message); }
+  });
+}
+
+async function quitarHijo(uid) {
+  if (!confirm('¿Querés desvincular a este menor de tu grupo familiar?')) return;
+  try {
+    await api('/api/familia/hijos/' + uid, { method: 'DELETE' });
+    toast('Desvinculado ✓');
+    renderMiFamilia($('#miFamiliaCard'));
+  } catch (err) { toast(err.message); }
 }
 
 function instalarManual() {
