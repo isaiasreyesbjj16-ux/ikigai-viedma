@@ -3922,7 +3922,7 @@ def api_settings_get():
     keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_link', 'pago_alias',
             'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
             'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar',
-            'desc_familiar2', 'desc_familiar3', 'desc_familiar4']
+            'desc_familiar2', 'desc_familiar3', 'desc_familiar4', 'tz_offset']
     if u['role'] == 'admin':
         keys += ['academy_color']
     return jsonify({k: get_setting(k) for k in keys})
@@ -3935,7 +3935,7 @@ def api_settings_put():
     for k in ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'academy_color', 'pago_link', 'pago_alias',
               'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
               'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar',
-              'desc_familiar2', 'desc_familiar3', 'desc_familiar4']:
+              'desc_familiar2', 'desc_familiar3', 'desc_familiar4', 'tz_offset']:
         if k in data and data[k] is not None:
             set_setting(k, data[k])
     return jsonify({'ok': True})

@@ -87,6 +87,13 @@ function msgShow(el, text, ok) {
   el.className = 'msg ' + (ok ? 'ok' : 'error');
 }
 
+function fechaLocalDe(d) {
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return d.getFullYear() + '-' + mm + '-' + dd;
+}
+function fechaHoyLocal() { return fechaLocalDe(new Date()); }
+
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
@@ -1318,7 +1325,7 @@ async function renderPerfil(el) {
              <button class="btn primary btn-block" onclick="cancelarPausaMi()">✅ Terminar mi pausa</button>`
           : `<p class="small" style="color:var(--muted);margin-bottom:8px">¿Te vas de viaje o no vas a poder entrenar un tiempo? Activá una pausa y no se te cobra ni contás como deudor.</p>
              <div class="grid2" style="margin-bottom:8px">
-               <div class="field" style="margin:0"><label>Desde</label><input type="date" id="pausaDesde" value="${new Date().toISOString().slice(0, 10)}"></div>
+               <div class="field" style="margin:0"><label>Desde</label><input type="date" id="pausaDesde" value="${fechaHoyLocal()}"></div>
                <div class="field" style="margin:0"><label>Hasta</label><input type="date" id="pausaHasta" value=""></div>
              </div>
              <button class="btn primary btn-block" onclick="activarPausaMi()">⏸ Activar pausa</button>`}
@@ -2090,7 +2097,7 @@ async function editarFicha(id, nombre) {
       <div class="field"><label>🦴 Lesiones / operaciones</label><input id="fLes" value="${escv(a.medic_lesiones)}" placeholder="Ej: rodilla"></div>
       <div class="field" style="grid-column:1/-1"><label>Observaciones</label><textarea id="fObs" rows="3" placeholder="Cualquier otra cosa que debamos saber">${escv(a.medic_info)}</textarea></div>
       <div class="field"><label>📞 Contacto de emergencia</label><input id="fEmer" value="${escv(a.emergency_contact)}" placeholder="Nombre y teléfono"></div>
-      <div class="field" style="grid-column:1/-1"><label>Fecha de la ficha</label><input type="date" id="fFecha" value="${a.ficha_fecha ? esc(a.ficha_fecha) : new Date().toISOString().slice(0,10)}"></div>
+      <div class="field" style="grid-column:1/-1"><label>Fecha de la ficha</label><input type="date" id="fFecha" value="${a.ficha_fecha ? esc(a.ficha_fecha) : fechaHoyLocal()}"></div>
       <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">💾 Guardar ficha</button></div>
     </form>
     <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
@@ -2117,7 +2124,7 @@ async function verGrado(id, nombre) {
     <div class="small mb">Cinturón actual: ${beltHTML(a.cinturon)} · Próximo examen: <b>${a.proximo_examen ? esc(a.proximo_examen) : 'No agendado'}</b></div>
     <form id="gradoForm" class="grid2">
       <div class="field"><label>Nuevo cinturón</label><select id="gCinturon">${belts.map(b => `<option ${a.cinturon === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>
-      <div class="field"><label>Fecha del examen</label><input type="date" id="gFecha" value="${new Date().toISOString().slice(0, 10)}"></div>
+      <div class="field"><label>Fecha del examen</label><input type="date" id="gFecha" value="${fechaHoyLocal()}"></div>
       <div class="field" style="grid-column:1/-1"><label>Notas</label><input type="text" id="gNotas" placeholder="Ej: aprobó katas perfecto"></div>
       <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">✅ Registrar promoción</button></div>
     </form>
@@ -2263,7 +2270,7 @@ async function notificarDeuda(id) {
    ===================================================================== */
 async function renderAsistencia(el) {
   const [horarios, alumnos] = await Promise.all([api('/api/horarios'), api('/api/alumnos')]);
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaHoyLocal();
   el.innerHTML = `
     ${secHeader('Tomar asistencia')}
     <div class="card">
@@ -2477,7 +2484,7 @@ function formPlan(id) {
   const lunesISO = (() => {
     const dia = new Date();
     const diff = (dia.getDay() === 0 ? 6 : dia.getDay() - 1);
-    return new Date(dia.getTime() - diff * 86400000).toISOString().slice(0, 10);
+    return fechaLocalDe(new Date(dia.getTime() - diff * 86400000));
   })();
   openModal(`
     <h3>${esNuevo ? '➕ Crear plan del profe' : '✏️ Editar plan'}</h3>
@@ -2606,6 +2613,7 @@ async function renderConfig(el) {
         <div class="field"><label>Descuento familiar: 4 o más integrantes (%)</label><input type="number" id="cDescFam4" value="${esc(s.desc_familiar4 ?? '20')}" placeholder="20"><small class="hint">Con 2 o más integrantes, TODOS pagan con descuento. Cada cantidad de integrantes puede tener un % distinto y autónomamente puede quedar en 0 para no descontar.</small></div>
         <div class="field" style="grid-column:1/-1"><label>Link de pago en línea (ej: link de MercadoPago)</label><input id="cLink" value="${esc(s.pago_link || '')}" placeholder="https://link.mercadopago.com.ar/... (dejalo vacío para ocultar el botón de pago)"></div>
         <div class="field" style="grid-column:1/-1"><label>Alias o CVU para transferencia</label><input id="cAlias" value="${esc(s.pago_alias || '')}" placeholder="ej: academia.bjj.viedma (dejalo vacío para ocultarlo)"></div>
+        <div class="field" style="grid-column:1/-1"><label>Desplazamiento desde UTC (zona horaria de la academia)</label><input type="number" step="0.5" id="cTz" value="${esc(s.tz_offset ?? '-3')}" placeholder="-3"><small class="hint">Argentina: -3. Sirve para que el "hoy" no se cambie a la madrugada del día siguiente por la diferencia con UTC.</small></div>
         <div class="field" style="grid-column:1/-1"><label>Access Token de MercadoPago (APP_USR-...) para el botón de pago en línea</label><input id="cMpTk" value="${esc(s.mp_access_token || '')}" placeholder="APP_USR-... (dejalo vacío para ocultar el botón de pago online)"></div>
         <div class="field"><label>Número WhatsApp de la academia (con código país)</label><input id="cWp" value="${esc(s.wp_numero || '')}" placeholder="549299..."></div>
         <div class="field"><label>Logro de asistencias (cada cuántas avisar)</label><input type="number" id="cLogroAsist" value="${esc(s.logro_asist ?? '50')}"></div>
@@ -2646,7 +2654,7 @@ async function renderConfig(el) {
       await api('/api/settings', { method: 'PUT', body: {
         academy_name: $('#cNombre').value, academy_color: $('#cColor').value,
         academy_code: $('#cCodigo').value, default_cuota: $('#cCuota').value,
-        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, desc_familiar2: $('#cDescFam2').value, desc_familiar3: $('#cDescFam3').value, desc_familiar4: $('#cDescFam4').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value,
+        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, desc_familiar2: $('#cDescFam2').value, desc_familiar3: $('#cDescFam3').value, desc_familiar4: $('#cDescFam4').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value, tz_offset: $('#cTz').value,
         mp_access_token: $('#cMpTk').value, wp_numero: $('#cWp').value, logro_asist: $('#cLogroAsist').value, logro_videos: $('#cLogroVids').value, asis_min_examen: $('#cMinExamen').value } });
       toast('Configuración guardada ✓');
       if (location.reload) { /* color aplicado al recargar */ }
@@ -3300,7 +3308,7 @@ async function recPaso2(user) {
 async function renderDiario(el) {
   const d = await api('/api/diario').catch(() => ({ diario: [] }));
   const esStaff = USER.role === 'admin' || USER.role === 'profesor';
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = d.hoy || fechaHoyLocal();
   const yaHoy = d.diario[0] && d.diario[0].fecha === hoy;
   const entradas = d.diario.map(e => `
     <div class="post-card">
