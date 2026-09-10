@@ -1448,11 +1448,11 @@ async function activarModoPadre() {
 function abrirAltaHijo() {
   openModal(`
     <h3>👶 Alta de hijo/a menor</h3>
-    <form id="hijoForm" class="grid2">
-      <div class="field" style="grid-column:1/-1"><label>Nombre y apellido del menor</label><input id="hNombre" required placeholder="Ej: Martina Pérez"></div>
-      <div class="field"><label>Usuario (para que ingrese)</label><input id="hUsuario" required placeholder="Ej: martina2026"></div>
-      <div class="field"><label>Contraseña</label><input type="password" id="hPassword" required placeholder="Mínimo 4 caracteres"></div>
-      <div class="field"><label>Edad</label><input type="number" id="hEdad" required min="3" max="17"></div>
+    <form id="hijoForm" class="grid2" autocomplete="off">
+      <div class="field" style="grid-column:1/-1"><label>Nombre y apellido del menor</label><input id="hNombre" required placeholder="Ej: Martina Pérez" autocomplete="off"></div>
+      <div class="field"><label>Usuario (para que ingrese)</label><input id="hUsuario" required placeholder="Ej: martina2026" autocomplete="off"></div>
+      <div class="field"><label>Contraseña</label><input type="password" id="hPassword" required placeholder="Mínimo 4 caracteres" autocomplete="new-password"></div>
+      <div class="field"><label>Edad</label><input type="number" id="hEdad" required min="3" max="17" autocomplete="off"></div>
       <div class="field"><label>Categoría</label><select id="hCat">
         <option value="kids">Kids (niños/as)</option>
         <option value="juveniles">Juveniles</option></select></div>
@@ -1473,9 +1473,17 @@ function abrirAltaHijo() {
   });
   $('#hijoForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const nombre = $('#hNombre').value.trim();
+    const usuario = $('#hUsuario').value.trim();
+    if (nombre && window.USER && nombre.toLowerCase() === (window.USER.nombre || '').toLowerCase()) {
+      toast('⚠️ El campo "Nombre y apellido del menor" quedó con TU nombre (autocompletado por el navegador). Cambialo por el nombre del niño/a.'); return;
+    }
+    if (usuario && window.USER && usuario.toLowerCase() === (window.USER.username || '').toLowerCase()) {
+      toast('⚠️ El usuario quedó con el tuyo (autocompletado). Poné un usuario nuevo para el niño/a.'); return;
+    }
     try {
       await api('/api/familia/hijos', { method: 'POST', body: {
-        nombre: $('#hNombre').value.trim(), username: $('#hUsuario').value.trim(),
+        nombre: nombre, username: usuario,
         password: $('#hPassword').value, edad: +$('#hEdad').value,
         categoria: $('#hCat').value, cinturon: $('#hBelt').value,
         foto_ok: $('#hFotoOk').checked, firma_tyc: $('#hFirmaTyC').value.trim(),

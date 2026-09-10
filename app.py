@@ -1933,7 +1933,7 @@ def api_familia_hijo_alta():
              to_int(data.get('edad')), to_float(data.get('peso')),
              data.get('cinturon') or 'Blanco', categoria,
              data.get('gi_pref') or 'Ambas', None,
-             tel_tutor, (data.get('nacimiento') or '').strip() or None,
+             None, (data.get('nacimiento') or '').strip() or None,
              (data.get('medic_info') or '').strip() or None,
              (data.get('emergency_contact') or '').strip() or None,
              tel_tutor, None, None, (data.get('dni') or '').strip() or None,
