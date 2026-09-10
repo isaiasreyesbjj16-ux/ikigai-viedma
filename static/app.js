@@ -1431,7 +1431,7 @@ async function renderMiFamilia(box) {
         ${soyTitular ? `<button class="btn primary" onclick="abrirAltaHijo()">➕ Alta de hijo/a menor</button>
         <button class="btn ghost" onclick="vincularHijo()">🔗 Vincular cuenta existente</button>` : ''}
       </div>
-      <p class="small" style="color:var(--muted);margin-bottom:0;margin-top:6px">Con 2 o más integrantes, <b>todos</b> pagan con <b>${d.descuento}% de descuento</b>.</p>`;
+      <p class="small" style="color:var(--muted);margin-bottom:0;margin-top:6px">Descuento familiar: ${(d.escala || []).map(e => `<b>${e.integrantes} ${e.integrantes === 4 ? 'o más' : ''}:</b> ${e.pct}%`).join(' · ')}. Con 2 o más integrantes, <b>todos</b> pagan con descuento${soyTitular && d.descuento ? ` (este grupo: <b>${d.descuento}%</b>)` : ''}.</p>`;
   } catch (e) {
     box.innerHTML = '';
   }
@@ -2602,7 +2602,9 @@ async function renderConfig(el) {
         <div class="field"><label>Cuota mensual por defecto ($)</label><input id="cCuota" value="${esc(s.default_cuota)}"></div>
         <div class="field"><label>Día de vencimiento (día del mes)</label><input type="number" id="cDue" value="${esc(s.due_day)}"></div>
         <div class="field"><label>Recargo por pago con demora (%)</label><input type="number" id="cDemora" value="${esc(s.cargo_demora_pct ?? '10')}" placeholder="10"></div>
-        <div class="field"><label>Descuento familiar (%)</label><input type="number" id="cDescFamilia" value="${esc(s.desc_familiar ?? '10')}" placeholder="10"><small class="hint">Se aplica a TODOS los integrantes del grupo familiar cuando hay 2 o más miembros.</small></div>
+        <div class="field"><label>Descuento familiar: 2 integrantes (%)</label><input type="number" id="cDescFam2" value="${esc(s.desc_familiar2 ?? s.desc_familiar ?? '10')}" placeholder="10"></div>
+        <div class="field"><label>Descuento familiar: 3 integrantes (%)</label><input type="number" id="cDescFam3" value="${esc(s.desc_familiar3 ?? '15')}" placeholder="15"></div>
+        <div class="field"><label>Descuento familiar: 4 o más integrantes (%)</label><input type="number" id="cDescFam4" value="${esc(s.desc_familiar4 ?? '20')}" placeholder="20"><small class="hint">Con 2 o más integrantes, TODOS pagan con descuento. Cada cantidad de integrantes puede tener un % distinto y autónomamente puede quedar en 0 para no descontar.</small></div>
         <div class="field" style="grid-column:1/-1"><label>Link de pago en línea (ej: link de MercadoPago)</label><input id="cLink" value="${esc(s.pago_link || '')}" placeholder="https://link.mercadopago.com.ar/... (dejalo vacío para ocultar el botón de pago)"></div>
         <div class="field" style="grid-column:1/-1"><label>Alias o CVU para transferencia</label><input id="cAlias" value="${esc(s.pago_alias || '')}" placeholder="ej: academia.bjj.viedma (dejalo vacío para ocultarlo)"></div>
         <div class="field" style="grid-column:1/-1"><label>Access Token de MercadoPago (APP_USR-...) para el botón de pago en línea</label><input id="cMpTk" value="${esc(s.mp_access_token || '')}" placeholder="APP_USR-... (dejalo vacío para ocultar el botón de pago online)"></div>
@@ -2645,7 +2647,7 @@ async function renderConfig(el) {
       await api('/api/settings', { method: 'PUT', body: {
         academy_name: $('#cNombre').value, academy_color: $('#cColor').value,
         academy_code: $('#cCodigo').value, default_cuota: $('#cCuota').value,
-        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, desc_familiar: $('#cDescFamilia').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value,
+        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, desc_familiar2: $('#cDescFam2').value, desc_familiar3: $('#cDescFam3').value, desc_familiar4: $('#cDescFam4').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value,
         mp_access_token: $('#cMpTk').value, wp_numero: $('#cWp').value, logro_asist: $('#cLogroAsist').value, logro_videos: $('#cLogroVids').value, asis_min_examen: $('#cMinExamen').value } });
       toast('Configuración guardada ✓');
       if (location.reload) { /* color aplicado al recargar */ }

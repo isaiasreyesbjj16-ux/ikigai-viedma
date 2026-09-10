@@ -1658,14 +1658,38 @@ def api_alumno_ficha(uid):
 # Familias (grupos familiares)
 # ---------------------------------------------------------------------------
 
+def _descuento_familiar_pct(total_miembros):
+    """Porcentaje de descuento familiar segun la cantidad de integrantes:
+    2 -> desc_familiar2, 3 -> desc_familiar3, 4 o mas -> desc_familiar4."""
+    d2 = to_float(get_setting('desc_familiar2', '10')) or 0
+    d3 = to_float(get_setting('desc_familiar3', '15')) or 0
+    d4 = to_float(get_setting('desc_familiar4', '20')) or 0
+    if total_miembros >= 4:
+        return d4
+    if total_miembros == 3:
+        return d3
+    if total_miembros == 2:
+        return d2
+    return 0
+
+
+def _escala_descuento():
+    """Escala de descuentos a mostrar en la UI (2, 3, 4 o mas integrantes)."""
+    return [
+        {'integrantes': 2, 'pct': to_float(get_setting('desc_familiar2', '10')) or 0},
+        {'integrantes': 3, 'pct': to_float(get_setting('desc_familiar3', '15')) or 0},
+        {'integrantes': 4, 'pct': to_float(get_setting('desc_familiar4', '20')) or 0},
+    ]
+
+
 def familia_cuota(miembro, total_miembros):
-    """Cuota de un miembro aplicando el descuento familiar a TODOS los integrantes
-    cuando el grupo tiene mas de un miembro. Descuento en settings: desc_familiar (%)."""
-    pct = to_float(get_setting('desc_familiar', '10')) or 0
+    """Cuota de un miembro aplicando el descuento familiar a TODOS los integrantes.
+    El porcentaje depende de cuantos integrantes tiene el grupo (2, 3, 4+)."""
+    pct = _descuento_familiar_pct(total_miembros)
     base = miembro.get('cuota_mensual') or 0
     desc = 0
     cuota_final = base
-    if total_miembros > 1 and pct > 0:
+    if pct > 0:
         desc = round(base * pct / 100)
         cuota_final = base - desc
     return base, desc, cuota_final
@@ -1811,7 +1835,7 @@ def api_mi_familia():
     fam_id, nombre, titular_id = familia_de(u['id'])
     db = get_db()
     if not fam_id:
-        return jsonify({'familia': None, 'descuento': to_float(get_setting('desc_familiar', '10')) or 0})
+        return jsonify({'familia': None, 'descuento': 0, 'escala': _escala_descuento()})
     miem = db.execute(
         """SELECT u.*, fm.relacion,
                   (CASE WHEN f.titular_id=u.id THEN 1 ELSE 0 END) AS es_titular
@@ -1826,10 +1850,10 @@ def api_mi_familia():
                       'foto': m['foto'], 'relacion': m['relacion'],
                       'es_titular': bool(m['es_titular']), 'cuota': base,
                       'descuento': desc, 'cuota_final': final})
-    descto = to_float(get_setting('desc_familiar', '10')) or 0
+    descto = _descuento_familiar_pct(len(miem))
     return jsonify({'familia': {'id': fam_id, 'nombre': nombre, 'titular_id': titular_id,
                                 'miembros': lista},
-                    'descuento': descto})
+                    'descuento': descto, 'escala': _escala_descuento()})
 
 
 # ---------------------------------------------------------------------------
@@ -3849,7 +3873,8 @@ def api_settings_get():
     u = current_user()
     keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_link', 'pago_alias',
             'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
-            'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar']
+            'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar',
+            'desc_familiar2', 'desc_familiar3', 'desc_familiar4']
     if u['role'] == 'admin':
         keys += ['academy_color']
     return jsonify({k: get_setting(k) for k in keys})
@@ -3861,7 +3886,8 @@ def api_settings_put():
     data = parse_json()
     for k in ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'academy_color', 'pago_link', 'pago_alias',
               'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
-              'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar']:
+              'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar',
+              'desc_familiar2', 'desc_familiar3', 'desc_familiar4']:
         if k in data and data[k] is not None:
             set_setting(k, data[k])
     return jsonify({'ok': True})
