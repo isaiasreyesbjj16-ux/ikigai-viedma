@@ -1014,7 +1014,7 @@ function subirVideo() {
         const d = await res.json();
         if (!res.ok) throw new Error(d.error || 'Error al subir');
       } else {
-        await api('/api/videos', { method: 'POST', body: { titulo, descripcion, belt, categoria, url: link } });
+        await api('/api/videos', { method: 'POST', body: { titulo, descripcion: desc, belt, categoria, url: link } });
       }
       closeModal(); toast('Video publicado ✓');
       renderVideos($('#sec-videos'));
