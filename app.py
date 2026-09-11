@@ -398,9 +398,13 @@ def init_db():
                      ('medic_enfermedades', 'TEXT'), ('medic_alergias', 'TEXT'), ('medic_medicacion', 'TEXT'),
                      ('medic_lesiones', 'TEXT'), ('ficha_fecha', 'TEXT'),
                      ('firma_tyc', 'TEXT'), ('firma_foto', 'TEXT'), ('firma_fecha', 'TEXT'),
-                     ('pausa_desde', 'TEXT'), ('pausa_hasta', 'TEXT'), ('beca', 'INTEGER')]:
+                     ('pausa_desde', 'TEXT'), ('pausa_hasta', 'TEXT'), ('beca', 'INTEGER DEFAULT 0')]:
         if col not in cols:
             c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
+    try:
+        c.execute('UPDATE users SET beca=0 WHERE beca IS NULL')
+    except Exception:
+        pass
     if DB_MODE == 'postgres':
         ev_cols = [r[0] for r in c.execute(
             "SELECT column_name AS name FROM information_schema.columns "
@@ -960,7 +964,10 @@ def cuota_status(alumno):
         'SELECT * FROM pagos WHERE alumno_id=? AND mes=? AND anio=? ORDER BY id DESC LIMIT 1',
         (alumno['id'], hoy.month, hoy.year)).fetchone()
     due_day = to_int(get_setting('due_day', '10')) or 10
-    beca = int(alumno.get('beca', 0)) if hasattr(alumno, 'get') else int(alumno['beca'] or 0)
+    try:
+        beca = int(alumno['beca'] or 0)
+    except (KeyError, IndexError, TypeError):
+        beca = 0
     if beca:
         return {
             'mes': hoy.month,
@@ -1035,7 +1042,10 @@ def en_pausa(alumno, fecha=None):
 
 def dias_deuda(alumno):
     hoy = _hoy_academy()
-    beca = int(alumno.get('beca', 0)) if hasattr(alumno, 'get') else int(alumno['beca'] or 0)
+    try:
+        beca = int(alumno['beca'] or 0)
+    except (KeyError, IndexError, TypeError):
+        beca = 0
     if beca:
         return 0
     pago = get_db().execute(
@@ -4398,7 +4408,8 @@ def api_exportar_pagos():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)),
             debug=os.environ.get('FLASK_DEBUG', '0') == '1')
