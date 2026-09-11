@@ -628,11 +628,14 @@ def send_push(user_id, titulo, mensaje, extra=None, _diag=None):
             for s in subs:
                 try:
                     ep = s['endpoint']
-                    es_apple = 'api.push.apple.com' in ep or 'api.sandbox.push.apple.com' in ep
+                    # Apple: la Web Push de Safari/iOS usa web.push.apple.com (PWA instalada).
+                    # Los endpoints /3/device/ (APNs nativo) son raros en un sitio web: igual los cubrimos.
                     vclaims = {'sub': 'mailto:admin@academia.local'}
                     extra_headers = {}
-                    if es_apple:
-                        vclaims['aud'] = ep.split('/3/device/')[0] if '/3/device/' in ep else ep.rsplit('/', 1)[0]
+                    if 'web.push.apple.com' in ep:
+                        vclaims['aud'] = 'https://web.push.apple.com'
+                    elif '/3/device/' in ep and ('api.push.apple.com' in ep or 'api.sandbox.push.apple.com' in ep):
+                        vclaims['aud'] = ep.split('/3/device/')[0]
                         extra_headers = {'apns-push-type': 'alert', 'apns-priority': '10'}
                     webpush(
                         subscription_info={
@@ -641,15 +644,21 @@ def send_push(user_id, titulo, mensaje, extra=None, _diag=None):
                         data=payload,
                         vapid_private_key=tmpf.name,
                         vapid_claims=vclaims,
-                        headers=extra_headers)
+                        headers=extra_headers or None)
                     enviados += 1
                 except WebPushException as wp:
                     # Suscripciones vencidas/invalidas (410, 404, 403): borrarlas
                     status = getattr(wp, 'response', None)
                     code = status.status_code if status is not None else None
                     if _diag is not None and not _diag.get('error'):
-                        _diag['error'] = 'WebPush HTTP %s: %s' % (
-                            code, getattr(wp, 'message', '') or wp)
+                        host = '?'
+                        try:
+                            from urllib.parse import urlparse
+                            host = urlparse(ep).netloc
+                        except Exception:
+                            pass
+                        _diag['error'] = 'WebPush HTTP %s a %s: %s' % (
+                            code, host, getattr(wp, 'message', '') or wp)
                     if code in (404, 410, 403):
                         try:
                             get_db().execute('DELETE FROM push_subs WHERE id=?', (s['id'],))
@@ -1335,6 +1344,7 @@ def api_register():
     if menor and not firma_foto:
         return jsonify({'error': 'Para menores (Kids/Juveniles) el padre, madre o tutor debe firmar la autorización de fotos.'}), 400
     firma_fecha = datetime.now().strftime('%d/%m/%Y %H:%M') if (firma_tyc or firma_foto) else None
+    cuota_reg = to_float(data.get('cuota_mensual')) if role == 'alumno' else None
 
     try:
         get_db().execute(
@@ -1344,7 +1354,7 @@ def api_register():
              to_int(data.get('edad')), to_float(data.get('peso')),
              data.get('cinturon'), categoria,
              data.get('gi_pref') or 'Ambas',
-             to_float(data.get('cuota_mensual')) if role == 'alumno' else None,
+             cuota_reg,
              (data.get('tel') or '').strip() or None,
              (data.get('nacimiento') or '').strip() or None,
              (data.get('medic_info') or '').strip() or None,
@@ -1364,7 +1374,7 @@ def api_register():
         return jsonify({'error': 'Ese usuario ya existe'}), 400
 
     new_id = get_db().execute('SELECT last_insert_rowid() AS id').fetchone()['id']
-    if role == 'alumno' and not data.get('cuota_mensual'):
+    if role == 'alumno' and not cuota_reg:
         cuota = to_float(get_setting('default_cuota', '15000')) or 15000
         get_db().execute('UPDATE users SET cuota_mensual=? WHERE id=?', (cuota, new_id))
         get_db().commit()
@@ -2255,8 +2265,9 @@ def api_notify_deuda():
         if not alumno:
             continue
         st = cuota_status(alumno)
+        monto_txt = st['cuota'] if st['cuota'] else 0
         notify(aid, 'Recordatorio de deuda',
-               f'{who} te recuerda que tu cuota de {st["mes"]}/{st["anio"]} ({st["cuota"]:,.0f} pesos) esta pendiente.'.replace(',', '.'),
+               f'{who} te recuerda que tu cuota de {st["mes"]}/{st["anio"]} ({monto_txt:,.0f} pesos) esta pendiente.'.replace(',', '.'),
                'deuda')
     return jsonify({'ok': True, 'avisados': len(ids)})
 
