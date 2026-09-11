@@ -2093,6 +2093,7 @@ async function renderAlumnos(el) {
         <button class="btn ghost small" onclick="verNotas(${a.id},'${esc(a.nombre)}')">📝</button>
         <button class="btn good small" onclick="notificarDeuda(${a.id})">🔔</button>
         ${USER.role !== 'alumno' ? `<button class="btn ${a.activo ? 'bad' : 'good'} small" onclick="toggleActivo(${a.id},${a.activo ? 1 : 0})">${a.activo ? '🚫 Desactivar' : '✅ Reactivar'}</button>` : ''}
+        ${USER.role === 'admin' ? `<button class="btn ghost small" title="Convertir en profesor" onclick="hacerProfesor(${a.id},'${esc(a.nombre)}')">👨‍🏫</button>` : ''}
         ${USER.role === 'admin' ? `<button class="btn ghost small" onclick="reiniciarPassword(${a.id},'${esc(a.nombre)}')">🔑</button>` : ''}
         ${USER.role === 'admin' ? `<button class="btn bad small" onclick="eliminarAlumno(${a.id},'${esc(a.nombre)}')">🗑</button>` : ''}
       </div>
@@ -2336,6 +2337,16 @@ async function eliminarAlumno(id, nombre) {
   await api('/api/alumnos/' + id, { method: 'DELETE' }).catch(e => toast(e.message));
   toast('Alumno eliminado');
   renderAlumnos($('#sec-alumnos'));
+}
+
+async function hacerProfesor(id, nombre) {
+  if (!confirm(`¿Convertir a ${nombre} en profesor? Conserva su usuario, contraseña, pagos y asistencias; deja de contar como alumno.`)) return;
+  try {
+    await api('/api/alumnos/' + id + '/profesor', { method: 'POST' });
+    toast(`✅ ${nombre} ahora es profesor`);
+    renderAlumnos($('#sec-alumnos')).catch(() => {});
+    renderProfesores($('#sec-profesores')).catch(() => {});
+  } catch (e) { toast(e.message); }
 }
 
 async function notificarDeuda(id) {
@@ -2621,8 +2632,19 @@ async function borrarPlan(id) {
    ===================================================================== */
 async function renderProfesores(el) {
   const d = await api('/api/profesores');
+  const alum = USER.role === 'admin' ? (await api('/api/alumnos').catch(() => ({ alumnos: [] }))).alumnos : [];
   el.innerHTML = `
     ${secHeader('Profesores')}
+    ${USER.role === 'admin' ? `
+    <div class="card">
+      <p class="small">⚡ Convertí un alumno existente en profesor <b>sin crearle otra cuenta</b> (conserva usuario, contraseña y datos):</p>
+      <div class="flex" style="gap:8px;flex-wrap:wrap">
+        <select id="promoSelect" class="search" style="max-width:none;flex:1;min-width:220px">
+          ${alum.map(a => `<option value="${a.id}">${esc(a.nombre)} — @${esc(a.username)}</option>`).join('') || '<option value="" disabled>No hay alumnos activos</option>'}
+        </select>
+        <button class="btn primary" onclick="promoverProfesor()" ${alum.length ? '' : 'disabled'}>Convertir en profesor</button>
+      </div>
+    </div>` : ''}
     <div class="card">
       <p class="small">Los profesores se crean su propia cuenta con el <b>código de la academia</b> (lo encontrás en Configuración), o los podés crear vos acá.</p>
       <button class="btn primary" onclick="formProfesor()">+ Crear profesor</button>
@@ -2637,6 +2659,15 @@ async function renderProfesores(el) {
           <td><button class="btn bad small" onclick="eliminarProfesor(${p.id},'${esc(p.nombre)}')">🗑 Eliminar</button></td>
         </tr>`).join('') : '<tr><td colspan="7" class="empty">Todavía no hay profesores.</td></tr>'}
     </table></div></div>`;
+}
+
+function promoverProfesor() {
+  const sel = $('#promoSelect');
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt || !opt.value) { toast('No hay alumnos para convertir'); return; }
+  const id = parseInt(opt.value, 10);
+  const nombre = opt.textContent.replace(/ — @.*$/, '');
+  hacerProfesor(id, nombre);
 }
 
 async function formProfesor() {
