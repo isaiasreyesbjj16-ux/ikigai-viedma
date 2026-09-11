@@ -1674,6 +1674,21 @@ def api_profesores_delete(uid):
     return jsonify({'ok': True})
 
 
+@app.route('/api/alumnos/<int:uid>/profesor', methods=['POST'])
+@role_required('admin')
+def api_alumnos_promover(uid):
+    u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
+    if not u:
+        return jsonify({'error': 'Alumno no encontrado'}), 404
+    get_db().execute(
+        """UPDATE users SET role='profesor', activo=1,
+            categoria=COALESCE(NULLIF(TRIM(categoria), ''), 'adulto'),
+            gi_pref=COALESCE(NULLIF(TRIM(gi_pref), ''), 'Ambas')
+           WHERE id=?""", (uid,))
+    get_db().commit()
+    return jsonify({'ok': True, 'nombre': u['nombre']})
+
+
 @app.route('/api/alumnos/<int:uid>/notas', methods=['PUT'])
 @role_required('admin', 'profesor')
 def api_alumno_notas(uid):
