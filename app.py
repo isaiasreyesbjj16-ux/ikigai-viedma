@@ -740,7 +740,10 @@ def aviso_cuotas_automatico():
                 pass
         set_setting('aviso_cuota_%d_%d' % (hoy.year, hoy.month), '1')
         return enviados
-    except Exception:
+    except Exception as e:
+        import traceback as _tb
+        print('AVISO_CUOTA_ERROR:', e)
+        _tb.print_exc()
         return 0
 
 
@@ -771,7 +774,10 @@ def aviso_eventos_hoy():
             db.execute('UPDATE eventos SET recordado=1 WHERE id=?', (e['id'],))
             db.commit()
         return enviados
-    except Exception:
+    except Exception as e:
+        import traceback as _tb
+        print('AVISO_EVENTOS_ERROR:', e)
+        _tb.print_exc()
         return 0
 
 
@@ -808,7 +814,10 @@ def aviso_renovacion():
                     pass
             set_setting(key, '1')
         return enviados
-    except Exception:
+    except Exception as e:
+        import traceback as _tb
+        print('AVISO_RENOVACION_ERROR:', e)
+        _tb.print_exc()
         return 0
 
 
@@ -953,6 +962,12 @@ def _avisos_periodicos():
                 aviso_cuotas_automatico()
                 aviso_eventos_hoy()
                 aviso_renovacion()
+                # Si algun aviso fallo a mitad, su transaccion quedo abortada
+                # (Postgres). Dejar la conexion sana para el resto del request.
+                try:
+                    get_db().execute('ROLLBACK')
+                except Exception:
+                    pass
         except Exception:
             pass
 
