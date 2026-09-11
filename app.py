@@ -1966,6 +1966,15 @@ def api_familia_hijo_alta():
     if get_db().execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
         return jsonify({'error': 'Ese usuario ya existe. Si es la cuenta de tu hijo/a, usa "Vincular cuenta".'}), 400
 
+    nacimiento = (data.get('nacimiento') or '').strip()
+    if not nacimiento:
+        return jsonify({'error': 'La fecha de nacimiento es obligatoria al crear el perfil del menor.'}), 400
+    try:
+        if datetime.strptime(nacimiento, '%Y-%m-%d').date() >= _hoy_academy():
+            return jsonify({'error': 'La fecha de nacimiento no puede ser hoy ni del futuro.'}), 400
+    except ValueError:
+        return jsonify({'error': 'Fecha de nacimiento inválida (formato AAAA-MM-DD).'}), 400
+
     categoria = data.get('categoria') or 'kids'
     if categoria not in ('kids', 'juveniles'):
         return jsonify({'error': 'Solo se pueden dar de alta menores (Kids/Juveniles) desde el perfil de un padre'}), 400
@@ -1981,6 +1990,7 @@ def api_familia_hijo_alta():
     firma_fecha = datetime.now().strftime('%d/%m/%Y %H:%M')
 
     fam_id = _crear_grupo_familiar_si_hace_falta()
+    cuota_menor = to_float(get_setting('default_cuota', '15000')) or 15000
     db = get_db()
     try:
         cur = db.execute(
@@ -1989,8 +1999,8 @@ def api_familia_hijo_alta():
             (username, generate_password_hash(password), 'alumno', nombre,
              to_int(data.get('edad')), to_float(data.get('peso')),
              data.get('cinturon') or 'Blanco', categoria,
-             data.get('gi_pref') or 'Ambas', None,
-             None, (data.get('nacimiento') or '').strip() or None,
+             data.get('gi_pref') or 'Ambas', cuota_menor,
+             None, nacimiento,
              (data.get('medic_info') or '').strip() or None,
              (data.get('emergency_contact') or '').strip() or None,
              tel_tutor, None, None, (data.get('dni') or '').strip() or None,
