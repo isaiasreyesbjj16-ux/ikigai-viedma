@@ -950,7 +950,7 @@ function videoCardHTML(v, isStaff) {
     <div class="post-actions">
       ${vistoBtn}
       <span class="post-count">👁 ${v.vistas} visto${v.vistas === 1 ? '' : 's'}</span>
-      ${isStaff ? `<button class="post-btn" onclick="toggleVistos(${v.id})">Quién lo vio</button>` : ''}
+      ${isStaff ? `<button class="post-btn" onclick="toggleVistos(${v.id}, this)">Quién lo vio</button>` : ''}
     </div>
     <div class="post-caption">
       <b>${esc(v.titulo)}</b>${v.descripcion ? '<div>' + esc(v.descripcion) + '</div>' : ''}
@@ -997,8 +997,8 @@ async function renderVideos(el) {
   }
 }
 
-function toggleVistos(vid) {
-  const el = $('#views-' + vid);
+function toggleVistos(vid, btn) {
+  const el = (btn ? btn.closest('.post-card').querySelector('#views-' + vid) : $('#views-' + vid));
   if (!el) return;
   if (!el.dataset.cargado) {
     el.dataset.cargado = '1';
@@ -1957,24 +1957,25 @@ async function renderMisPagos(el) {
   const [me, pagos] = await Promise.all([api('/api/me'), api('/api/mis_pagos')]);
   const c = me.cuota || {};
   const estado = c.estado;
-  const cls = estado === 'al_dia' || estado === 'becado' ? 'tag-al-dia' : estado === 'por_vencer' ? 'tag-por-vencer' : 'tag-deuda';
-  const lbl = estado === 'al_dia' ? 'Al día ✓' : estado === 'becado' ? '🎖 Becado' : estado === 'por_vencer' ? 'Por vencer' : 'Debe la cuota';
+  const cls = estado === 'al_dia' || estado === 'becado' || estado === 'profesor' ? 'tag-al-dia' : estado === 'por_vencer' ? 'tag-por-vencer' : 'tag-deuda';
+  const lbl = estado === 'al_dia' ? 'Al día ✓' : estado === 'becado' ? '🎖 Becado' : estado === 'profesor' ? '🧑🏫 Profesor' : estado === 'por_vencer' ? 'Por vencer' : 'Debe la cuota';
   const aviso = pagos.aviso_pendiente;
   const becado = estado === 'becado';
+  const exento = becado || estado === 'profesor';
   el.innerHTML = `
     ${secHeader('Mi estado de cuenta')}
     <div class="card">
       <div class="flex space-between">
         <div>
-          <h3 style="margin:0">${becado ? '🎖 Estás becado' : 'Cuota de ' + c.mes + '/' + c.anio}</h3>
-          <p class="small">${becado ? 'No pagás cuota mensual: la academia te cubre la inscripción. No necesitás mandar comprobantes.' : `Tu cuota mensual es <b>$${num(c.cuota)}</b> · se considera paga hasta el día ${c.due_day} del mes${c.cargo_demora_pct ? ` · <b style="color:var(--warn)">si pagás después, se suma un ${c.cargo_demora_pct}% de recargo</b>` : ''}.`}</p>
+          <h3 style="margin:0">${exento ? (estado === 'profesor' ? '🧑🏫 Estás registrado como Profesor' : '🎖 Estás becado') : 'Cuota de ' + c.mes + '/' + c.anio}</h3>
+          <p class="small">${exento ? (estado === 'profesor' ? 'Los profesores no pagan cuota mensual. No necesitás mandar comprobantes.' : 'No pagás cuota mensual: la academia te cubre la inscripción. No necesitás mandar comprobantes.') : `Tu cuota mensual es <b>$${num(c.cuota)}</b> · se considera paga hasta el día ${c.due_day} del mes${c.cargo_demora_pct ? ` · <b style="color:var(--warn)">si pagás después, se suma un ${c.cargo_demora_pct}% de recargo</b>` : ''}.`}</p>
         </div>
         <div class="tag ${cls}" style="font-size:14px;padding:6px 14px">${lbl}</div>
       </div>
-      ${becado ? '' : `<p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_alias ? ' por transferencia al alias/CVU de la academia' : ' en la academia'} y <b>sí o sí mandá el comprobante de pago</b>: sin comprobante, el pago no se confirma.</p>`}
-      ${aviso ? `<p class="small mt" style="color:var(--warn)">⏳ Comprobante de ${aviso.mes}/${aviso.anio} enviado. Esperá la confirmación.</p>` : ''}
-      ${!becado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
-      ${!becado && me.mp_habilitado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" style="background:linear-gradient(90deg,#00c3ff,#0aa2e0);border:none" onclick="pagarMercadoPago()">💳 Pagar con MercadoPago</button>` : ''}
+      ${exento ? '' : `<p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_alias ? ' por transferencia al alias/CVU de la academia' : ' en la academia'} y <b>sí o sí mandá el comprobante de pago</b>: sin comprobante, el pago no se confirma.</p>`}
+      ${aviso && !exento ? `<p class="small mt" style="color:var(--warn)">⏳ Comprobante de ${aviso.mes}/${aviso.anio} enviado. Esperá la confirmación.</p>` : ''}
+      ${!exento && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
+      ${!exento && me.mp_habilitado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" style="background:linear-gradient(90deg,#00c3ff,#0aa2e0);border:none" onclick="pagarMercadoPago()">💳 Pagar con MercadoPago</button>` : ''}
     </div>
     ${me.pago_alias ? `
     <div class="card">
@@ -2079,10 +2080,10 @@ async function renderAlumnos(el) {
     const lbl = c.estado === 'al_dia' ? 'Al día' : c.estado === 'por_vencer' ? 'Por vencer' : 'Debe ' + c.mes + '/' + c.anio;
     return `<div class="alum-card" data-q="${esc((a.nombre + ' ' + (a.cinturon || '')).toLowerCase())}">
       ${avatarHTML(a.foto, a.nombre, 'lg')}
-      <div class="al-nombre">${esc(a.nombre)}${a.activo ? '' : '<div><span class="tag tag-deuda">inactivo</span></div>'}</div>
+      <div class="al-nombre">${esc(a.nombre)}${a.role === 'profesor' ? '<span class="tag profesor">🧑‍🏫 Profesor</span>' : ''}${a.activo ? '' : '<div><span class="tag tag-deuda">inactivo</span></div>'}</div>
       <div class="small" style="margin-top:4px">${beltHTML(a.cinturon)} · ${a.edad != null ? a.edad + ' años' : '—'}</div>
       <div class="small">Modalidad: <span class="tag ${(a.gi_pref || 'Ambas').toLowerCase()}">${esc(a.gi_pref || 'Ambas')}</span></div>
-      ${a.beca ? `<div class="small">🎖 <b>Becado</b> · no paga cuota</div>` : `<div class="small">Cuota: <b>$${num(a.familia ? a.familia.cuota_final : a.cuota_mensual)}</b> · <span class="tag ${cls}">${lbl}</span></div>`}
+      ${a.role === 'profesor' ? `<div class="small">🧑‍🏫 <b>Profesor</b> · no paga cuota</div>` : a.beca ? `<div class="small">🎖 <b>Becado</b> · no paga cuota</div>` : `<div class="small">Cuota: <b>$${num(a.familia ? a.familia.cuota_final : a.cuota_mensual)}</b> · <span class="tag ${cls}">${lbl}</span></div>`}
       ${a.familia ? `<div class="small">👨‍👩‍👧 <b>${esc(a.familia.nombre)}</b> ${a.familia.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}${a.familia.descuento ? `<span class="tag tag-por-vencer">ahorra $${num(a.familia.descuento)}</span>` : ''}</div>` : ''}
       ${a.en_pausa ? `<div class="small"><span class="tag tag-por-vencer">⏸ En pausa${a.pausa_hasta ? ' hasta ' + esc(a.pausa_hasta) : ''}</span></div>` : ''}
       <div class="small">🥋 <b>${a.asistencias}</b> asistencias</div>
@@ -2650,10 +2651,11 @@ async function renderProfesores(el) {
     <div class="card">
       <p class="small">⚡ Convertí un alumno existente en profesor <b>sin crearle otra cuenta</b> (conserva usuario, contraseña y datos):</p>
       <div class="flex" style="gap:8px;flex-wrap:wrap">
+        ${(() => { const soloAlumnos = alum.filter(a => a.role !== 'profesor'); return `
         <select id="promoSelect" class="search" style="max-width:none;flex:1;min-width:220px">
-          ${alum.map(a => `<option value="${a.id}">${esc(a.nombre)} — @${esc(a.username)}</option>`).join('') || '<option value="" disabled>No hay alumnos activos</option>'}
+          ${soloAlumnos.map(a => `<option value="${a.id}">${esc(a.nombre)} — @${esc(a.username)}</option>`).join('') || '<option value="" disabled>No hay alumnos activos</option>'}
         </select>
-        <button class="btn primary" onclick="promoverProfesor()" ${alum.length ? '' : 'disabled'}>Convertir en profesor</button>
+        <button class="btn primary" onclick="promoverProfesor()" ${soloAlumnos.length ? '' : 'disabled'}>Convertir en profesor</button>`; })()}
       </div>
     </div>` : ''}
     <div class="card">
