@@ -294,7 +294,7 @@ function initLogin() {
       const d = await api('/api/register', { method: 'POST', body: {
         role: 'alumno', username: $('#regAlumnoUser').value.trim(),
         password: $('#regAlumnoPass').value, nombre: $('#regAlumnoNombre').value.trim(),
-        edad: $('#regAlumnoEdad').value, peso: $('#regAlumnoPeso').value,
+        edad: $('#regAlumnoEdad').value, peso: $('#regAlumnoPeso').value, nacimiento: $('#regAlumnoNac').value,
         categoria: cat, cinturon: $('#regAlumnoCinturon').value,
         gi_pref: $('#regAlumnoGi').value, tel: $('#regAlumnoTel')?.value || '',
         dni: $('#regAlumnoDni')?.value.trim() || '', direccion: $('#regAlumnoDir')?.value.trim() || '',
@@ -314,7 +314,7 @@ function initLogin() {
         role: 'profesor', username: $('#regProfeUser').value.trim(),
         password: $('#regProfePass').value, nombre: $('#regProfeNombre').value.trim(),
         codigo: $('#regProfeCodigo').value.trim(), edad: $('#regProfeEdad').value,
-        peso: $('#regProfePeso').value, cinturon: $('#regProfeCinturon').value,
+        nacimiento: $('#regProfeNac').value, peso: $('#regProfePeso').value, cinturon: $('#regProfeCinturon').value,
         acepto_tyc: !!($('#regProfeTyC')?.checked || false) } });
       if (d.ok) location.href = '/app';
     } catch (err) { msgShow(m, err.message, false); }
@@ -325,6 +325,37 @@ function initLogin() {
    DASHBOARD
    ===================================================================== */
 if ($('#content')) initDashboard();
+
+async function obligarNacimiento() {
+  const R = USER.role;
+  if (R === 'admin') return;
+  if (USER.nacimiento && String(USER.nacimiento).trim() !== '') return;
+  openModal(`
+    <h3>📅 Completá tu fecha de nacimiento</h3>
+    <p class="small" style="color:var(--muted)">A tu perfil le falta la fecha de nacimiento. Es obligatoria para la ficha y la categoría del gimnasio.</p>
+    <form id="nacForm">
+      <div class="field"><label>Fecha de nacimiento</label><input type="date" id="nacInput" required></div>
+      <button type="submit" class="btn primary btn-block" id="nacBtn">Guardar</button>
+    </form>`);
+  $('#modalClose').style.display = 'none';
+  $('#nacForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nac = $('#nacInput').value;
+    if (!nac) return;
+    const btn = $('#nacBtn'); btn.disabled = true; btn.textContent = 'Guardando...';
+    try {
+      await api('/api/perfil', { method: 'PUT', body: { nacimiento: nac } });
+      USER.nacimiento = nac;
+      $('#modalClose').style.display = '';
+      closeModal();
+      if ($('#sec-perfil')) renderPerfil($('#sec-perfil')).catch(() => {});
+      toast('Fecha de nacimiento guardada ✓');
+    } catch (err) {
+      btn.disabled = false; btn.textContent = 'Guardar';
+      toast(err.message);
+    }
+  });
+}
 
 function initDashboard() {
   const R = USER.role;
@@ -406,6 +437,8 @@ function initDashboard() {
   setupPush();
   setupInstall();
 
+  obligarNacimiento();
+
   showSec('inicio');
 
   // abrir sección indicada en la URL (?sec=...) al volver de una notificación push
@@ -433,7 +466,7 @@ function initDashboard() {
   } catch (e) {}
 
   // QR auto-asistencia: si la URL tiene ?qr=1, marcar presente automáticamente
-  if (new URLSearchParams(location.search).get('qr') === '1' && R === 'alumno') {
+  if (new URLSearchParams(location.search).get('qr') === '1' && (R === 'alumno' || R === 'profesor')) {
     marcarAsistenciaQR();
   }
 }
@@ -1132,8 +1165,12 @@ async function renderInicio(el) {
         </div>
       </div>`;
   } else {
-    const [stats, horarios, vids, cums] = await Promise.all([
-      api('/api/estadisticas'), api('/api/horarios'), api('/api/videos'), api('/api/cumpleanios')]);
+    const promesas = [
+      api('/api/estadisticas'), api('/api/horarios'), api('/api/videos'), api('/api/cumpleanios'),
+      ...(R === 'profesor' ? [api('/api/mi_asistencia')] : [])];
+    const r = await Promise.all(promesas);
+    const stats = r[0], horarios = r[1], vids = r[2], cums = r[3];
+    const asis = R === 'profesor' ? r[4] : null;
     const hoyIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
     const hoyClases = horarios.horarios.filter(h => h.dia === hoyIdx);
     const videos = vids.videos.slice(0, 3);
@@ -1158,11 +1195,12 @@ async function renderInicio(el) {
     chips.push(`<button class="chip" onclick="showSec('galeria')">🖼️ Galería</button>`);
     chips.push(`<button class="chip" onclick="abrirMensajeMasivo()">📣 Mandar mensaje</button>`);
     chips.push(`<button class="chip" onclick="window.open('/qr_print','_blank')">📱 QR de asistencia</button>`);
+    if (R === 'profesor') chips.push(`<button class="chip" onclick="showSec('mi_asistencia')">✅ Mi asistencia</button>`, `<button class="chip" onclick="abrirScannerQR()">📷 Escanear QR</button>`);
     el.innerHTML = `
       <div class="feed">
         ${secHeader('Inicio')}
         <div class="home-grid">
-          <div class="stat-card"><div class="num">${stats.total_alumnos}</div><div class="lbl">Alumnos activos</div></div>
+          <div class="stat-card"><div class="num">${stats.total_alumnos}</div><div class="lbl">Activos</div></div>
           <div class="stat-card"><div class="num">$${num(stats.ingresos_mes)}</div><div class="lbl">Cobrado este mes</div></div>
           <div class="stat-card"><div class="num">${stats.clases}</div><div class="lbl">Clases/semana</div></div>
           ${R === 'profesor' ? `<div class="stat-card"><div class="num" style="color:var(--good)">$${num(stats.mi_ingreso_mes)}</div><div class="lbl">Tu dinero este mes</div></div>
@@ -1171,7 +1209,7 @@ async function renderInicio(el) {
         <div class="chips">${chips.join('')}</div>
         <div class="feed-card">
           <div class="small mb">📅 Clases de hoy</div>
-          ${hoyClases.length ? hoyClases.map(h => `<div class="clase-item ${h.tipo.toLowerCase()}"><span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span> · ${esc(h.nivel)} · <span class="profe">${esc(h.profesor_nombre || 'Sin profesor')}</span></div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas.</div>'}
+          ${hoyClases.length ? hoyClases.map(h => `<div class="clase-item ${h.tipo.toLowerCase()}"><span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span> · ${esc(h.nivel)} · <span class="profe">${esc(h.profesor_nombre || 'Sin profesor')}</span>${R === 'profesor' ? `<div style="margin-top:6px">${(asis.hoy || []).includes(h.id) ? '<span class="tag tag-al-dia">✓ Asistencia marcada</span>' : `<button class="btn primary small" onclick="abrirScannerQR()">📷 Marcar con QR</button>`}</div>` : ''}</div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas.</div>'}
         </div>
         ${cums.cumpleanios.length ? `<div class="feed-card">
           <div class="small mb">🎂 Cumpleaños de ${['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][cums.mes - 1]} <span class="small" style="color:var(--muted)">(${cums.cumpleanios.length})</span></div>
@@ -1853,7 +1891,7 @@ async function abrirMetricas() {
       <div class="stat-card"><div class="num">$${num(d.total_ingresos)}</div><div class="lbl">Total cobrado en el año</div></div>
       <div class="small mb mt"><b>💰 Por mes</b> <span style="color:var(--muted)">(máx $${num(max)})</span></div>
       <div style="display:flex;align-items:flex-end;gap:2px;height:150px;padding:8px 4px;border:1px solid var(--line);border-radius:8px">${bars}</div>
-      <div class="small mb mt" style="margin-top:14px"><b>🎯 Morosidad por mes</b> <span style="color:var(--muted)">(${d.total_alumnos} alumn${d.total_alumnos === 1 ? 'o' : 'os'} activ${d.total_alumnos === 1 ? 'o' : 'os'})</span></div>
+      <div class="small mb mt" style="margin-top:14px"><b>🎯 Morosidad por mes</b> <span style="color:var(--muted)">(${d.total_alumnos} activ${d.total_alumnos === 1 ? 'o' : 'os'})</span></div>
       ${serie.map((s, i) => `<div class="flex space-between small" style="padding:3px 0;border-bottom:1px dashed var(--line)">
         <span>${MESES[i]}. — ${s.deudores} debiendo</span>
         <b style="color:${s.pct_morosidad > 50 ? 'var(--bad)' : 'var(--good)'}">${s.pct_morosidad}%</b>
