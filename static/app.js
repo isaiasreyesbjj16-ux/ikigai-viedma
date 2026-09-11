@@ -2109,7 +2109,7 @@ async function renderAlumnos(el) {
   el.innerHTML = `
     ${secHeader('Alumnos', 'Los alumnos se registran solos en la pantalla de ingreso')}
     ${USER.role === 'admin' || USER.role === 'profesor' ? `<div class="mb">
-      <button class="btn good" onclick="exportarAlumnosExcel()">📥 Exportar alumnos activos a Excel</button>
+      <button class="btn good" onclick="exportarAlumnosExcel()">📥 Exportar alumnos a Excel (Adultos / Juveniles / Kids)</button>
       <p class="small" style="margin:6px 0 0">Descarga un archivo .xlsx con los datos de los alumnos activos (nombre, DNI, dirección, teléfonos, categoría, etc.). Solo alumnos <b>activos</b>.</p>
     </div>` : ''}
     <div class="chips" id="alumnoCats">${[

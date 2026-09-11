@@ -4092,7 +4092,7 @@ def api_exportar_alumnos():
                'Cuota mensual ($)', 'Estado de pago',
                'Asistencias', 'Total pagos registrados', 'Miembro desde']
 
-    data_rows = []
+    groups = {}
     for r in rows:
         cat = (r['categoria'] or '').lower()
         if cat in ('kids', 'juveniles'):
@@ -4108,7 +4108,9 @@ def api_exportar_alumnos():
             }.get(cs['estado'], cs['estado'])
         except Exception:
             estado_label = ''
-        data_rows.append([
+        gcat = (r['categoria'] or '').strip().lower()
+        gkey = 'Juveniles' if gcat == 'juveniles' else ('Kids' if gcat == 'kids' else 'Adultos')
+        groups.setdefault(gkey, []).append([
             r['nombre'], r['dni'], r['direccion'], r['tel'], r['tel_2'], r['tel_tutor'],
             r['username'], r['nacimiento'],
             r['edad'], r['peso'], r['categoria'], r['cinturon'], r['gi_pref'],
@@ -4122,14 +4124,15 @@ def api_exportar_alumnos():
 
     def x(row):
         return '<row>' + ''.join(f'<c t="inlineStr"><is><t>{xesc(str(c))}</t></is></c>' for c in row) + '</row>'
-    sheet_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        '<sheetData>'
-        + x(headers)
-        + ''.join(x(r) for r in data_rows)
-        + '</sheetData></worksheet>'
-    )
+    def sheet_xml(gs):
+        return (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData>'
+            + x(headers)
+            + ''.join(x(r) for r in gs)
+            + '</sheetData></worksheet>'
+        )
 
     shared = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -4154,31 +4157,42 @@ def api_exportar_alumnos():
                 '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
                 '</Relationships>')
 
+    SHEETS = ['Adultos', 'Juveniles', 'Kids']
+
     def content_types():
+        overrides = ''.join(
+            '<Override PartName="/xl/worksheets/sheet%d.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' % (i + 1)
+            for i in range(len(SHEETS)))
         return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
                 '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
                 '<Default Extension="xml" ContentType="application/xml"/>'
                 '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-                '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
-                '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
-                '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
-                '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
-                '</Types>')
+                + overrides
+                + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+                + '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+                + '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+                + '</Types>')
 
     def workbook():
+        sheets = ''.join(
+            '<sheet name="%s" sheetId="%d" r:id="rId%d"/>' % (n, i + 1, i + 1)
+            for i, n in enumerate(SHEETS))
         return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
                 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-                '<sheets><sheet name="Alumnos Activos" sheetId="1" r:id="rId1"/></sheets></workbook>')
+                '<sheets>' + sheets + '</sheets></workbook>')
 
     def workbook_rels():
+        ws = ''.join(
+            '<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet%d.xml"/>' % (i + 1, i + 1)
+            for i in range(len(SHEETS)))
         return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
-                '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
-                '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
-                '</Relationships>')
+                + ws
+                + '<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' % (len(SHEETS) + 1)
+                + '<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>' % (len(SHEETS) + 2)
+                + '</Relationships>')
 
     def core():
         return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -4197,7 +4211,8 @@ def api_exportar_alumnos():
         z.writestr('docProps/core.xml', core())
         z.writestr('xl/workbook.xml', workbook())
         z.writestr('xl/_rels/workbook.xml.rels', workbook_rels())
-        z.writestr('xl/worksheets/sheet1.xml', sheet_xml)
+        for i in range(len(SHEETS)):
+            z.writestr('xl/worksheets/sheet%d.xml' % (i + 1), sheet_xml(groups.get(SHEETS[i], [])))
         z.writestr('xl/styles.xml', styles)
         z.writestr('xl/sharedStrings.xml', shared)
     buf.seek(0)
