@@ -4419,7 +4419,15 @@ def api_exportar_pagos():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-init_db()
+import traceback as _tb
+
+try:
+    init_db()
+except Exception as _e:
+    # No tumbar el arranque por errores de migracion/BD al importar:
+    # se loguea el error y la app sigue (la DB real ya tiene las tablas).
+    print('INIT_DB_IMPORT_ERROR:', _e)
+    _tb.print_exc()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)),
