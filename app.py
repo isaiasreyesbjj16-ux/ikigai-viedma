@@ -627,13 +627,21 @@ def send_push(user_id, titulo, mensaje, extra=None, _diag=None):
             enviados = 0
             for s in subs:
                 try:
+                    ep = s['endpoint']
+                    es_apple = 'api.push.apple.com' in ep or 'api.sandbox.push.apple.com' in ep
+                    vclaims = {'sub': 'mailto:admin@academia.local'}
+                    extra_headers = {}
+                    if es_apple:
+                        vclaims['aud'] = ep.split('/3/device/')[0] if '/3/device/' in ep else ep.rsplit('/', 1)[0]
+                        extra_headers = {'apns-push-type': 'alert', 'apns-priority': '10'}
                     webpush(
                         subscription_info={
-                            'endpoint': s['endpoint'],
+                            'endpoint': ep,
                             'keys': {'p256dh': s['p256dh'], 'auth': s['auth']}},
                         data=payload,
                         vapid_private_key=tmpf.name,
-                        vapid_claims={'sub': 'mailto:admin@academia.local'})
+                        vapid_claims=vclaims,
+                        headers=extra_headers)
                     enviados += 1
                 except WebPushException as wp:
                     # Suscripciones vencidas/invalidas (410, 404, 403): borrarlas
@@ -1164,6 +1172,8 @@ def not_found(e):
 
 @app.errorhandler(500)
 def server_error(e):
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Error interno del servidor'}), 500
     return render_template('error.html', message='Error del servidor. Revisá que el archivo data.db no esté bloqueado o roto.'), 500
 
 
@@ -1513,7 +1523,7 @@ def api_alumnos_create():
     if get_db().execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
         return jsonify({'error': 'Ese usuario ya existe'}), 400
     password = data.get('password') or 'alumno123'
-    cuota = to_float(data.get('cuota_mensual'))
+    cuota = to_float(data.get('cuota_mensual')) or (to_float(get_setting('default_cuota', '15000')) or 15000)
     nacimiento = (data.get('nacimiento') or '').strip()
     if not nacimiento:
         return jsonify({'error': 'La fecha de nacimiento es obligatoria al crear el perfil.'}), 400
@@ -1542,6 +1552,13 @@ def api_alumnos_update(uid):
     u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
     if not u:
         return jsonify({'error': 'Alumno no encontrado'}), 404
+    nac_upd = (data.get('nacimiento', u['nacimiento']) or '').strip()
+    if nac_upd:
+        try:
+            if datetime.strptime(nac_upd, '%Y-%m-%d').date() >= _hoy_academy():
+                return jsonify({'error': 'La fecha de nacimiento no puede ser hoy ni del futuro.'}), 400
+        except ValueError:
+            return jsonify({'error': 'Fecha de nacimiento inválida (formato AAAA-MM-DD).'}), 400
     get_db().execute(
         """UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, activo=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=?, direccion=?, dni=?, foto_ok=?, pausa_desde=?, pausa_hasta=? WHERE id=?""",
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
@@ -1549,7 +1566,7 @@ def api_alumnos_update(uid):
          data.get('categoria', u['categoria']), data.get('gi_pref', u['gi_pref']),
          1 if data.get('activo', u['activo']) else 0,
          (data.get('tel', u['tel']) or '').strip() or None,
-         (data.get('nacimiento', u['nacimiento']) or '').strip() or None,
+         nac_upd or None,
          data.get('medic_info', u['medic_info']),
          data.get('emergency_contact', u['emergency_contact']),
          (data.get('tel_tutor', u['tel_tutor']) or '').strip() or None,
@@ -2773,13 +2790,20 @@ def api_perfil_update():
     foto_ok = data.get('foto_ok', u['foto_ok'])
     if u['role'] == 'alumno' and cat in ('kids', 'juveniles') and not foto_ok:
         return jsonify({'error': 'Para menores (Kids/Juveniles) debe autorizar el mayor, padre, madre o tutor que las fotos del menor puedan exponerse.'}), 400
+    nac_upd = (data.get('nacimiento', u['nacimiento']) or '').strip()
+    if nac_upd:
+        try:
+            if datetime.strptime(nac_upd, '%Y-%m-%d').date() >= _hoy_academy():
+                return jsonify({'error': 'La fecha de nacimiento no puede ser hoy ni del futuro.'}), 400
+        except ValueError:
+            return jsonify({'error': 'Fecha de nacimiento inválida (formato AAAA-MM-DD).'}), 400
     get_db().execute(
         'UPDATE users SET nombre=?, edad=?, peso=?, cinturon=?, categoria=?, gi_pref=?, tel=?, nacimiento=?, medic_info=?, emergency_contact=?, tel_tutor=?, tel_2=?, direccion=?, dni=?, foto_ok=?, medic_enfermedades=?, medic_alergias=?, medic_medicacion=?, medic_lesiones=?, ficha_fecha=? WHERE id=?',
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
          cat, data.get('gi_pref', u['gi_pref']),
          (data.get('tel', u['tel']) or '').strip() or None,
-         (data.get('nacimiento', u['nacimiento']) or '').strip() or None,
+         nac_upd or None,
          data.get('medic_info', u['medic_info']),
          data.get('emergency_contact', u['emergency_contact']),
          tel_tutor,
@@ -3645,7 +3669,7 @@ def api_historial():
     asis = db.execute(
         'SELECT DATE(fecha) AS d, COUNT(DISTINCT alumno_id) AS n FROM asistencia '
         'WHERE fecha >= ? GROUP BY d ORDER BY d',
-        (datetime.now().strftime('%Y-%m-01'))).fetchall()
+        (_hoy_academy().strftime('%Y-%m-01'))).fetchall()
     return jsonify({
         'pagos': [dict(r) for r in pagos],
         'asistencia': [{'fecha': r['d'], 'alumnos': r['n']} for r in asis]
