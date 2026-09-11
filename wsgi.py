@@ -1,3 +1,8 @@
-from app import app, init_db
+import traceback as _tb
 
-init_db()
+try:
+    from app import app
+except Exception as _e:
+    print('IMPORT_APP_ERROR:', _e)
+    _tb.print_exc()
+    raise
