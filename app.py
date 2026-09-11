@@ -978,6 +978,16 @@ def cuota_status(alumno):
             'due_day': due_day,
             'cargo_demora_pct': 0,
         }
+    if alumno['role'] == 'profesor':
+        return {
+            'mes': hoy.month,
+            'anio': hoy.year,
+            'estado': 'profesor',
+            'pago': None,
+            'cuota': 0,
+            'due_day': due_day,
+            'cargo_demora_pct': 0,
+        }
     estado = 'al_dia' if pago else 'deuda'
     if not pago and hoy.day <= due_day:
         estado = 'por_vencer'
@@ -1515,7 +1525,7 @@ def api_alumnos():
         """SELECT u.*,
             (SELECT COUNT(*) FROM asistencia a WHERE a.alumno_id=u.id AND a.presente=1) AS asistencias,
             (SELECT COUNT(*) FROM pagos p WHERE p.alumno_id=u.id) AS pagos_totales
-           FROM users u WHERE u.role='alumno' ORDER BY u.nombre""").fetchall()
+           FROM users u WHERE u.role IN ('alumno','profesor') ORDER BY u.nombre""").fetchall()
     # mapa alumno -> familia (nombre, titular, relacion) y conteo de miembros
     fam_map = {}
     fam_count = {}
@@ -2286,7 +2296,7 @@ def api_pagos_delete(pid):
 @role_required('admin', 'profesor')
 def api_deudores():
     rows = get_db().execute(
-        "SELECT * FROM users WHERE role='alumno' AND activo=1 ORDER BY nombre").fetchall()
+        "SELECT * FROM users WHERE role='alumno' AND activo=1 AND cuota_mensual IS NOT NULL ORDER BY nombre").fetchall()
     deudores = []
     for r in rows:
         if en_pausa(r):
@@ -2310,7 +2320,7 @@ def api_notify_deuda():
     if alumno_id:
         ids = [alumno_id]
     else:
-        rows = get_db().execute("SELECT * FROM users WHERE role='alumno' AND activo=1").fetchall()
+        rows = get_db().execute("SELECT * FROM users WHERE role='alumno' AND activo=1 AND cuota_mensual IS NOT NULL").fetchall()
         ids = [r['id'] for r in rows if not en_pausa(r) and cuota_status(r)['estado'] in ('deuda', 'por_vencer')]
     who = current_user()['nombre']
     enviados = 0
@@ -2319,7 +2329,7 @@ def api_notify_deuda():
         if not alumno:
             continue
         st = cuota_status(alumno)
-        if st.get('estado') == 'becado':
+        if st.get('estado') in ('becado', 'profesor'):
             continue
         monto_txt = st['cuota'] if st['cuota'] else 0
         notify(aid, 'Recordatorio de deuda',
@@ -4133,7 +4143,7 @@ def api_exportar_alumnos():
         """SELECT u.*,
             (SELECT COUNT(*) FROM asistencia a WHERE a.alumno_id=u.id AND a.presente=1) AS asistencias,
             (SELECT COUNT(*) FROM pagos p WHERE p.alumno_id=u.id) AS pagos_totales
-           FROM users u WHERE u.role='alumno' AND u.activo=1 ORDER BY u.nombre""").fetchall()
+           FROM users u WHERE u.role IN ('alumno','profesor') AND u.activo=1 ORDER BY u.nombre""").fetchall()
 
     def cel(v):
         if v is None:
@@ -4163,6 +4173,7 @@ def api_exportar_alumnos():
                 'por_vencer': 'Por vencer (antes del dia %s)' % (cs.get('due_day') or 10),
                 'deuda': 'Deuda',
                 'becado': 'Beca (no paga)',
+                'profesor': 'Profesor (no paga)',
             }.get(cs['estado'], cs['estado'])
         except Exception:
             estado_label = ''
