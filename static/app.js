@@ -3,6 +3,7 @@ const BELTS_ADULT = window.BELTS_ADULT || ['Blanco', 'Azul', 'Púrpura', 'Marró
 const BELTS_KIDS = window.BELTS_KIDS || ['Gris', 'Amarillo', 'Naranja', 'Verde', 'Blanco'];
 const BELTS_JUV = window.BELTS_JUV || ['Blanco', 'Gris', 'Amarillo', 'Naranja', 'Verde'];
 const catLabel = (c) => ({ adulto: 'Adulto', juveniles: 'Juveniles', kids: 'Kids' })[c] || c;
+let filtroAlumnosCat = 'todos';
 const BELTS_POR_CAT = { kids: BELTS_KIDS, juveniles: BELTS_JUV, adulto: BELTS_ADULT };
 const CATS_VIDEOS = ['kids', 'juveniles', 'adulto']; // todas las categorías para staff
 function beltOptionsPorCategoriaConTodos(catSeleccionada, beltSel) {
@@ -1497,6 +1498,7 @@ function abrirAltaHijo() {
       <div class="field"><label>Usuario (para que ingrese)</label><input id="hUsuario" required placeholder="Ej: martina2026" autocomplete="off"></div>
       <div class="field"><label>Contraseña</label><input type="password" id="hPassword" required placeholder="Mínimo 4 caracteres" autocomplete="new-password"></div>
       <div class="field"><label>Edad</label><input type="number" id="hEdad" required min="3" max="17" autocomplete="off"></div>
+      <div class="field"><label>Fecha de nacimiento</label><input type="date" id="hNac" required max="${fechaHoyLocal()}" autocomplete="off"></div>
       <div class="field"><label>Categoría</label><select id="hCat">
         <option value="kids">Kids (niños/as)</option>
         <option value="juveniles">Juveniles</option></select></div>
@@ -1530,6 +1532,7 @@ function abrirAltaHijo() {
         nombre: nombre, username: usuario,
         password: $('#hPassword').value, edad: +$('#hEdad').value,
         categoria: $('#hCat').value, cinturon: $('#hBelt').value,
+        nacimiento: $('#hNac').value,
         foto_ok: $('#hFotoOk').checked, firma_tyc: $('#hFirmaTyC').value.trim(),
         firma_foto: $('#hFirmaFoto').value.trim() } });
       closeModal(); toast('Cuenta del menor creada y vinculada ✓');
@@ -2056,46 +2059,76 @@ async function copiarAlias() {
    ===================================================================== */
 async function renderAlumnos(el) {
   const d = await api('/api/alumnos');
+  const filtro = filtroAlumnosCat || 'todos';
+  const catLbl = { adulto: 'Adultos', juveniles: 'Juveniles', kids: 'Kids' };
+  const catOf = (a) => (a.categoria === 'juveniles' || a.categoria === 'kids') ? a.categoria : 'adulto';
+  const grupos = ['adulto', 'juveniles', 'kids'].filter(c => filtro === 'todos' || c === filtro);
+  const card = (a) => {
+    const c = a.cuota;
+    const cls = c.estado === 'al_dia' ? 'tag-al-dia' : c.estado === 'por_vencer' ? 'tag-por-vencer' : 'tag-deuda';
+    const lbl = c.estado === 'al_dia' ? 'Al día' : c.estado === 'por_vencer' ? 'Por vencer' : 'Debe ' + c.mes + '/' + c.anio;
+    return `<div class="alum-card" data-q="${esc((a.nombre + ' ' + (a.cinturon || '')).toLowerCase())}">
+      ${avatarHTML(a.foto, a.nombre, 'lg')}
+      <div class="al-nombre">${esc(a.nombre)}${a.activo ? '' : '<div><span class="tag tag-deuda">inactivo</span></div>'}</div>
+      <div class="small" style="margin-top:4px">${beltHTML(a.cinturon)} · ${a.edad != null ? a.edad + ' años' : '—'}</div>
+      <div class="small">Modalidad: <span class="tag ${(a.gi_pref || 'Ambas').toLowerCase()}">${esc(a.gi_pref || 'Ambas')}</span></div>
+      <div class="small">Cuota: <b>$${num(a.familia ? a.familia.cuota_final : a.cuota_mensual)}</b> · <span class="tag ${cls}">${lbl}</span></div>
+      ${a.familia ? `<div class="small">👨‍👩‍👧 <b>${esc(a.familia.nombre)}</b> ${a.familia.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}${a.familia.descuento ? `<span class="tag tag-por-vencer">ahorra $${num(a.familia.descuento)}</span>` : ''}</div>` : ''}
+      ${a.en_pausa ? `<div class="small"><span class="tag tag-por-vencer">⏸ En pausa${a.pausa_hasta ? ' hasta ' + esc(a.pausa_hasta) : ''}</span></div>` : ''}
+      <div class="small">🥋 <b>${a.asistencias}</b> asistencias</div>
+      <div class="al-actions">
+        <button class="btn ghost small" onclick="formAlumno(${a.id})">✏️</button>
+        <button class="btn ghost small" onclick="cambiarCuota(${a.id},'${esc(a.nombre)}',${a.cuota_mensual || 0})">💲</button>
+        <button class="btn ghost small" onclick="verFicha(${a.id},'${esc(a.nombre)}')">🩺</button>
+        <button class="btn ghost small" onclick="verGrado(${a.id},'${esc(a.nombre)}')">🥋</button>
+        <button class="btn ghost small" onclick="verNotas(${a.id},'${esc(a.nombre)}')">📝</button>
+        <button class="btn good small" onclick="notificarDeuda(${a.id})">🔔</button>
+        ${USER.role !== 'alumno' ? `<button class="btn ${a.activo ? 'bad' : 'good'} small" onclick="toggleActivo(${a.id},${a.activo ? 1 : 0})">${a.activo ? '🚫 Desactivar' : '✅ Reactivar'}</button>` : ''}
+        ${USER.role === 'admin' ? `<button class="btn ghost small" onclick="reiniciarPassword(${a.id},'${esc(a.nombre)}')">🔑</button>` : ''}
+        ${USER.role === 'admin' ? `<button class="btn bad small" onclick="eliminarAlumno(${a.id},'${esc(a.nombre)}')">🗑</button>` : ''}
+      </div>
+    </div>`;
+  };
+  const cont = (c) => {
+    const lis = d.alumnos.filter(a => catOf(a) === c);
+    return `<div class="sec-grupo" data-cat="${c}">
+      <div class="gr-header">${catLbl[c] || c} <span class="small" style="color:var(--muted)">(${lis.length})</span></div>
+      <div class="alum-grid">${lis.map(card).join('') || '<div class="empty">No hay alumnos en esta categoría.</div>'}</div>
+    </div>`;
+  };
+  const total = d.alumnos.length;
   el.innerHTML = `
     ${secHeader('Alumnos', 'Los alumnos se registran solos en la pantalla de ingreso')}
     ${USER.role === 'admin' || USER.role === 'profesor' ? `<div class="mb">
       <button class="btn good" onclick="exportarAlumnosExcel()">📥 Exportar alumnos activos a Excel</button>
       <p class="small" style="margin:6px 0 0">Descarga un archivo .xlsx con los datos de los alumnos activos (nombre, DNI, dirección, teléfonos, categoría, etc.). Solo alumnos <b>activos</b>.</p>
     </div>` : ''}
+    <div class="chips" id="alumnoCats">${[
+      ['todos', 'Todos'],
+      ['adulto', 'Adultos'],
+      ['juveniles', 'Juveniles'],
+      ['kids', 'Kids'],
+    ].map(([k, lbl]) => {
+      const n = k === 'todos' ? total : d.alumnos.filter(a => catOf(a) === k).length;
+      return `<button class="chip ${filtro === k ? 'active' : ''}" data-cat="${k}">${lbl} (${n})</button>`;
+    }).join('')}</div>
     <div class="mb">
       <input class="search" style="max-width:100%" id="alumnoBusq" placeholder="🔍 Buscar alumno...">
     </div>
-    <div class="alum-grid" id="alumGrid">
-      ${d.alumnos.map(a => {
-        const c = a.cuota;
-        const cls = c.estado === 'al_dia' ? 'tag-al-dia' : c.estado === 'por_vencer' ? 'tag-por-vencer' : 'tag-deuda';
-        const lbl = c.estado === 'al_dia' ? 'Al día' : c.estado === 'por_vencer' ? 'Por vencer' : 'Debe ' + c.mes + '/' + c.anio;
-        return `<div class="alum-card" data-q="${esc((a.nombre + ' ' + (a.cinturon || '')).toLowerCase())}">
-          ${avatarHTML(a.foto, a.nombre, 'lg')}
-          <div class="al-nombre">${esc(a.nombre)}${a.activo ? '' : '<div><span class="tag tag-deuda">inactivo</span></div>'}</div>
-          <div class="small" style="margin-top:4px">${beltHTML(a.cinturon)} · ${a.edad != null ? a.edad + ' años' : '—'}</div>
-          <div class="small">Modalidad: <span class="tag ${(a.gi_pref || 'Ambas').toLowerCase() === 'amabas' ? 'alumno' : (a.gi_pref || 'Ambas').toLowerCase()}">${esc(a.gi_pref || 'Ambas')}</span></div>
-          <div class="small">Cuota: <b>$${num(a.familia ? a.familia.cuota_final : a.cuota_mensual)}</b> · <span class="tag ${cls}">${lbl}</span></div>
-          ${a.familia ? `<div class="small">👨‍👩‍👧 <b>${esc(a.familia.nombre)}</b> ${a.familia.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}${a.familia.descuento ? `<span class="tag tag-por-vencer">ahorra $${num(a.familia.descuento)}</span>` : ''}</div>` : ''}
-          ${a.en_pausa ? `<div class="small"><span class="tag tag-por-vencer">⏸ En pausa${a.pausa_hasta ? ' hasta ' + esc(a.pausa_hasta) : ''}</span></div>` : ''}
-          <div class="small">🥋 <b>${a.asistencias}</b> asistencias</div>
-          <div class="al-actions">
-            <button class="btn ghost small" onclick="formAlumno(${a.id})">✏️</button>
-            <button class="btn ghost small" onclick="cambiarCuota(${a.id},'${esc(a.nombre)}',${a.cuota_mensual || 0})">💲</button>
-            <button class="btn ghost small" onclick="verFicha(${a.id},'${esc(a.nombre)}')">🩺</button>
-            <button class="btn ghost small" onclick="verGrado(${a.id},'${esc(a.nombre)}')">🥋</button>
-            <button class="btn ghost small" onclick="verNotas(${a.id},'${esc(a.nombre)}')">📝</button>
-            <button class="btn good small" onclick="notificarDeuda(${a.id})">🔔</button>
-            ${USER.role !== 'alumno' ? `<button class="btn ${a.activo ? 'bad' : 'good'} small" onclick="toggleActivo(${a.id},${a.activo ? 1 : 0})">${a.activo ? '🚫 Desactivar' : '✅ Reactivar'}</button>` : ''}
-            ${USER.role === 'admin' ? `<button class="btn ghost small" onclick="reiniciarPassword(${a.id},'${esc(a.nombre)}')">🔑</button>` : ''}
-            ${USER.role === 'admin' ? `<button class="btn bad small" onclick="eliminarAlumno(${a.id},'${esc(a.nombre)}')">🗑</button>` : ''}
-          </div>
-        </div>`;
-      }).join('') || '<div class="empty">Todavía no hay alumnos. Los alumnos se registran solos desde la pantalla de ingreso.</div>'}
-    </div>`;
+    ${filtro === 'todos' ? grupos.map(cont).join('') : cont(filtro)}`;
+  $('#alumnoCats').querySelectorAll('.chip').forEach((b) => {
+    b.addEventListener('click', () => {
+      filtroAlumnosCat = b.dataset.cat;
+      renderAlumnos($('#sec-alumnos')).catch(() => {});
+    });
+  });
   $('#alumnoBusq').addEventListener('input', (e) => {
     const q = e.target.value.toLowerCase();
-    $$('#alumGrid .alum-card').forEach(c => { c.style.display = c.dataset.q.includes(q) ? '' : 'none'; });
+    $$('#sec-alumnos .alum-card').forEach(c => { c.style.display = c.dataset.q.includes(q) ? '' : 'none'; });
+    $$('#sec-alumnos .sec-grupo').forEach(g => {
+      const visibles = Array.from(g.querySelectorAll('.alum-card')).filter(c => c.style.display !== 'none').length;
+      g.style.display = q && visibles === 0 ? 'none' : '';
+    });
   });
 }
 
