@@ -1291,6 +1291,15 @@ def api_register():
     if get_db().execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
         return jsonify({'error': 'Ese usuario ya existe'}), 400
 
+    nacimiento = (data.get('nacimiento') or '').strip()
+    if not nacimiento:
+        return jsonify({'error': 'La fecha de nacimiento es obligatoria al crear tu perfil.'}), 400
+    try:
+        if datetime.strptime(nacimiento, '%Y-%m-%d').date() >= _hoy_academy():
+            return jsonify({'error': 'La fecha de nacimiento no puede ser hoy ni del futuro.'}), 400
+    except ValueError:
+        return jsonify({'error': 'Fecha de nacimiento inválida (formato AAAA-MM-DD).'}), 400
+
     if role == 'profesor':
         codigo = (data.get('codigo') or '').strip()
         if codigo != get_setting('academy_code'):
@@ -1505,13 +1514,21 @@ def api_alumnos_create():
         return jsonify({'error': 'Ese usuario ya existe'}), 400
     password = data.get('password') or 'alumno123'
     cuota = to_float(data.get('cuota_mensual'))
+    nacimiento = (data.get('nacimiento') or '').strip()
+    if not nacimiento:
+        return jsonify({'error': 'La fecha de nacimiento es obligatoria al crear el perfil.'}), 400
+    try:
+        if datetime.strptime(nacimiento, '%Y-%m-%d').date() >= _hoy_academy():
+            return jsonify({'error': 'La fecha de nacimiento no puede ser hoy ni del futuro.'}), 400
+    except ValueError:
+        return jsonify({'error': 'Fecha de nacimiento inválida (formato AAAA-MM-DD).'}), 400
     get_db().execute(
-        """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, creado)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        """INSERT INTO users(username, password_hash, role, nombre, edad, peso, cinturon, categoria, gi_pref, cuota_mensual, nacimiento, creado)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
         (username, generate_password_hash(password), 'alumno', nombre,
          to_int(data.get('edad')), to_float(data.get('peso')),
          data.get('cinturon'), data.get('categoria') or 'adulto',
-         data.get('gi_pref') or 'Ambas', cuota,
+         data.get('gi_pref') or 'Ambas', cuota, nacimiento,
          datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     get_db().commit()
     new_id = get_db().execute('SELECT last_insert_rowid() AS id').fetchone()['id']
@@ -2281,7 +2298,7 @@ def api_asistencia_por_dia():
 
 
 @app.route('/api/mi_asistencia')
-@role_required('alumno')
+@role_required('alumno', 'profesor')
 def api_mi_asistencia():
     u = current_user()
     db = get_db()
@@ -2346,7 +2363,7 @@ def _serie_asistencia(alumno_id, meses):
 
 
 @app.route('/api/mi_estadistica_asistencia')
-@role_required('alumno')
+@role_required('alumno', 'profesor')
 def api_mi_estadistica_asistencia():
     u = current_user()
     meses = _ultimos_meses()
@@ -2389,7 +2406,7 @@ def api_estadisticas_asistencia():
 
 
 @app.route('/api/clase_valorar', methods=['POST'])
-@role_required('alumno')
+@role_required('alumno', 'profesor')
 def api_clase_valorar():
     """El alumno valora (1-5 estrellas + comentario) una clase a la que asistió.
     Una sola valoración por clase+fecha (UPDATE si ya existía)."""
@@ -2567,7 +2584,7 @@ def api_avisos_delete(aid):
 
 
 @app.route('/api/asistencia_yo', methods=['POST'])
-@role_required('alumno')
+@role_required('alumno', 'profesor')
 def api_asistencia_yo():
     u = current_user()
     data = parse_json()
@@ -2590,7 +2607,7 @@ def api_asistencia_yo():
 
 
 @app.route('/api/asistencia_directo', methods=['POST'])
-@role_required('alumno')
+@role_required('alumno', 'profesor')
 def api_asistencia_directo():
     # Marcar asistencia sin QR fisico, para accesibilidad (TalkBack).
     u = current_user()
@@ -2611,7 +2628,7 @@ def api_asistencia_directo():
 
 
 @app.route('/api/asistencia_desmarcar', methods=['POST'])
-@role_required('alumno')
+@role_required('alumno', 'profesor')
 def api_asistencia_desmarcar():
     """El alumno desmarca su asistencia de HOY (para errores del mismo día).
     No se puede tocar asistencia de otros días."""
@@ -2653,7 +2670,7 @@ def api_reporte():
         por_metodo[k] = por_metodo.get(k, 0) + (p['monto'] or 0)
     deudores = get_db().execute(
         """SELECT u.id, u.nombre, u.cinturon, u.cuota_mensual, u.pausa_desde, u.pausa_hasta FROM users u
-           WHERE u.role='alumno' AND u.activo=1
+           WHERE u.role IN ('alumno','profesor') AND u.activo=1
            AND NOT EXISTS (SELECT 1 FROM pagos p WHERE p.alumno_id=u.id AND p.mes=? AND p.anio=?)""",
         (mes, anio)).fetchall()
     deudores = [d for d in deudores if not en_pausa(d)]
@@ -2661,7 +2678,7 @@ def api_reporte():
         "SELECT COUNT(*) AS c FROM avisos_pago WHERE estado='pendiente'").fetchone()['c']
     # Porcentajes de alumnos
     total_alumnos = get_db().execute(
-        "SELECT COUNT(*) AS c FROM users WHERE role='alumno' AND activo=1").fetchone()['c']
+        "SELECT COUNT(*) AS c FROM users WHERE role IN ('alumno','profesor') AND activo=1").fetchone()['c']
     pagaron_ids = [p['alumno_id'] for p in pagos]
     cant_pagaron = len(set(pagaron_ids))
     cant_no_pagaron = len(deudores)
@@ -2687,7 +2704,7 @@ def api_reporte():
         (primer_dia, ultimo_dia)).fetchall()
     no_asistieron = get_db().execute(
         """SELECT u.id, u.nombre, u.cinturon, u.pausa_desde, u.pausa_hasta FROM users u
-           WHERE u.role='alumno' AND u.activo=1
+           WHERE u.role IN ('alumno','profesor') AND u.activo=1
            AND NOT EXISTS (SELECT 1 FROM asistencia a WHERE a.alumno_id=u.id
                            AND a.presente=1 AND a.fecha>=? AND a.fecha<?)""",
         (primer_dia, ultimo_dia)).fetchall()
@@ -3022,7 +3039,7 @@ def api_estadisticas():
     u = current_user()
     hoy = _hoy_academy()
     total_alumnos = get_db().execute(
-        "SELECT COUNT(*) AS n FROM users WHERE role='alumno' AND activo=1").fetchone()['n']
+        "SELECT COUNT(*) AS n FROM users WHERE role IN ('alumno','profesor') AND activo=1").fetchone()['n']
     ingresos_mes = get_db().execute(
         'SELECT COALESCE(SUM(monto),0) AS n FROM pagos WHERE mes=? AND anio=?',
         (hoy.month, hoy.year)).fetchone()['n']
@@ -3047,7 +3064,7 @@ def api_metricas_pagos():
     anio = to_int(request.args.get('anio')) or _hoy_academy().year
     db = get_db()
     total_alumnos = db.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE role='alumno' AND activo=1").fetchone()['n']
+        "SELECT COUNT(*) AS n FROM users WHERE role IN ('alumno','profesor') AND activo=1").fetchone()['n']
     serie = []
     for mes in range(1, 13):
         ingresos = db.execute(
@@ -4151,7 +4168,7 @@ def api_exportar_pagos():
     anio = to_int(request.args.get('anio')) or _hoy_academy().year
     db = get_db()
     total_alumnos = db.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE role='alumno' AND activo=1").fetchone()['n']
+        "SELECT COUNT(*) AS n FROM users WHERE role IN ('alumno','profesor') AND activo=1").fetchone()['n']
     resumen = []
     for mes in range(1, 13):
         pagos = db.execute('SELECT monto FROM pagos WHERE mes=? AND anio=?', (mes, anio)).fetchall()
