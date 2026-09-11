@@ -544,8 +544,13 @@ async function setupPush(verbose) {
     return 0;
   }
   if (!('PushManager' in window)) {
-    if (verbose) _pushDiagLine('✗ Este navegador no soporta notificaciones push. Probá en Chrome y con la app instalada.');
+    if (verbose) _pushDiagLine('✗ Este navegador no soporta notificaciones push. Probá con Safari y con la app instalada.');
     return 0;
+  }
+  const esiOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const instaladaPWA = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  if (esiOS && !instaladaPWA && verbose) {
+    _pushDiagLine('✗ En iPhone/iPad las notificaciones solo funcionan con la app INSTALADA. En Safari tocá Compartir ✓ → "Agregar a pantalla de inicio", abrí la app desde ese ícono y volvé a "Activar notificaciones". Requiere iOS 16.4 o superior.');
   }
   try {
     if (verbose) _pushDiagLine('Registrando service worker…');

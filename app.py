@@ -2290,7 +2290,7 @@ def api_asistencia_por_dia():
     clases = db.execute(
         """SELECT c.id, c.hora, c.tipo, c.nivel, u.nombre AS profesor_nombre
            FROM classes c LEFT JOIN users u ON u.id=c.profesor_id
-           WHERE c.dia=? ORDER BY c.hora""", (f.isoweekday(),)).fetchall()
+           WHERE c.dia=? ORDER BY c.hora""", (f.weekday(),)).fetchall()
     rows = db.execute(
         'SELECT clase_id, alumno_id FROM asistencia WHERE fecha=? AND presente=1', (fecha,)).fetchall()
     por_clase = {}
