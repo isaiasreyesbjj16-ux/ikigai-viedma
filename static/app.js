@@ -534,8 +534,12 @@ async function abrirNotif(id, link) {
 }
 
 /* ---------- PUSH ---------- */
+function pushDiagEl() {
+  const act = document.querySelector('.sec.active #pushDiag');
+  return act || $('#pushDiag');
+}
 async function _pushDiagLine(txt) {
-  const el = $('#pushDiag');
+  const el = pushDiagEl();
   if (el) el.textContent = txt;
 }
 async function setupPush(verbose) {
@@ -1377,7 +1381,7 @@ async function renderPerfil(el) {
 
       <div class="feed-card">
         <div class="small mb">📲 ¿Querés la app como si fuera de tu teléfono?</div>
-        <button class="btn ghost" onclick="instalarManual()">📲 Instalar la app</button>
+        <button class="btn ghost" id="instalarBtn" onclick="instalarManual()">📲 Instalar la app</button>
         <p class="small" style="margin-bottom:0">Se instala en tu pantalla de inicio sin pasar por Google. (En el celular: menú → "Agregar a pantalla de inicio".)</p>
       </div>
 
@@ -1914,7 +1918,7 @@ function verComprobante(id) {
   const cuerpo = esImg
     ? `<img src="${a.comprobante}" style="width:100%;border-radius:10px;background:#fff">`
     : `<div class="flex center" style="flex-direction:column;gap:10px;padding:20px 0;color:var(--muted)"><div style="font-size:44px">📄</div><p style="margin:0">Comprobante en formato PDF</p>
-       <a class="btn primary small" href="${a.comprobante}" download="comprobante-${a.alumno_nombre || id}.pdf" style="text-decoration:none">⬇ Descargar PDF</a>
+       <a class="btn primary small" href="${a.comprobante}" download="comprobante-${esc(a.alumno_nombre || id)}.pdf" style="text-decoration:none">⬇ Descargar PDF</a>
        <a class="btn ghost small" href="${a.comprobante}" target="_blank" rel="noopener" style="text-decoration:none">👁 Ver PDF</a></div>`;
   openModal(`
     <h3>🧾 Comprobante · ${esc(a.alumno_nombre)}</h3>
@@ -2754,12 +2758,12 @@ async function testPush() {
     const resp = await fetch('/api/test_push', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
     let raw = '(sin body)';
     try { raw = await resp.text(); } catch (e) {}
-    const el = $('#pushDiag');
+    const el = pushDiagEl();
     if (el) el.textContent = 'Respuesta del servidor: ' + raw;
     toast('Ver la respuesta abajo');
   } catch (e) {
     toast(e.message);
-    const el = $('#pushDiag');
+    const el = pushDiagEl();
     if (el) el.textContent = '✗ ' + e.message;
   }
 }
