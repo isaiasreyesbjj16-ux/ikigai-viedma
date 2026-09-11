@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS users (
     firma_fecha TEXT,
     pausa_desde TEXT,
     pausa_hasta TEXT,
+    beca INTEGER DEFAULT 0,
     creado TEXT
 );
 
@@ -397,7 +398,7 @@ def init_db():
                      ('medic_enfermedades', 'TEXT'), ('medic_alergias', 'TEXT'), ('medic_medicacion', 'TEXT'),
                      ('medic_lesiones', 'TEXT'), ('ficha_fecha', 'TEXT'),
                      ('firma_tyc', 'TEXT'), ('firma_foto', 'TEXT'), ('firma_fecha', 'TEXT'),
-                     ('pausa_desde', 'TEXT'), ('pausa_hasta', 'TEXT')]:
+                     ('pausa_desde', 'TEXT'), ('pausa_hasta', 'TEXT'), ('beca', 'INTEGER')]:
         if col not in cols:
             c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
     if DB_MODE == 'postgres':
@@ -928,6 +929,7 @@ def user_public(u):
         'pausa_desde': u['pausa_desde'] if 'pausa_desde' in u.keys() else None,
         'pausa_hasta': u['pausa_hasta'] if 'pausa_hasta' in u.keys() else None,
         'en_pausa': en_pausa(u) if 'pausa_desde' in u.keys() else False,
+        'beca': u['beca'] if 'beca' in u.keys() else 0,
     }
 
 
@@ -958,6 +960,17 @@ def cuota_status(alumno):
         'SELECT * FROM pagos WHERE alumno_id=? AND mes=? AND anio=? ORDER BY id DESC LIMIT 1',
         (alumno['id'], hoy.month, hoy.year)).fetchone()
     due_day = to_int(get_setting('due_day', '10')) or 10
+    beca = int(alumno.get('beca', 0)) if hasattr(alumno, 'get') else int(alumno['beca'] or 0)
+    if beca:
+        return {
+            'mes': hoy.month,
+            'anio': hoy.year,
+            'estado': 'becado',
+            'pago': None,
+            'cuota': 0,
+            'due_day': due_day,
+            'cargo_demora_pct': 0,
+        }
     estado = 'al_dia' if pago else 'deuda'
     if not pago and hoy.day <= due_day:
         estado = 'por_vencer'
@@ -1022,6 +1035,9 @@ def en_pausa(alumno, fecha=None):
 
 def dias_deuda(alumno):
     hoy = _hoy_academy()
+    beca = int(alumno.get('beca', 0)) if hasattr(alumno, 'get') else int(alumno['beca'] or 0)
+    if beca:
+        return 0
     pago = get_db().execute(
         'SELECT fecha FROM pagos WHERE alumno_id=? ORDER BY fecha DESC LIMIT 1',
         (alumno['id'],)).fetchone()
@@ -1689,6 +1705,18 @@ def api_alumnos_promover(uid):
     return jsonify({'ok': True, 'nombre': u['nombre']})
 
 
+@app.route('/api/alumnos/<int:uid>/beca', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_alumnos_beca(uid):
+    u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
+    if not u:
+        return jsonify({'error': 'Alumno no encontrado'}), 404
+    nueva = 0 if (int(u['beca']) if 'beca' in u.keys() else 0) else 1
+    get_db().execute('UPDATE users SET beca=? WHERE id=?', (nueva, uid))
+    get_db().commit()
+    return jsonify({'ok': True, 'beca': nueva, 'nombre': u['nombre']})
+
+
 @app.route('/api/alumnos/<int:uid>/notas', methods=['PUT'])
 @role_required('admin', 'profesor')
 def api_alumno_notas(uid):
@@ -2275,16 +2303,20 @@ def api_notify_deuda():
         rows = get_db().execute("SELECT * FROM users WHERE role='alumno' AND activo=1").fetchall()
         ids = [r['id'] for r in rows if not en_pausa(r) and cuota_status(r)['estado'] in ('deuda', 'por_vencer')]
     who = current_user()['nombre']
+    enviados = 0
     for aid in ids:
         alumno = get_db().execute('SELECT * FROM users WHERE id=?', (aid,)).fetchone()
         if not alumno:
             continue
         st = cuota_status(alumno)
+        if st.get('estado') == 'becado':
+            continue
         monto_txt = st['cuota'] if st['cuota'] else 0
         notify(aid, 'Recordatorio de deuda',
                f'{who} te recuerda que tu cuota de {st["mes"]}/{st["anio"]} ({monto_txt:,.0f} pesos) esta pendiente.'.replace(',', '.'),
                'deuda')
-    return jsonify({'ok': True, 'avisados': len(ids)})
+        enviados += 1
+    return jsonify({'ok': True, 'avisados': enviados})
 
 
 # ---------------------------------------------------------------------------
@@ -4120,6 +4152,7 @@ def api_exportar_alumnos():
                 'al_dia': 'Al dia',
                 'por_vencer': 'Por vencer (antes del dia %s)' % (cs.get('due_day') or 10),
                 'deuda': 'Deuda',
+                'becado': 'Beca (no paga)',
             }.get(cs['estado'], cs['estado'])
         except Exception:
             estado_label = ''

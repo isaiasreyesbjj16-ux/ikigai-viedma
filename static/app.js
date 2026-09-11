@@ -1957,23 +1957,24 @@ async function renderMisPagos(el) {
   const [me, pagos] = await Promise.all([api('/api/me'), api('/api/mis_pagos')]);
   const c = me.cuota || {};
   const estado = c.estado;
-  const cls = estado === 'al_dia' ? 'tag-al-dia' : estado === 'por_vencer' ? 'tag-por-vencer' : 'tag-deuda';
-  const lbl = estado === 'al_dia' ? 'Al día ✓' : estado === 'por_vencer' ? 'Por vencer' : 'Debe la cuota';
+  const cls = estado === 'al_dia' || estado === 'becado' ? 'tag-al-dia' : estado === 'por_vencer' ? 'tag-por-vencer' : 'tag-deuda';
+  const lbl = estado === 'al_dia' ? 'Al día ✓' : estado === 'becado' ? '🎖 Becado' : estado === 'por_vencer' ? 'Por vencer' : 'Debe la cuota';
   const aviso = pagos.aviso_pendiente;
+  const becado = estado === 'becado';
   el.innerHTML = `
     ${secHeader('Mi estado de cuenta')}
     <div class="card">
       <div class="flex space-between">
         <div>
-          <h3 style="margin:0">Cuota de ${c.mes}/${c.anio}</h3>
-          <p class="small">Tu cuota mensual es <b>$${num(c.cuota)}</b> · se considera paga hasta el día ${c.due_day} del mes${c.cargo_demora_pct ? ` · <b style="color:var(--warn)">si pagás después, se suma un ${c.cargo_demora_pct}% de recargo</b>` : ''}.</p>
+          <h3 style="margin:0">${becado ? '🎖 Estás becado' : 'Cuota de ' + c.mes + '/' + c.anio}</h3>
+          <p class="small">${becado ? 'No pagás cuota mensual: la academia te cubre la inscripción. No necesitás mandar comprobantes.' : `Tu cuota mensual es <b>$${num(c.cuota)}</b> · se considera paga hasta el día ${c.due_day} del mes${c.cargo_demora_pct ? ` · <b style="color:var(--warn)">si pagás después, se suma un ${c.cargo_demora_pct}% de recargo</b>` : ''}.`}</p>
         </div>
         <div class="tag ${cls}" style="font-size:14px;padding:6px 14px">${lbl}</div>
       </div>
-      <p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_alias ? ' por transferencia al alias/CVU de la academia' : ' en la academia'} y <b>sí o sí mandá el comprobante de pago</b>: sin comprobante, el pago no se confirma.</p>
+      ${becado ? '' : `<p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_alias ? ' por transferencia al alias/CVU de la academia' : ' en la academia'} y <b>sí o sí mandá el comprobante de pago</b>: sin comprobante, el pago no se confirma.</p>`}
       ${aviso ? `<p class="small mt" style="color:var(--warn)">⏳ Comprobante de ${aviso.mes}/${aviso.anio} enviado. Esperá la confirmación.</p>` : ''}
-      ${estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
-      ${me.mp_habilitado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" style="background:linear-gradient(90deg,#00c3ff,#0aa2e0);border:none" onclick="pagarMercadoPago()">💳 Pagar con MercadoPago</button>` : ''}
+      ${!becado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
+      ${!becado && me.mp_habilitado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" style="background:linear-gradient(90deg,#00c3ff,#0aa2e0);border:none" onclick="pagarMercadoPago()">💳 Pagar con MercadoPago</button>` : ''}
     </div>
     ${me.pago_alias ? `
     <div class="card">
@@ -2081,7 +2082,7 @@ async function renderAlumnos(el) {
       <div class="al-nombre">${esc(a.nombre)}${a.activo ? '' : '<div><span class="tag tag-deuda">inactivo</span></div>'}</div>
       <div class="small" style="margin-top:4px">${beltHTML(a.cinturon)} · ${a.edad != null ? a.edad + ' años' : '—'}</div>
       <div class="small">Modalidad: <span class="tag ${(a.gi_pref || 'Ambas').toLowerCase()}">${esc(a.gi_pref || 'Ambas')}</span></div>
-      <div class="small">Cuota: <b>$${num(a.familia ? a.familia.cuota_final : a.cuota_mensual)}</b> · <span class="tag ${cls}">${lbl}</span></div>
+      ${a.beca ? `<div class="small">🎖 <b>Becado</b> · no paga cuota</div>` : `<div class="small">Cuota: <b>$${num(a.familia ? a.familia.cuota_final : a.cuota_mensual)}</b> · <span class="tag ${cls}">${lbl}</span></div>`}
       ${a.familia ? `<div class="small">👨‍👩‍👧 <b>${esc(a.familia.nombre)}</b> ${a.familia.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}${a.familia.descuento ? `<span class="tag tag-por-vencer">ahorra $${num(a.familia.descuento)}</span>` : ''}</div>` : ''}
       ${a.en_pausa ? `<div class="small"><span class="tag tag-por-vencer">⏸ En pausa${a.pausa_hasta ? ' hasta ' + esc(a.pausa_hasta) : ''}</span></div>` : ''}
       <div class="small">🥋 <b>${a.asistencias}</b> asistencias</div>
@@ -2093,6 +2094,7 @@ async function renderAlumnos(el) {
         <button class="btn ghost small" onclick="verNotas(${a.id},'${esc(a.nombre)}')">📝</button>
         <button class="btn good small" onclick="notificarDeuda(${a.id})">🔔</button>
         ${USER.role !== 'alumno' ? `<button class="btn ${a.activo ? 'bad' : 'good'} small" onclick="toggleActivo(${a.id},${a.activo ? 1 : 0})">${a.activo ? '🚫 Desactivar' : '✅ Reactivar'}</button>` : ''}
+        ${USER.role !== 'alumno' ? `<button class="btn ${a.beca ? 'bad' : 'good'} small" title="${a.beca ? 'Quitar beca' : 'Becar (no paga nada)'}" onclick="toggleBeca(${a.id},${a.beca ? 1 : 0},'${esc(a.nombre)}')">🎖</button>` : ''}
         ${USER.role === 'admin' ? `<button class="btn ghost small" title="Convertir en profesor" onclick="hacerProfesor(${a.id},'${esc(a.nombre)}')">👨‍🏫</button>` : ''}
         ${USER.role === 'admin' ? `<button class="btn ghost small" onclick="reiniciarPassword(${a.id},'${esc(a.nombre)}')">🔑</button>` : ''}
         ${USER.role === 'admin' ? `<button class="btn bad small" onclick="eliminarAlumno(${a.id},'${esc(a.nombre)}')">🗑</button>` : ''}
@@ -2346,6 +2348,15 @@ async function hacerProfesor(id, nombre) {
     toast(`✅ ${nombre} ahora es profesor`);
     renderAlumnos($('#sec-alumnos')).catch(() => {});
     renderProfesores($('#sec-profesores')).catch(() => {});
+  } catch (e) { toast(e.message); }
+}
+
+async function toggleBeca(id, actual, nombre) {
+  if (actual ? !confirm(`¿Quitarle la beca a ${nombre}? Vuelve a pagar cuota.`) : !confirm(`¿Becar a ${nombre}? No paga más nada hasta que le quites la beca.`)) return;
+  try {
+    const r = await api('/api/alumnos/' + id + '/beca', { method: 'POST' });
+    toast(r.beca ? `🎖 ${nombre} quedó becado (no paga)` : `${nombre} ya no está becado`);
+    renderAlumnos($('#sec-alumnos')).catch(() => {});
   } catch (e) { toast(e.message); }
 }
 
