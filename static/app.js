@@ -1747,6 +1747,7 @@ async function renderPagos(el) {
         <div class="field"><label>Año</label><input type="number" id="pAnio" value="${anio}"></div>
         <div class="field" style="grid-column:1/-1"><label>Nota (opcional)</label><input type="text" id="pNota" placeholder="Ej: cuota agosto"></div>
         <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">💳 Registrar pago y notificar</button></div>
+        <div class="field" style="grid-column:1/-1"><button class="btn warn btn-block" type="button" style="margin-top:6px" onclick="abrirPagoFamilia()">👨‍👩‍👧 Pagar familia completa</button></div>
       </form>
     </div>
     <div class="card">
@@ -1788,6 +1789,49 @@ async function renderPagos(el) {
       renderPagos($('#sec-pagos'));
     } catch (err) { toast(err.message); }
   });
+}
+async function abrirPagoFamilia() {
+  const d = await api('/api/familias').catch(() => ({ familias: [] }));
+  const fams = (d.familias || []).filter(f => f.titular_id);
+  if (!fams.length) { toast('Todavía no hay grupos familiares con titular'); return; }
+  const mes = new Date().getMonth() + 1;
+  openModal(`
+    <h3>👨‍👩‍👧 Pagar familia completa</h3>
+    <p class="small" style="color:var(--muted);margin:0">Registra la cuota (con descuento familiar) de todos los integrantes de una vez. Saltea becados, profesores y los que ya pagaron ese mes.</p>
+    <div class="field"><label>Familia</label><select id="pfTitular">
+      <option value="">— elegí la familia —</option>
+      ${fams.map(f => {
+        const t = (f.miembros || []).find(m => m.id === f.titular_id) || {};
+        return `<option value="${f.titular_id}">${esc(t.nombre || '¿?')} · ${esc(f.nombre)} (${(f.miembros || []).length} integrantes · total $${num(f.total)}/mes)</option>`;
+      }).join('')}
+    </select></div>
+    <div class="field"><label>¿A qué profesor le pagó?</label><select id="pfProfe">
+      ${(PROFESORES_CACHE || []).map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}
+    </select></div>
+    <div class="grid2">
+      <div class="field"><label>Método</label><select id="pfMetodo">${METODOS.map(m => `<option>${m}</option>`).join('')}</select></div>
+      <div class="field"><label>Mes</label><select id="pfMes">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${i + 1 === mes ? 'selected' : ''}>${i + 1}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Año</label><input type="number" id="pfAnio" value="${new Date().getFullYear()}"></div>
+    <div class="field"><label>Nota (opcional)</label><input type="text" id="pfNota" placeholder="Ej: cuota familiar agosto"></div>
+    <button class="btn primary btn-block mt" onclick="pagarFamilia()">💳 Registrar pago de toda la familia</button>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+}
+async function pagarFamilia() {
+  const titular_id = +$('#pfTitular').value;
+  if (!titular_id) { toast('Elegí la familia'); return; }
+  try {
+    const res = await api('/api/pagos/familia', { method: 'POST', body: {
+      titular_id,
+      profesor_id: +$('#pfProfe').value,
+      mes: +$('#pfMes').value,
+      anio: +$('#pfAnio').value,
+      metodo: $('#pfMetodo').value,
+      nota: $('#pfNota').value } });
+    toast(`💳 ${res.cantidad} pagos registrados de ${esc(res.familia)} por $${num(res.total)}`);
+    closeModal();
+    renderPagos($('#sec-pagos'));
+  } catch (e) { toast(e.message); }
 }
 async function borrarPago(id) {
   if (!confirm('¿Eliminar este pago?')) return;
@@ -2081,6 +2125,7 @@ async function renderAlumnos(el) {
     return `<div class="alum-card" data-q="${esc((a.nombre + ' ' + (a.cinturon || '')).toLowerCase())}">
       ${avatarHTML(a.foto, a.nombre, 'lg')}
       <div class="al-nombre">${esc(a.nombre)}${a.role === 'profesor' ? '<span class="tag profesor">🧑‍🏫 Profesor</span>' : ''}${a.activo ? '' : '<div><span class="tag tag-deuda">inactivo</span></div>'}</div>
+      <div class="small" style="margin-top:4px">👤 @${esc(a.username || '—')}</div>
       <div class="small" style="margin-top:4px">${beltHTML(a.cinturon)} · ${a.edad != null ? a.edad + ' años' : '—'}</div>
       <div class="small">Modalidad: <span class="tag ${(a.gi_pref || 'Ambas').toLowerCase()}">${esc(a.gi_pref || 'Ambas')}</span></div>
       ${a.role === 'profesor' ? `<div class="small">🧑‍🏫 <b>Profesor</b> · no paga cuota</div>` : a.beca ? `<div class="small">🎖 <b>Becado</b> · no paga cuota</div>` : `<div class="small">Cuota: <b>$${num(a.familia ? a.familia.cuota_final : a.cuota_mensual)}</b> · <span class="tag ${cls}">${lbl}</span></div>`}
@@ -3029,7 +3074,8 @@ async function renderMuro(el) {
       <div class="small" style="color:var(--muted);margin:6px 0">🎥 ¿Subís una lucha? Pegá el link de YouTube o elegí un archivo, y escribí de quién es la lucha arriba.</div>
       <input type="text" id="muroLink" placeholder="Link de YouTube de la lucha (ej: https://youtube.com/watch?v=...)" style="width:100%;margin-bottom:6px">
       <input type="file" id="muroVideo" accept="video/mp4,video/webm,video/ogg,video/quicktime" style="margin-bottom:6px">
-      <input type="file" id="muroFoto" accept="image/*" style="margin-top:8px">
+      <label class="small" style="display:block;color:var(--muted);margin:6px 0 2px">📷 Subir fotos (hasta 5)</label>
+      <input type="file" id="muroFoto" accept="image/*" style="margin-bottom:6px">
       <button class="btn primary btn-block mt" onclick="publicarMuro()">Publicar</button>
     </div>
     <div id="muroFeed">
