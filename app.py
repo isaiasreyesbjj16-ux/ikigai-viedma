@@ -1232,6 +1232,9 @@ def not_found(e):
 
 @app.errorhandler(500)
 def server_error(e):
+    import traceback as _tb
+    print('SERVER_ERROR:', request.method, request.path)
+    _tb.print_exc()
     if request.path.startswith('/api/'):
         return jsonify({'error': 'Error interno del servidor'}), 500
     return render_template('error.html', message='Error del servidor. Revisá que el archivo data.db no esté bloqueado o roto.'), 500
@@ -2299,6 +2302,84 @@ def api_pagos_create():
     return jsonify({'ok': True, 'base': base, 'cargo': cargo, 'monto': monto})
 
 
+@app.route('/api/pagos/familia', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_pagos_familia():
+    """Registra la cuota (con descuento familiar) de TODOS los integrantes del
+    grupo de un titular, en un solo paso. Saltea becados, profesores y quien
+    ya tiene pago de ese mes/año."""
+    data = parse_json()
+    titular_id = to_int(data.get('titular_id'))
+    profesor_id = to_int(data.get('profesor_id'))
+    mes = to_int(data.get('mes')) or _hoy_academy().month
+    anio = to_int(data.get('anio')) or _hoy_academy().year
+    metodo = (data.get('metodo') or 'Efectivo').strip() or 'Efectivo'
+    nota = (data.get('nota') or '').strip()
+    if not titular_id:
+        return jsonify({'error': 'Elegí el titular de la familia'}), 400
+    db = get_db()
+    fam = db.execute('SELECT * FROM familias WHERE titular_id=?', (titular_id,)).fetchone()
+    if not fam:
+        return jsonify({'error': 'Ese alumno no es titular de ningún grupo familiar'}), 404
+    miem = db.execute(
+        """SELECT u.*, fm.relacion,
+                  (CASE WHEN f.titular_id=u.id THEN 1 ELSE 0 END) AS es_titular
+           FROM familia_miembros fm
+           JOIN users u ON u.id=fm.user_id
+           JOIN familias f ON f.id=fm.familia_id
+           WHERE fm.familia_id=?
+           ORDER BY es_titular DESC, u.nombre""", (fam['id'],)).fetchall()
+    if not miem:
+        return jsonify({'error': 'El grupo no tiene integrantes'}), 404
+    if profesor_id == -1 or profesor_id is None:
+        profesor_id = None
+    who = current_user()
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    creados = []
+    total = 0
+    for m in miem:
+        md = dict(m)
+        if md.get('beca') or md.get('role') == 'profesor':
+            continue
+        if db.execute('SELECT COUNT(*) AS n FROM pagos WHERE alumno_id=? AND mes=? AND anio=?',
+                      (m['id'], mes, anio)).fetchone()['n']:
+            continue
+        base, desc, final = familia_cuota(md, len(miem))
+        monto = final
+        if monto <= 0:
+            continue
+        _, cargo, monto_final = calcular_demora(monto, mes, anio)
+        if not data.get('aplicar_cargo', True):
+            monto_final = monto
+        pago_monto = int(round(monto_final))
+        db.execute(
+            """INSERT INTO pagos(alumno_id, profesor_id, monto, mes, anio, metodo, concepto, nota, fecha, registrado_por)
+               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (m['id'], profesor_id, pago_monto, mes, anio, metodo, 'Cuota mensual',
+             nota or ('Familia %s' % fam['nombre']), now, who['id']))
+        total += pago_monto
+        creados.append({'id': m['id'], 'nombre': m['nombre'], 'monto': pago_monto})
+    db.commit()
+    for cr in creados:
+        try:
+            notify(cr['id'], 'Pago registrado',
+                   'Tu pago de $%d por %d/%d fue registrado por %s (cuota familiar).' % (
+                       cr['monto'], mes, anio, who['nombre']),
+                   'pago')
+        except Exception:
+            pass
+    if profesor_id and profesor_id != who['id']:
+        try:
+            profe = db.execute('SELECT nombre FROM users WHERE id=?', (profesor_id,)).fetchone()
+            if profe:
+                notify(profesor_id, 'Recibiste un pago',
+                       'La familia %s te pagó $%d (%s).' % (fam['nombre'], total, metodo),
+                       'pago')
+        except Exception:
+            pass
+    return jsonify({'ok': True, 'cantidad': len(creados), 'total': total, 'familia': fam['nombre']})
+
+
 @app.route('/api/pagos/<int:pid>', methods=['DELETE'])
 @role_required('admin')
 def api_pagos_delete(pid):
@@ -2330,6 +2411,12 @@ def api_deudores():
 @app.route('/api/notify_deuda', methods=['POST'])
 @role_required('admin', 'profesor')
 def api_notify_deuda():
+    # Si algun aviso del before_request fallo en Postgres, su transaccion
+    # quedo abortada: healearla antes de tocar la base.
+    try:
+        get_db().execute('ROLLBACK')
+    except Exception:
+        pass
     data = parse_json()
     alumno_id = to_int(data.get('alumno_id'))
     if alumno_id:
@@ -2339,19 +2426,25 @@ def api_notify_deuda():
         ids = [r['id'] for r in rows if not en_pausa(r) and cuota_status(r)['estado'] in ('deuda', 'por_vencer')]
     who = current_user()['nombre']
     enviados = 0
+    errores = 0
     for aid in ids:
-        alumno = get_db().execute('SELECT * FROM users WHERE id=?', (aid,)).fetchone()
-        if not alumno:
-            continue
-        st = cuota_status(alumno)
-        if st.get('estado') in ('becado', 'profesor'):
-            continue
-        monto_txt = st['cuota'] if st['cuota'] else 0
-        notify(aid, 'Recordatorio de deuda',
-               f'{who} te recuerda que tu cuota de {st["mes"]}/{st["anio"]} ({monto_txt:,.0f} pesos) esta pendiente.'.replace(',', '.'),
-               'deuda')
-        enviados += 1
-    return jsonify({'ok': True, 'avisados': enviados})
+        try:
+            alumno = get_db().execute('SELECT * FROM users WHERE id=?', (aid,)).fetchone()
+            if not alumno:
+                continue
+            st = cuota_status(alumno)
+            if st.get('estado') in ('becado', 'profesor'):
+                continue
+            monto_txt = to_int(st.get('cuota') or 0)
+            notify(aid, 'Recordatorio de deuda',
+                   f'{who} te recuerda que tu cuota de {st["mes"]}/{st["anio"]} ({monto_txt:,.0f} pesos) esta pendiente.'.replace(',', '.'),
+                   'deuda')
+            enviados += 1
+        except Exception:
+            import traceback as _tb
+            _tb.print_exc()
+            errores += 1
+    return jsonify({'ok': True, 'avisados': enviados, 'errores': errores})
 
 
 # ---------------------------------------------------------------------------
