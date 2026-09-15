@@ -3088,7 +3088,7 @@ async function renderMuro(el) {
           </div>
           ${p.texto ? `<p style="margin:8px 0">${esc(p.texto)}</p>` : ''}
           ${p.video ? muroVideoHTML(p.video) : ''}
-          ${(p.fotos || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${p.fotos.slice(0,4).map(f => `<img src="${esc(f)}" style="max-width:150px;max-height:150px;border-radius:8px;object-fit:cover">`).join('')}</div>` : ''}
+          ${(p.fotos || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${p.fotos.slice(0,4).map(f => `<img loading="lazy" decoding="async" src="${esc(f)}" style="max-width:150px;max-height:150px;border-radius:8px;object-fit:cover;cursor:pointer" onclick="verFoto(this.src)">`).join('')}</div>` : ''}
         </div>`).join('') : '<div class="empty">Todavía no hay publicaciones.</div>'}
     </div>`;
 }
@@ -3107,7 +3107,7 @@ async function publicarMuro() {
   const file = $('#muroFoto').files && $('#muroFoto').files[0];
   let foto = null;
   if (file) {
-    try { foto = await leerArchivoBase64(file); } catch (e) {}
+    try { foto = file.size > 400 * 1024 ? await comprimirImagen(file, 900) : await leerArchivoBase64(file); } catch (e) {}
   }
   const link = $('#muroLink').value.trim();
   const vfile = $('#muroVideo').files && $('#muroVideo').files[0];
@@ -3136,6 +3136,31 @@ function leerArchivoBase64(file) {
     r.readAsDataURL(file);
   });
 }
+function comprimirImagen(file, maxW = 900) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      try {
+        const esc = Math.min(1, maxW / img.width);
+        const w = Math.max(1, Math.round(img.width * esc));
+        const h = Math.max(1, Math.round(img.height * esc));
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        cv.getContext('2d').drawImage(img, 0, 0, w, h);
+        res(cv.toDataURL('image/jpeg', 0.72));
+      } catch (e) { res(leerArchivoBase64(file)); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('imagen inválida')); };
+    img.src = url;
+  });
+}
+function verFoto(src) {
+  openModal(`
+    <div style="text-align:center"><img src="${esc(src)}" style="max-width:100%;max-height:82vh;border-radius:10px"></div>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+}
 async function borrarMuro(id) {
   if (!confirm('¿Eliminar esta publicación?')) return;
   try { await api('/api/muro/' + id, { method: 'DELETE' }); renderMuro($('#sec-muro')); }
@@ -3152,7 +3177,7 @@ async function renderGaleria(el) {
   el.innerHTML = `
     ${secHeader('🖼️ Galería de fotos')}
     <div class="card">${fotos.length
-      ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">${fotos.map(x => `<div style="position:relative"><img src="${esc(x.f)}" style="width:100%;height:120px;object-fit:cover;border-radius:10px" onclick="window.open('${esc(x.f)}','_blank')"><span class="small" style="position:absolute;bottom:4px;left:6px;color:#fff;text-shadow:0 1px 2px #000">${esc(x.n)}</span></div>`).join('')}</div>`
+      ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">${fotos.map(x => `<div style="position:relative"><img loading="lazy" decoding="async" src="${esc(x.f)}" style="width:100%;height:120px;object-fit:cover;border-radius:10px;cursor:pointer" onclick="verFoto(this.src)"><span class="small" style="position:absolute;bottom:4px;left:6px;color:#fff;text-shadow:0 1px 2px #000">${esc(x.n)}</span></div>`).join('')}</div>`
       : '<div class="empty">Aún no hay fotos. Publicá una en el Muro 🖼️</div>'}</div>`;
 }
 
