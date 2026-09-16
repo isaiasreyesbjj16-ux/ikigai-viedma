@@ -2945,22 +2945,30 @@ def api_cumpleanios():
     hoy = _hoy_academy()
     rows = get_db().execute(
         "SELECT id, nombre, nacimiento FROM users "
-        "WHERE role='alumno' AND activo=1 AND nacimiento IS NOT NULL AND nacimiento != ''"
+        "WHERE role IN ('alumno','profesor') AND activo=1 AND nacimiento IS NOT NULL AND nacimiento != ''"
     ).fetchall()
     res = []
     for r in rows:
         try:
-            parts = r['nacimiento'].split('-')
-            mes_n = int(parts[1])
-            dia = int(parts[2]) if len(parts) > 2 else 0
-            anio_n = int(parts[0]) if parts[0] else None
+            nac = r['nacimiento']
+            if isinstance(nac, (datetime, date)):
+                mes_n, dia, anio_n = nac.month, nac.day, nac.year
+            else:
+                m = re.search(r'(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,2})', str(nac))
+                if not m:
+                    continue
+                g1, g2, g3 = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                if g1 > 1900:
+                    anio_n, mes_n, dia = g1, g2, g3
+                else:
+                    dia, mes_n, anio_n = g1, g2, g3
             if mes_n == hoy.month:
                 res.append({'id': r['id'], 'nombre': r['nombre'], 'dia': dia,
                             'edad': (hoy.year - anio_n) if anio_n else None,
                             'hoy': dia == hoy.day})
         except Exception:
             pass
-    res.sort(key=lambda x: (0 if x['hoy'] else 1, x['dia']))
+    res.sort(key=lambda x: (0 if x['hoy'] else 1, x['dia'], x['nombre']))
     return jsonify({'cumpleanios': res, 'mes': hoy.month})
 
 
