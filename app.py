@@ -3234,6 +3234,11 @@ def api_videos_view(vid):
         return jsonify({'error': 'Video no encontrado'}), 404
     if u['role'] == 'alumno' and v['belt'] != 'Todos' and v['belt'] != u['cinturon']:
         return jsonify({'error': 'Este video no es para tu cinturón'}), 403
+    if u['role'] == 'alumno' and v['tipo'] == 'upload':
+        prog = db.execute('SELECT * FROM video_progress WHERE video_id=? AND user_id=?',
+                          (vid, u['id'])).fetchone()
+        if not prog or not prog['completado']:
+            return jsonify({'error': 'Terminá de ver el video para poder marcarlo como visto'}), 403
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     db.execute(
         'INSERT OR IGNORE INTO video_views(video_id, user_id, fecha) VALUES(?,?,?)',
@@ -3483,9 +3488,9 @@ def api_video_progress(vid):
         return jsonify({'error': 'Video no encontrado'}), 404
     completado = 1 if (dur > 0 and seg >= dur * 0.95) else 0
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
-    db.execute(
-        'INSERT OR IGNORE INTO video_views(video_id, user_id, fecha) VALUES(?,?,?)',
-        (vid, u['id'], now))
+    if completado:
+        db.execute('INSERT OR IGNORE INTO video_views(video_id, user_id, fecha) VALUES(?,?,?)',
+                   (vid, u['id'], now))
     db.execute(
         'INSERT INTO video_progress(video_id, user_id, segundos, duracion, completado, fecha) VALUES(?,?,?,?,?,?) '
         'ON CONFLICT(video_id, user_id) DO UPDATE SET segundos=excluded.segundos, duracion=excluded.duracion, completado=MAX(video_progress.completado, excluded.completado), fecha=excluded.fecha',

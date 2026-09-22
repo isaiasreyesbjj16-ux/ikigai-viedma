@@ -1105,12 +1105,32 @@ async function verVideo(vid) {
   const d = await api('/api/videos');
   const v = d.videos.find(x => x.id === vid);
   if (!v) return;
+  const esAlumno = USER.role === 'alumno';
+  const conCondicion = esAlumno && v.tipo !== 'link';
+  const habilitado = !conCondicion || v.completado;
+  const btnTxt = v.visto ? 'Ya lo vi' : 'Marcar como visto';
   openModal(`<h3>${esc(v.titulo)}</h3>
     <div class="post-media" style="margin:10px 0">${videoMediaHTML(v)}</div>
     <div class="flex space-between">
       <span class="${v.belt === 'Todos' ? 'tag alumno' : 'tag nogi'}">${esc(v.belt)}</span>
-      <button class="btn primary small" onclick="marcarVisto(${v.id}, this)">✓ ${v.visto ? 'Ya lo vi' : 'Marcar como visto'}</button>
-    </div>`);
+      <button class="btn primary small" id="modalMarcarVisto" ${habilitado ? '' : 'disabled style=opacity:.5'} onclick="marcarVisto(${v.id}, this)">✓ ${btnTxt}</button>
+    </div>
+    ${conCondicion && !v.completado ? '<div class="small" style="color:var(--muted);margin-top:6px">Mirá el video hasta el final para poder marcarlo como visto.</div>' : ''}`);
+  if (conCondicion && !v.completado) {
+    const vidEl = document.querySelector('#modalBody video');
+    if (vidEl) {
+      vidEl.addEventListener('ended', () => {
+        const b = $('#modalMarcarVisto');
+        if (b) {
+          b.disabled = false;
+          b.style.opacity = '';
+          b.classList.add('visto');
+          b.textContent = '✓ Ya lo vi';
+        }
+        toast('Terminaste el video ✓');
+      });
+    }
+  }
 }
 
 /* =====================================================================
