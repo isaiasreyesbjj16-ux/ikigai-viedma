@@ -1057,11 +1057,22 @@ function subirVideo() {
     btn.disabled = true; btn.textContent = 'Publicando...';
     try {
       if (file) {
+        if (file.size > 150 * 1024 * 1024) { toast('El video es muy grande (máx 150MB). Para videos largos usá un link de YouTube.'); btn.disabled = false; btn.textContent = 'Publicar video'; return; }
         const fd = new FormData();
         fd.append('video', file); fd.append('titulo', titulo); fd.append('descripcion', desc); fd.append('belt', belt); fd.append('categoria', categoria);
-        const res = await fetch('/api/videos/upload', { method: 'POST', body: fd });
-        const d = await res.json();
-        if (!res.ok) throw new Error(d.error || 'Error al subir');
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 5 * 60 * 1000);
+        let res;
+        try {
+          res = await fetch('/api/videos/upload', { method: 'POST', body: fd, signal: ctrl.signal });
+        } catch (e) {
+          if (e && e.name === 'AbortError') throw new Error('El envío tardó demasiado. Probá con un video más corto o un link de YouTube.');
+          throw new Error('No se pudo conectar al servidor. Revisá tu conexión e intentá de nuevo.');
+        }
+        clearTimeout(timer);
+        let d = {};
+        try { d = await res.json(); } catch (e) { d = {}; }
+        if (!res.ok) throw new Error(d.error || ('Error al subir (código ' + res.status + '). Probá con un video más chico o un link de YouTube.'));
       } else {
         await api('/api/videos', { method: 'POST', body: { titulo, descripcion: desc, belt, categoria, url: link } });
       }
