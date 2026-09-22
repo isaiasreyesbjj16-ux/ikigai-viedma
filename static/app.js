@@ -1057,7 +1057,7 @@ function subirVideo() {
     btn.disabled = true; btn.textContent = 'Publicando...';
     try {
       if (file) {
-        if (file.size > 150 * 1024 * 1024) { toast('El video es muy grande (máx 150MB). Para videos largos usá un link de YouTube.'); btn.disabled = false; btn.textContent = 'Publicar video'; return; }
+        if (file.size > 350 * 1024 * 1024) { toast('El video es muy grande (máx 350MB). Para videos largos usá un link de YouTube.'); btn.disabled = false; btn.textContent = 'Publicar video'; return; }
         const fd = new FormData();
         fd.append('video', file); fd.append('titulo', titulo); fd.append('descripcion', desc); fd.append('belt', belt); fd.append('categoria', categoria);
         const ctrl = new AbortController();
