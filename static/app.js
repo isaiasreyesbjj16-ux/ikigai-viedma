@@ -951,9 +951,21 @@ async function videoTerminado(e) {
   if (!id) return;
   try {
     const dur = _durDe(vid);
-    await api('/api/videos/' + id + '/progress', { method: 'POST',
+    const r = await api('/api/videos/' + id + '/progress', { method: 'POST',
       body: { segundos: Math.floor(vid.duration || vid.currentTime || 0), duracion: Math.floor(dur), watched: Math.floor(_watchState[id] ? _watchState[id].watched : 0) } });
-    toast('🎉 Video completado');
+    const ok = r && r.completado;
+    if (ok) {
+      const b = $('#modalMarcarVisto');
+      if (b) {
+        b.disabled = false;
+        b.style.opacity = '';
+        b.classList.add('visto');
+        b.textContent = '✓ Ya lo vi';
+      }
+      toast('🎉 Video completado');
+    } else {
+      toast('Todavía no completaste el video: miralo hasta el final sin saltar.');
+    }
     const sec = $('#sec-videos');
     if (sec && sec.classList.contains('active')) renderVideos(sec);
   } catch (err) {}
@@ -1149,7 +1161,7 @@ async function verVideo(vid) {
   if (conCondicion && !v.completado) {
     const vidEl = document.querySelector('#modalBody video');
     if (vidEl) {
-      const recheck = async () => {
+      const recheck = async (intentos = 5) => {
         const b = $('#modalMarcarVisto');
         try {
           const d2 = await api('/api/videos');
@@ -1160,9 +1172,14 @@ async function verVideo(vid) {
             b.classList.add('visto');
             b.textContent = '✓ Ya lo vi';
             toast('Terminaste el video ✓');
+          } else if (intentos > 0) {
+            setTimeout(() => recheck(intentos - 1), 700);
+          } else if (b) {
+            toast('Todavía no completaste el video: miralo hasta el final sin saltar.');
           }
         } catch (err) {
-          if (b) { b.disabled = false; b.style.opacity = ''; }
+          if (intentos) setTimeout(() => recheck(intentos - 1), 700);
+          else if (b) { b.disabled = false; b.style.opacity = ''; }
         }
       };
       vidEl.addEventListener('ended', recheck);
