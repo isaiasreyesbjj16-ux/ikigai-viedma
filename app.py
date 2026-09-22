@@ -17,7 +17,8 @@ from dbadapter import DB_MODE
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.db')
-app.config['MAX_CONTENT_LENGTH'] = 1100 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 150 * 1024 * 1024
+MAX_VIDEO_BYTES = 150 * 1024 * 1024
 
 # Token secreto embebido en el QR físico de asistencia. Solo quien escanea
 # el QR del gimnasio (que contiene este token) puede registrar su asistencia.
@@ -1227,6 +1228,13 @@ def recibo(pid):
 def not_found(e):
     if request.path.startswith('/api/') or request.path.startswith('/static/'):
         return jsonify({'error': 'No encontrado'}), 404
+    return redirect(url_for('index'))
+
+
+@app.errorhandler(413)
+def too_large(e):
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'El archivo es demasiado grande (máx %dMB). Para videos largos usá un link de YouTube.' % (MAX_VIDEO_BYTES // (1024 * 1024))}), 413
     return redirect(url_for('index'))
 
 
@@ -3184,8 +3192,8 @@ def api_videos_upload():
     raw = f.read()
     if not raw:
         return jsonify({'error': 'El archivo está vacío'}), 400
-    if len(raw) > 600 * 1024 * 1024:
-        return jsonify({'error': 'El video es muy grande (máx 600MB). Para videos largos usá un link de YouTube.'}), 400
+    if len(raw) > MAX_VIDEO_BYTES:
+        return jsonify({'error': 'El video es muy grande (máx %dMB). Para videos largos usá un link de YouTube.' % (MAX_VIDEO_BYTES // (1024 * 1024))}), 400
     titulo = (request.form.get('titulo') or '').strip() or os.path.splitext(f.filename)[0]
     belt = (request.form.get('belt') or 'Todos').strip()
     categoria = (request.form.get('categoria') or 'adulto').strip()
