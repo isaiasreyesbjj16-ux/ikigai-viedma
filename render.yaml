@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn wsgi:app --workers 1 --threads 4 --timeout 300 --access-logfile -
+    startCommand: gunicorn wsgi:app --workers 1 --threads 4 --timeout 900 --access-logfile -
     healthCheckPath: /api/vapid_public_key
     envVars:
       - key: DB_MODE
