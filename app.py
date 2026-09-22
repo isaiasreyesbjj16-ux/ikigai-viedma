@@ -17,8 +17,8 @@ from dbadapter import DB_MODE
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.db')
-app.config['MAX_CONTENT_LENGTH'] = 150 * 1024 * 1024
-MAX_VIDEO_BYTES = 150 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 350 * 1024 * 1024
+MAX_VIDEO_BYTES = 350 * 1024 * 1024
 
 # Token secreto embebido en el QR físico de asistencia. Solo quien escanea
 # el QR del gimnasio (que contiene este token) puede registrar su asistencia.
