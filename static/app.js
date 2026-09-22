@@ -912,8 +912,9 @@ async function trackProgreso(e) {
   if (trackProgreso._last === id && (Date.now() - trackProgreso._time) < 5000) return;
   trackProgreso._last = id; trackProgreso._time = Date.now();
   try {
+    const dur = (isFinite(vid.duration) && vid.duration > 0) ? vid.duration : (vid.currentTime || 0);
     await api('/api/videos/' + id + '/progress', { method: 'POST',
-      body: { segundos: Math.floor(vid.currentTime), duracion: Math.floor(vid.duration || 0) } });
+      body: { segundos: Math.floor(vid.currentTime), duracion: Math.floor(dur) } });
   } catch (e) {}
 }
 async function videoTerminado(e) {
@@ -921,8 +922,9 @@ async function videoTerminado(e) {
   const id = vid.dataset.vid;
   if (!id) return;
   try {
+    const dur = (isFinite(vid.duration) && vid.duration > 0) ? vid.duration : (vid.currentTime || 0);
     await api('/api/videos/' + id + '/progress', { method: 'POST',
-      body: { segundos: Math.floor(vid.duration || 0), duracion: Math.floor(vid.duration || 0) } });
+      body: { segundos: Math.floor(vid.duration || vid.currentTime || 0), duracion: Math.floor(dur) } });
     toast('🎉 Video completado');
     const sec = $('#sec-videos');
     if (sec && sec.classList.contains('active')) renderVideos(sec);
@@ -1119,15 +1121,23 @@ async function verVideo(vid) {
   if (conCondicion && !v.completado) {
     const vidEl = document.querySelector('#modalBody video');
     if (vidEl) {
-      vidEl.addEventListener('ended', () => {
+      vidEl.addEventListener('ended', async () => {
         const b = $('#modalMarcarVisto');
-        if (b) {
-          b.disabled = false;
-          b.style.opacity = '';
-          b.classList.add('visto');
-          b.textContent = '✓ Ya lo vi';
+        try {
+          const d2 = await api('/api/videos');
+          const v2 = d2.videos.find(x => x.id === vid);
+          if (b && v2 && v2.completado) {
+            b.disabled = false;
+            b.style.opacity = '';
+            b.classList.add('visto');
+            b.textContent = '✓ Ya lo vi';
+            toast('Terminaste el video ✓');
+          } else if (b) {
+            toast('El video no llegó al final. Reproducilo hasta el final para marcarlo como visto.');
+          }
+        } catch (err) {
+          if (b) { b.disabled = false; b.style.opacity = ''; }
         }
-        toast('Terminaste el video ✓');
       });
     }
   }
