@@ -3523,10 +3523,18 @@ def api_video_progress(vid):
     if completado:
         db.execute('INSERT OR IGNORE INTO video_views(video_id, user_id, fecha) VALUES(?,?,?)',
                    (vid, u['id'], now))
-    db.execute(
-        'INSERT INTO video_progress(video_id, user_id, segundos, duracion, completado, fecha) VALUES(?,?,?,?,?,?) '
-        'ON CONFLICT(video_id, user_id) DO UPDATE SET segundos=excluded.segundos, duracion=excluded.duracion, completado=MAX(video_progress.completado, excluded.completado), fecha=excluded.fecha',
-        (vid, u['id'], seg, dur, completado, now))
+    prev = db.execute(
+        'SELECT completado FROM video_progress WHERE video_id=? AND user_id=?',
+        (vid, u['id'])).fetchone()
+    if prev is not None:
+        if not prev['completado']:
+            db.execute(
+                'UPDATE video_progress SET segundos=?, duracion=?, completado=?, fecha=? WHERE video_id=? AND user_id=?',
+                (seg, dur, completado, now, vid, u['id']))
+    else:
+        db.execute(
+            'INSERT INTO video_progress(video_id, user_id, segundos, duracion, completado, fecha) VALUES(?,?,?,?,?,?)',
+            (vid, u['id'], seg, dur, completado, now))
     db.commit()
     if completado and u['role'] == 'alumno':
         chequear_logros(u['id'])
