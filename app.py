@@ -3221,7 +3221,36 @@ def api_video_archivo(vid):
         raw = base64.b64decode(v['data'])
     except Exception:
         return jsonify({'error': 'Video dañado'}), 500
-    return Response(raw, mimetype=mime, headers={'Accept-Ranges': 'bytes'})
+    length = len(raw)
+    range_hdr = request.headers.get('Range')
+    base_headers = {'Accept-Ranges': 'bytes', 'Content-Type': mime}
+    if not range_hdr:
+        base_headers['Content-Length'] = str(length)
+        return Response(raw, status=200, headers=base_headers)
+    m = re.match(r'bytes=(\d*)-(\d*)', range_hdr)
+    if not m:
+        base_headers['Content-Length'] = str(length)
+        return Response(raw, status=200, headers=base_headers)
+    s, e = m.group(1), m.group(2)
+    start = int(s) if s else None
+    end = int(e) if e else None
+    if start is None:
+        # rango sufijo: bytes=-N (ultimos N bytes)
+        n = end or 0
+        start = max(0, length - n)
+        end = length - 1
+    else:
+        if end is None:
+            end = length - 1
+        else:
+            end = min(end, length - 1)
+    if start >= length or start > end:
+        return Response(status=416, headers={'Content-Range': 'bytes */%d' % length})
+    body = raw[start:end + 1]
+    headers = dict(base_headers)
+    headers['Content-Range'] = 'bytes %d-%d/%d' % (start, end, length)
+    headers['Content-Length'] = str(len(body))
+    return Response(body, status=206, headers=headers)
 
 
 @app.route('/api/videos/<int:vid>/view', methods=['POST'])
@@ -3482,6 +3511,8 @@ def api_video_progress(vid):
     data = parse_json()
     seg = max(0, to_int(data.get('segundos')) or 0)
     dur = max(0, to_int(data.get('duracion')) or 0)
+    if dur <= 0 and seg > 0:
+        dur = seg
     db = get_db()
     v = db.execute('SELECT * FROM videos WHERE id=?', (vid,)).fetchone()
     if not v:
