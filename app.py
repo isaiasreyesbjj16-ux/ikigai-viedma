@@ -3511,13 +3511,14 @@ def api_video_progress(vid):
     data = parse_json()
     seg = max(0, to_int(data.get('segundos')) or 0)
     dur = max(0, to_int(data.get('duracion')) or 0)
+    watched = max(0, to_int(data.get('watched')) or 0)
     if dur <= 0 and seg > 0:
         dur = seg
     db = get_db()
     v = db.execute('SELECT * FROM videos WHERE id=?', (vid,)).fetchone()
     if not v:
         return jsonify({'error': 'Video no encontrado'}), 404
-    completado = 1 if (dur > 0 and seg >= dur * 0.95) else 0
+    completado = 1 if (dur > 0 and seg >= dur * 0.95 and watched >= dur * 0.8) else 0
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     if completado:
         db.execute('INSERT OR IGNORE INTO video_views(video_id, user_id, fecha) VALUES(?,?,?)',

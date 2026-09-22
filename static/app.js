@@ -891,7 +891,7 @@ function videoMediaHTML(v) {
     if (yid) return `<iframe src="https://www.youtube.com/embed/${yid}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
     return `<div class="post-media-link"><a href="${esc(v.url)}" target="_blank" rel="noopener">🔗 ${esc(v.url)}</a></div>`;
   }
-  return `<video controls preload="metadata" playsinline data-vid="${v.id}" ontimeupdate="trackProgreso(event)" onended="videoTerminado(event)"><source src="${esc(v.url)}"></video>`;
+  return `<video controls preload="metadata" playsinline data-vid="${v.id}" ontimeupdate="trackProgreso(event)" onpause="flushProgreso(event)" onended="videoTerminado(event)"><source src="${esc(v.url)}"></video>`;
 }
 
 function applyTheme(t) {
@@ -904,17 +904,45 @@ function applyTheme(t) {
     : '<path fill="currentColor" d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/>';
 }
 
+const _watchState = {};
+function _onTick(video) {
+  const id = video.dataset.vid;
+  if (!id) return;
+  const st = _watchState[id] || (_watchState[id] = { last: -1, watched: 0 });
+  const t = video.currentTime;
+  if (st.last >= 0) {
+    const d = t - st.last;
+    if (d > 0 && d <= 3) st.watched += d;
+  }
+  st.last = t;
+}
+function _durDe(video) {
+  return (isFinite(video.duration) && video.duration > 0) ? video.duration : (video.currentTime || 0);
+}
 async function trackProgreso(e) {
   const vid = e.currentTarget;
   const id = vid.dataset.vid;
   if (!id) return;
-  // guarda cada ~5s
-  if (trackProgreso._last === id && (Date.now() - trackProgreso._time) < 5000) return;
+  _onTick(vid);
+  const dur = _durDe(vid);
+  const seg = Math.floor(vid.currentTime);
+  const cerca = dur > 0 && seg >= dur * 0.9;
+  if (!cerca && trackProgreso._last === id && (Date.now() - trackProgreso._time) < 5000) return;
   trackProgreso._last = id; trackProgreso._time = Date.now();
   try {
-    const dur = (isFinite(vid.duration) && vid.duration > 0) ? vid.duration : (vid.currentTime || 0);
     await api('/api/videos/' + id + '/progress', { method: 'POST',
-      body: { segundos: Math.floor(vid.currentTime), duracion: Math.floor(dur) } });
+      body: { segundos: seg, duracion: Math.floor(dur), watched: Math.floor(_watchState[id] ? _watchState[id].watched : 0) } });
+  } catch (e) {}
+}
+async function flushProgreso(e) {
+  const vid = e.currentTarget;
+  const id = vid.dataset.vid;
+  if (!id) return;
+  _onTick(vid);
+  const dur = _durDe(vid);
+  try {
+    await api('/api/videos/' + id + '/progress', { method: 'POST',
+      body: { segundos: Math.floor(vid.currentTime || dur || 0), duracion: Math.floor(dur), watched: Math.floor(_watchState[id] ? _watchState[id].watched : 0) } });
   } catch (e) {}
 }
 async function videoTerminado(e) {
@@ -922,9 +950,9 @@ async function videoTerminado(e) {
   const id = vid.dataset.vid;
   if (!id) return;
   try {
-    const dur = (isFinite(vid.duration) && vid.duration > 0) ? vid.duration : (vid.currentTime || 0);
+    const dur = _durDe(vid);
     await api('/api/videos/' + id + '/progress', { method: 'POST',
-      body: { segundos: Math.floor(vid.duration || vid.currentTime || 0), duracion: Math.floor(dur) } });
+      body: { segundos: Math.floor(vid.duration || vid.currentTime || 0), duracion: Math.floor(dur), watched: Math.floor(_watchState[id] ? _watchState[id].watched : 0) } });
     toast('🎉 Video completado');
     const sec = $('#sec-videos');
     if (sec && sec.classList.contains('active')) renderVideos(sec);
@@ -1121,7 +1149,7 @@ async function verVideo(vid) {
   if (conCondicion && !v.completado) {
     const vidEl = document.querySelector('#modalBody video');
     if (vidEl) {
-      vidEl.addEventListener('ended', async () => {
+      const recheck = async () => {
         const b = $('#modalMarcarVisto');
         try {
           const d2 = await api('/api/videos');
@@ -1132,13 +1160,13 @@ async function verVideo(vid) {
             b.classList.add('visto');
             b.textContent = '✓ Ya lo vi';
             toast('Terminaste el video ✓');
-          } else if (b) {
-            toast('El video no llegó al final. Reproducilo hasta el final para marcarlo como visto.');
           }
         } catch (err) {
           if (b) { b.disabled = false; b.style.opacity = ''; }
         }
-      });
+      };
+      vidEl.addEventListener('ended', recheck);
+      vidEl.addEventListener('pause', recheck);
     }
   }
 }
