@@ -7,6 +7,8 @@ import secrets
 import time
 import zipfile
 import threading
+import urllib.request
+import urllib.error
 from datetime import datetime, date, timedelta, timezone
 
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template, g, send_from_directory, Response
@@ -20,6 +22,82 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.db')
 app.config['MAX_CONTENT_LENGTH'] = 150 * 1024 * 1024
 MAX_VIDEO_BYTES = 150 * 1024 * 1024
+
+# ---------------------------------------------------------------------------
+# Supabase Storage (híbrido: videos cortos → Storage; largos → base64 en DB)
+# Con SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY activos, los videos de hasta
+# STORAGE_MAX se suben al bucket público y dejan de vivir en la base (menos
+# RAM al servirlos y sin hinchar la base). Si falta la config o el bucket
+# falla, se conserva el comportamiento viejo (base64 en la DB).
+# ---------------------------------------------------------------------------
+SUPABASE_URL = (os.environ.get('SUPABASE_URL') or '').rstrip('/')
+SUPABASE_KEY = os.environ.get('SUPABASE_SERVICE_ROLE_KEY') or ''
+SUPABASE_BUCKET = (os.environ.get('SUPABASE_BUCKET') or 'ikigai-media').strip().lower()
+STORAGE_MAX = 50 * 1024 * 1024
+_storage_ready = [False]
+
+EXT_MIME = {'.mp4': 'video/mp4', '.webm': 'video/webm', '.ogg': 'video/ogg', '.mov': 'video/quicktime'}
+
+
+def _storage_enabled():
+    return bool(SUPABASE_URL and SUPABASE_KEY)
+
+
+def _storage_ext(mime):
+    for e, m in EXT_MIME.items():
+        if m == mime:
+            return e
+    return '.mp4'
+
+
+def _storage_request(method, path, body=None, ctype=None, timeout=120):
+    req = urllib.request.Request(SUPABASE_URL + '/storage/v1' + path, data=body, method=method)
+    req.add_header('apikey', SUPABASE_KEY)
+    req.add_header('Authorization', 'Bearer ' + SUPABASE_KEY)
+    if ctype:
+        req.add_header('Content-Type', ctype)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
+def _storage_bucket_ok():
+    """Crea el bucket público la primera vez; no falla si ya existe."""
+    if not _storage_enabled():
+        return False
+    if _storage_ready[0]:
+        return True
+    body = json.dumps({'name': SUPABASE_BUCKET, 'public': True,
+                       'file_size_limit': STORAGE_MAX}).encode('utf-8')
+    status, _ = _storage_request('POST', '/bucket', body=body, ctype='application/json')
+    if status in (200, 201, 400, 409, 423):
+        _storage_ready[0] = True
+        return True
+    return False
+
+
+def _storage_upload(key, raw, ctype):
+    """Sube bytes al bucket. Devuelve la URL pública o None si falló."""
+    if _storage_bucket_ok():
+        status, _ = _storage_request(
+            'POST', '/object/%s/%s' % (SUPABASE_BUCKET, key), body=raw, ctype=ctype or 'video/mp4')
+        if status in (200, 201):
+            return '%s/storage/v1/object/public/%s/%s' % (SUPABASE_URL, SUPABASE_BUCKET, key)
+    return None
+
+
+def _storage_delete(url):
+    """Borra el objeto del Storage si la URL apunta a nuestro bucket."""
+    if not _storage_enabled() or not url:
+        return
+    prefix = SUPABASE_URL + '/storage/v1/object/public/' + SUPABASE_BUCKET + '/'
+    if url.startswith(prefix):
+        try:
+            _storage_request('DELETE', '/object/%s/%s' % (SUPABASE_BUCKET, url[len(prefix):]))
+        except Exception:
+            pass
 
 # Token secreto embebido en el QR físico de asistencia. Solo quien escanea
 # el QR del gimnasio (que contiene este token) puede registrar su asistencia.
@@ -3216,18 +3294,34 @@ def api_videos_upload():
     ext = os.path.splitext(f.filename)[1].lower()
     if ext not in ('.mp4', '.webm', '.ogg', '.mov'):
         return jsonify({'error': 'Formato no permitido (usa MP4, WebM o MOV)'}), 400
-    raw = f.read()
-    if not raw:
+    f.stream.seek(0, 2)
+    size = f.stream.tell()
+    f.stream.seek(0)
+    if size <= 0:
         return jsonify({'error': 'El archivo está vacío'}), 400
-    if len(raw) > MAX_VIDEO_BYTES:
+    if size > MAX_VIDEO_BYTES:
         return jsonify({'error': 'El video es muy grande (máx %dMB). Para videos largos usá un link de YouTube.' % (MAX_VIDEO_BYTES // (1024 * 1024))}), 400
     titulo = (request.form.get('titulo') or '').strip() or os.path.splitext(f.filename)[0]
     belt = (request.form.get('belt') or 'Todos').strip()
     categoria = (request.form.get('categoria') or 'adulto').strip()
     desc = (request.form.get('descripcion') or '').strip()
-    data_b64 = base64.b64encode(raw).decode('ascii')
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     db = get_db()
+    # Videos cortos (≤ STORAGE_MAX) con Storage configurado → Supabase Storage,
+    # que se sirve por CDN sin vivir en la base ni ocupar RAM del servidor.
+    if size <= STORAGE_MAX and _storage_enabled():
+        raw = f.read()
+        pub = _storage_upload('videos/%s%s' % (secrets.token_hex(8), ext),
+                              raw, EXT_MIME.get(ext, 'video/mp4'))
+        if pub:
+            cur = db.execute(
+                'INSERT INTO videos(titulo, descripcion, belt, categoria, url, tipo, subido_por, fecha, data) VALUES(?,?,?,?,?,?,?,?,?)',
+                (titulo, desc, belt, categoria, pub, 'upload', u['id'], now, ''))
+            db.commit()
+            return jsonify({'ok': True, 'id': cur.lastrowid})
+        f.stream.seek(0)
+    raw = f.read()
+    data_b64 = base64.b64encode(raw).decode('ascii')
     cur = db.execute(
         'INSERT INTO videos(titulo, descripcion, belt, categoria, url, tipo, subido_por, fecha, data) VALUES(?,?,?,?,?,?,?,?,?)',
         (titulo, desc, belt, categoria, '/api/video/0/archivo', 'upload', u['id'], now, data_b64))
@@ -3273,15 +3367,21 @@ def _video_range_response(raw, mime):
 @app.route('/api/video/<int:vid>/archivo')
 def api_video_archivo(vid):
     v = get_db().execute('SELECT url, data FROM videos WHERE id=?', (vid,)).fetchone()
-    if not v or not v['data']:
+    if not v:
         return jsonify({'error': 'Video no encontrado'}), 404
-    ext = os.path.splitext(v['url'])[1].lower()
-    mime = {'.mp4': 'video/mp4', '.webm': 'video/webm', '.ogg': 'video/ogg', '.mov': 'video/quicktime'}.get(ext, 'video/mp4')
-    try:
-        raw = base64.b64decode(v['data'])
-    except Exception:
-        return jsonify({'error': 'Video dañado'}), 500
-    return _video_range_response(raw, mime)
+    if v['data']:
+        ext = os.path.splitext(v['url'])[1].lower()
+        mime = EXT_MIME.get(ext, 'video/mp4')
+        try:
+            raw = base64.b64decode(v['data'])
+        except Exception:
+            return jsonify({'error': 'Video dañado'}), 500
+        return _video_range_response(raw, mime)
+    # Video en Supabase Storage: el front usa la URL pública directo; si algo
+    # hace referencia al endpoint viejo, lo redirigimos sin tocar la RAM.
+    if v['url'] and v['url'].startswith(SUPABASE_URL):
+        return redirect(v['url'], code=302)
+    return jsonify({'error': 'Video no encontrado'}), 404
 
 
 @app.route('/api/videos/<int:vid>/view', methods=['POST'])
@@ -3329,6 +3429,7 @@ def api_videos_delete(vid):
         return jsonify({'error': 'Video no encontrado'}), 404
     if u['role'] != 'admin' and v['subido_por'] != u['id']:
         return jsonify({'error': 'Solo el profesor que lo subió o el admin pueden borrarlo'}), 403
+    _storage_delete(v['url'])
     db.execute('DELETE FROM videos WHERE id=?', (vid,))
     db.commit()
     return jsonify({'ok': True})
@@ -3781,6 +3882,20 @@ def api_muro_crear():
     if link:
         db.execute('INSERT INTO muro_videos(muro_id, tipo, url, data) VALUES(?,?,?,?)', (mid, 'link', link, ''))
     elif archivo:
+        m = re.match(r'^data:([^;]+);base64,(.+)$', archivo, re.S)
+        if m and _storage_enabled() and m.group(1) in EXT_MIME.values():
+            try:
+                raw = base64.b64decode(m.group(2))
+            except Exception:
+                raw = b''
+            if len(raw) <= STORAGE_MAX:
+                pub = _storage_upload('muro/%s%s' % (secrets.token_hex(8), _storage_ext(m.group(1))),
+                                      raw, m.group(1))
+                if pub:
+                    db.execute('INSERT INTO muro_videos(muro_id, tipo, url, data) VALUES(?,?,?,?)',
+                               (mid, 'upload', pub, ''))
+                    db.commit()
+                    return jsonify({'ok': True, 'id': mid})
         vid = db.execute('INSERT INTO muro_videos(muro_id, tipo, url, data) VALUES(?,?,?,?)',
                          (mid, 'upload', '/api/muro_video/0', archivo)).lastrowid
         db.execute('UPDATE muro_videos SET url=? WHERE id=?', ('/api/muro_video/%d' % vid, vid))
@@ -3793,6 +3908,8 @@ def api_muro_crear():
 def api_muro_borrar(muro_id):
     u = current_user()
     db = get_db()
+    for r in db.execute('SELECT url FROM muro_videos WHERE muro_id=?', (muro_id,)).fetchall():
+        _storage_delete(r['url'])
     db.execute('DELETE FROM muro_videos WHERE muro_id=?', (muro_id,))
     db.execute('DELETE FROM muro WHERE id=? AND user_id=?', (muro_id, u['id']))
     db.commit()
@@ -3802,17 +3919,21 @@ def api_muro_borrar(muro_id):
 @app.route('/api/muro_video/<int:muro_vid>')
 @login_required
 def api_muro_video(muro_vid):
-    r = get_db().execute('SELECT data FROM muro_videos WHERE id=?', (muro_vid,)).fetchone()
-    if not r or not r['data']:
+    r = get_db().execute('SELECT url, data FROM muro_videos WHERE id=?', (muro_vid,)).fetchone()
+    if not r:
         return jsonify({'error': 'Video no encontrado'}), 404
-    m = re.match(r'^data:([^;]+);base64,(.+)$', r['data'], re.S)
-    if not m:
-        return jsonify({'error': 'Video dañado'}), 500
-    try:
-        raw = base64.b64decode(m.group(2))
-    except Exception:
-        return jsonify({'error': 'Video dañado'}), 500
-    return _video_range_response(raw, m.group(1))
+    if r['data']:
+        m = re.match(r'^data:([^;]+);base64,(.+)$', r['data'], re.S)
+        if not m:
+            return jsonify({'error': 'Video dañado'}), 500
+        try:
+            raw = base64.b64decode(m.group(2))
+        except Exception:
+            return jsonify({'error': 'Video dañado'}), 500
+        return _video_range_response(raw, m.group(1))
+    if r['url'] and r['url'].startswith(SUPABASE_URL):
+        return redirect(r['url'], code=302)
+    return jsonify({'error': 'Video no encontrado'}), 404
 
 
 # ---------------------------------------------------------------------------
