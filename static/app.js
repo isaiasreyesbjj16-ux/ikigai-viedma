@@ -1113,7 +1113,7 @@ function subirVideo() {
     btn.disabled = true; btn.textContent = 'Publicando...';
     try {
       if (file) {
-        if (file.size > 350 * 1024 * 1024) { toast('El video es muy grande (máx 350MB). Para videos largos usá un link de YouTube.'); btn.disabled = false; btn.textContent = 'Publicar video'; return; }
+        if (file.size > 150 * 1024 * 1024) { toast('El video es muy grande (máx 150MB). Para videos largos usá un link de YouTube.'); btn.disabled = false; btn.textContent = 'Publicar video'; return; }
         const fd = new FormData();
         fd.append('video', file); fd.append('titulo', titulo); fd.append('descripcion', desc); fd.append('belt', belt); fd.append('categoria', categoria);
         const ctrl = new AbortController();
@@ -1151,7 +1151,7 @@ async function borrarVideo(vid) {
 
 function vidThumb(v) {
   return `<div class="vid-thumb" onclick="verVideo(${v.id})" title="${esc(v.titulo)}">
-    <video muted playsinline preload="metadata"><source src="${esc(v.url)}"></video>
+    <video muted playsinline preload="none"><source src="${esc(v.url)}"></video>
     <span class="play">▶</span>
     <span class="vid-belt">${esc(v.belt)}</span>
   </div>`;
@@ -3195,7 +3195,7 @@ function muroVideoHTML(v) {
     if (yid) return `<div class="post-media"><iframe src="https://www.youtube.com/embed/${yid}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>`;
     return `<div class="post-media post-media-link"><a href="${esc(v.url)}" target="_blank" rel="noopener">🎬 ${esc(v.url)}</a></div>`;
   }
-  return `<div class="post-media"><video controls preload="metadata" playsinline><source src="${esc(v.url)}"></video></div>`;
+  return `<div class="post-media"><video controls preload="none" playsinline><source src="${esc(v.url)}"></video></div>`;
 }
 
 async function publicarMuro() {

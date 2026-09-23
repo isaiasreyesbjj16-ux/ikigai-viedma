@@ -6,6 +6,7 @@ import json
 import secrets
 import time
 import zipfile
+import threading
 from datetime import datetime, date, timedelta, timezone
 
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template, g, send_from_directory, Response
@@ -17,8 +18,8 @@ from dbadapter import DB_MODE
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.db')
-app.config['MAX_CONTENT_LENGTH'] = 350 * 1024 * 1024
-MAX_VIDEO_BYTES = 350 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 150 * 1024 * 1024
+MAX_VIDEO_BYTES = 150 * 1024 * 1024
 
 # Token secreto embebido en el QR físico de asistencia. Solo quien escanea
 # el QR del gimnasio (que contiene este token) puede registrar su asistencia.
@@ -965,6 +966,24 @@ STALE_SECONDS = int(os.environ.get('AVISOS_STALE', '600'))
 _ultimo_aviso = [0]
 
 
+def _correr_avisos_periodicos():
+    # Corre fuera del request para que el usuario no espere mientras se
+    # mandan los push (HTTP sincronico a Google/Apple por suscripcion).
+    try:
+        with app.app_context():
+            aviso_cuotas_automatico()
+            aviso_eventos_hoy()
+            aviso_renovacion()
+            # Si algun aviso fallo a mitad, su transaccion quedo abortada
+            # (Postgres). Dejar la conexion sana para el resto del proceso.
+            try:
+                get_db().execute('ROLLBACK')
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 @app.before_request
 def _avisos_periodicos():
     # Sin cron en Render free: cada ~10 min el primer request dispara los avisos
@@ -972,17 +991,11 @@ def _avisos_periodicos():
     # a flags por mes/dia en settings y a la columna recordado de eventos.
     if request.path.startswith('/api/') and not request.path.startswith('/api/cron'):
         try:
+            if _ultimo_aviso[0] == 0:
+                _ultimo_aviso[0] = time.time() - STALE_SECONDS
             if time.time() - _ultimo_aviso[0] >= STALE_SECONDS:
                 _ultimo_aviso[0] = time.time()
-                aviso_cuotas_automatico()
-                aviso_eventos_hoy()
-                aviso_renovacion()
-                # Si algun aviso fallo a mitad, su transaccion quedo abortada
-                # (Postgres). Dejar la conexion sana para el resto del request.
-                try:
-                    get_db().execute('ROLLBACK')
-                except Exception:
-                    pass
+                threading.Thread(target=_correr_avisos_periodicos, daemon=True).start()
         except Exception:
             pass
 
