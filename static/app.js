@@ -32,6 +32,13 @@ async function aceptarTerminosHoy() {
 const $ = (s, e) => (e || document).querySelector(s);
 const $$ = (s, e) => [...(e || document).querySelectorAll(s)];
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const escJs = (s) => String(s == null ? '' : s)
+  .replace(/\\/g, '\\\\')
+  .replace(/'/g, '\\u0027')
+  .replace(/"/g, '\\u0022')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
 const num = (s) => (s == null ? '' : Number(s).toLocaleString('es-AR'));
 const normBelt = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
@@ -123,6 +130,8 @@ function openModal(html) {
   if (f) f.focus();
 }
 function closeModal() {
+  const mc = $('#modalClose');
+  if (mc) mc.style.display = '';
   $('#modal').hidden = true;
   if (_modalLastFocus && document.body.contains(_modalLastFocus)) _modalLastFocus.focus();
 }
@@ -473,6 +482,7 @@ function initDashboard() {
 }
 
 function showSec(name) {
+  if (name !== 'chat' && CHAT_TIMER) { clearInterval(CHAT_TIMER); CHAT_TIMER = null; CHAT_ACTIVO = null; }
   $$('.sec').forEach(s => s.classList.remove('active'));
   let el = $('#sec-' + name);
   if (!el) {
@@ -516,7 +526,7 @@ async function loadNotifs() {
   const el = $('#notifList');
   if (!d.notificaciones.length) { el.innerHTML = '<div class="empty">Sin notificaciones</div>'; return; }
   el.innerHTML = d.notificaciones.map(n => `
-    <button class="notif-item ${n.leida ? '' : 'unread'}" onclick="abrirNotif(${n.id},'${esc(n.link || '')}')">
+    <button class="notif-item ${n.leida ? '' : 'unread'}" onclick="abrirNotif(${n.id},'${escJs(n.link || '')}')">
       <span class="n-title">${esc(n.titulo)}</span>
       <span class="n-msg">${esc(n.mensaje)}</span>
       ${n.link ? `<small style="color:var(--accent2)">Tocá para abrir →</small>` : `<small>${esc(n.fecha)}</small>`}
@@ -1131,7 +1141,7 @@ async function borrarVideo(vid) {
     toast('Video eliminado');
     const sec = $('#sec-videos');
     if (sec && sec.classList.contains('active')) renderVideos(sec);
-    renderPerfil($('#sec-perfil'));
+    if ($('#sec-perfil')) renderPerfil($('#sec-perfil')).catch(() => {});
   } catch (err) { toast(err.message); }
 }
 
@@ -1716,7 +1726,7 @@ async function renderHorarios(el) {
           <div class="profe">🧑‍🏫 ${esc(h.profesor_nombre || 'Sin profesor')}</div>
           ${R !== 'alumno' && h.rating ? `<button class="btn ghost small" style="margin-top:6px" onclick="verValoraciones(${h.id})">⭐ ${h.rating.promedio} (${h.rating.n})</button>` : ''}
           ${canEdit ? `<div class="flex" style="margin-top:6px">
-            <button class="btn ghost small" onclick="editarHorario(${h.id},${h.dia},'${esc(h.hora)}','${esc(h.tipo)}','${esc(h.nivel)}',${h.profesor_id != null ? h.profesor_id : 'null'},${h.duracion})">✏️ Editar</button>
+            <button class="btn ghost small" onclick="editarHorario(${h.id},${h.dia},'${escJs(h.hora)}','${escJs(h.tipo)}','${escJs(h.nivel)}',${h.profesor_id != null ? h.profesor_id : 'null'},${h.duracion})">✏️ Editar</button>
             ${R === 'admin' ? `<button class="btn bad small" onclick="borrarHorario(${h.id})">🗑</button>` : ''}
           </div>` : ''}
         </div>`).join('') : '<p class="small" style="color:var(--muted)">Sin clases</p>'}
@@ -2220,16 +2230,16 @@ async function renderAlumnos(el) {
       <div class="small">🥋 <b>${a.asistencias}</b> asistencias</div>
       <div class="al-actions">
         <button class="btn ghost small" onclick="formAlumno(${a.id})">✏️</button>
-        <button class="btn ghost small" onclick="cambiarCuota(${a.id},'${esc(a.nombre)}',${a.cuota_mensual || 0})">💲</button>
-        <button class="btn ghost small" onclick="verFicha(${a.id},'${esc(a.nombre)}')">🩺</button>
-        <button class="btn ghost small" onclick="verGrado(${a.id},'${esc(a.nombre)}')">🥋</button>
-        <button class="btn ghost small" onclick="verNotas(${a.id},'${esc(a.nombre)}')">📝</button>
+        <button class="btn ghost small" onclick="cambiarCuota(${a.id},'${escJs(a.nombre)}',${a.cuota_mensual || 0})">💲</button>
+        <button class="btn ghost small" onclick="verFicha(${a.id},'${escJs(a.nombre)}')">🩺</button>
+        <button class="btn ghost small" onclick="verGrado(${a.id},'${escJs(a.nombre)}')">🥋</button>
+        <button class="btn ghost small" onclick="verNotas(${a.id},'${escJs(a.nombre)}')">📝</button>
         <button class="btn good small" onclick="notificarDeuda(${a.id})">🔔</button>
         ${USER.role !== 'alumno' ? `<button class="btn ${a.activo ? 'bad' : 'good'} small" onclick="toggleActivo(${a.id},${a.activo ? 1 : 0})">${a.activo ? '🚫 Desactivar' : '✅ Reactivar'}</button>` : ''}
-        ${USER.role !== 'alumno' ? `<button class="btn ${a.beca ? 'bad' : 'good'} small" title="${a.beca ? 'Quitar beca' : 'Becar (no paga nada)'}" onclick="toggleBeca(${a.id},${a.beca ? 1 : 0},'${esc(a.nombre)}')">🎖</button>` : ''}
-        ${USER.role === 'admin' ? `<button class="btn ghost small" title="Convertir en profesor" onclick="hacerProfesor(${a.id},'${esc(a.nombre)}')">👨‍🏫</button>` : ''}
-        ${USER.role === 'admin' ? `<button class="btn ghost small" onclick="reiniciarPassword(${a.id},'${esc(a.nombre)}')">🔑</button>` : ''}
-        ${USER.role === 'admin' ? `<button class="btn bad small" onclick="eliminarAlumno(${a.id},'${esc(a.nombre)}')">🗑</button>` : ''}
+        ${USER.role !== 'alumno' ? `<button class="btn ${a.beca ? 'bad' : 'good'} small" title="${a.beca ? 'Quitar beca' : 'Becar (no paga nada)'}" onclick="toggleBeca(${a.id},${a.beca ? 1 : 0},'${escJs(a.nombre)}')">🎖</button>` : ''}
+        ${USER.role === 'admin' ? `<button class="btn ghost small" title="Convertir en profesor" onclick="hacerProfesor(${a.id},'${escJs(a.nombre)}')">👨‍🏫</button>` : ''}
+        ${USER.role === 'admin' ? `<button class="btn ghost small" onclick="reiniciarPassword(${a.id},'${escJs(a.nombre)}')">🔑</button>` : ''}
+        ${USER.role === 'admin' ? `<button class="btn bad small" onclick="eliminarAlumno(${a.id},'${escJs(a.nombre)}')">🗑</button>` : ''}
       </div>
     </div>`;
   };
@@ -2296,7 +2306,7 @@ async function verFicha(id, nombre) {
         ${a.medic_info ? `<p class="small" style="margin:6px 0;white-space:pre-wrap"><b>Observaciones:</b> ${esc(a.medic_info)}</p>` : ''}
       </div>` : '<div class="tag tag-deuda mb">⚠ Sin ficha médica cargada</div>'}
     ${a.emergency_contact ? `<p class="small" style="background:var(--bg2);border-radius:8px;padding:10px;margin-top:8px"><b>📞 Contacto de emergencia:</b> ${esc(a.emergency_contact)}</p>` : ''}
-    <button class="btn ghost btn-block mt" onclick="editarFicha(${id},'${esc(nombre)}')">✏️ Completar / actualizar ficha</button>
+    <button class="btn ghost btn-block mt" onclick="editarFicha(${id},'${escJs(nombre)}')">✏️ Completar / actualizar ficha</button>
     <button class="btn ghost btn-block" onclick="closeModal()">Cerrar</button>`);
 }
 
@@ -2800,7 +2810,7 @@ async function renderProfesores(el) {
           <td><div class="flex" style="gap:8px">${avatarHTML(p.foto, p.nombre, 'sm')}<b>${esc(p.nombre)}</b></div></td><td>${beltHTML(p.cinturon)}</td>
           <td>${p.edad != null ? p.edad : '—'}</td><td>${p.peso ? p.peso + 'kg' : '—'}</td>
           <td>@${esc(p.username)}</td><td>${p.clases}</td>
-          <td><button class="btn bad small" onclick="eliminarProfesor(${p.id},'${esc(p.nombre)}')">🗑 Eliminar</button></td>
+          <td><button class="btn bad small" onclick="eliminarProfesor(${p.id},'${escJs(p.nombre)}')">🗑 Eliminar</button></td>
         </tr>`).join('') : '<tr><td colspan="7" class="empty">Todavía no hay profesores.</td></tr>'}
     </table></div></div>`;
 }
@@ -3557,7 +3567,7 @@ async function recPaso1() {
           <input value="${esc(d.pregunta)}" disabled style="opacity:.7"></div>
         <div class="field"><label>Tu respuesta</label><input id="recResp" placeholder="Respuesta"></div>
         <div class="field"><label>Contraseña nueva (mín. 4 caracteres)</label><input type="password" id="recNueva"></div>
-        <button type="button" class="btn primary btn-block" onclick="recPaso2('${esc(user)}')">Cambiar mi contraseña</button>`;
+        <button type="button" class="btn primary btn-block" onclick="recPaso2('${escJs(user)}')">Cambiar mi contraseña</button>`;
     } else {
       if (passo) passo.innerHTML = `
         <p style="color:var(--warn,#f1c40f)">${esc(d.error || 'No tiene pregunta de seguridad configurada.')}</p>
@@ -3661,9 +3671,9 @@ async function renderFamilias(el) {
           <div class="flex space-between" style="align-items:center">
             <div><b>${esc(f.nombre)}</b> <span class="small" style="color:var(--muted)">· total <b>$${num(f.total)}</b>/mes</span></div>
             <div>
-              <button class="btn ghost small" onclick="editarNombreFamilia(${f.id},'${esc(f.nombre)}')">✏️</button>
-              <button class="btn ghost small" onclick="verFamiliaModal(${f.id},'${esc(f.nombre)}')">➕</button>
-              <button class="btn bad small" onclick="borrarFamilia(${f.id},'${esc(f.nombre)}')">🗑</button>
+              <button class="btn ghost small" onclick="editarNombreFamilia(${f.id},'${escJs(f.nombre)}')">✏️</button>
+              <button class="btn ghost small" onclick="verFamiliaModal(${f.id},'${escJs(f.nombre)}')">➕</button>
+              <button class="btn bad small" onclick="borrarFamilia(${f.id},'${escJs(f.nombre)}')">🗑</button>
             </div>
           </div>
           ${(f.miembros || []).map(m => `
@@ -3671,7 +3681,7 @@ async function renderFamilias(el) {
               <span>${avatarHTML(m.foto, m.nombre, 'sm')} <b>${esc(m.nombre)}</b> ${m.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}
                 <span class="small" style="color:var(--muted)">· ${esc(m.relacion)}</span></span>
               <span class="small">$${num(m.cuota_final)}<br>${m.descuento ? '<span style="color:var(--good)">-' + num(m.descuento) + '</span>' : ''}</span>
-              <button class="btn ghost small" onclick="quitarMiembroFamilia(${f.id},${m.id},'${esc(m.nombre)}')">✕</button>
+              <button class="btn ghost small" onclick="quitarMiembroFamilia(${f.id},${m.id},'${escJs(m.nombre)}')">✕</button>
             </div>`).join('') || '<div class="empty">Sin miembros</div>'}
         </div>`).join('') : '<div class="empty">Todavía no hay grupos familiares. Creá el primero arriba.</div>'}
     </div>`;
@@ -3733,7 +3743,7 @@ async function verFamiliaModal(fid, nombre) {
     ${(f.miembros || []).map(m => `
       <div class="flex space-between" style="align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)">
         <span>${avatarHTML(m.foto, m.nombre, 'sm')} <b>${esc(m.nombre)}</b> <span class="small" style="color:var(--muted)">· ${esc(m.relacion)}</span> ${m.es_titular ? '<span class="tag tag-al-dia">Titular</span>' : ''}</span>
-        <button class="btn ghost small" onclick="quitarMiembroFamilia(${fid},${m.id},'${esc(m.nombre)}')">✕</button>
+        <button class="btn ghost small" onclick="quitarMiembroFamilia(${fid},${m.id},'${escJs(m.nombre)}')">✕</button>
       </div>`).join('')}
     <div class="field mt"><label>Agregar miembro</label><select id="fmUser">
       <option value="">— elegir alumno —</option>

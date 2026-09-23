@@ -369,6 +369,20 @@ CREATE TABLE IF NOT EXISTS plan_hecho (
     fecha TEXT,
     PRIMARY KEY (plan_id, user_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_pagos_alumno ON pagos(alumno_id);
+CREATE INDEX IF NOT EXISTS idx_pagos_mes_anio ON pagos(mes, anio);
+CREATE INDEX IF NOT EXISTS idx_asistencia_alumno ON asistencia(alumno_id);
+CREATE INDEX IF NOT EXISTS idx_asistencia_fecha ON asistencia(fecha);
+CREATE INDEX IF NOT EXISTS idx_notif_user ON notificaciones(user_id, leida);
+CREATE INDEX IF NOT EXISTS idx_videos_categoria ON videos(categoria);
+CREATE INDEX IF NOT EXISTS idx_videos_belt ON videos(belt);
+CREATE INDEX IF NOT EXISTS idx_views_user ON video_views(user_id);
+CREATE INDEX IF NOT EXISTS idx_progress_user ON video_progress(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id, id);
+CREATE INDEX IF NOT EXISTS idx_muro_fotos_muro ON muro_fotos(muro_id);
+CREATE INDEX IF NOT EXISTS idx_muro_videos_muro ON muro_videos(muro_id);
+CREATE INDEX IF NOT EXISTS idx_grados_alumno ON grados(alumno_id);
 """
 
 
@@ -795,7 +809,7 @@ def aviso_renovacion():
             "SELECT u.id, u.nombre, u.cinturon, COUNT(a.id) AS n "
             "FROM users u LEFT JOIN asistencia a ON a.alumno_id=u.id "
             "WHERE u.role='alumno' AND u.activo=1 "
-            "GROUP BY u.id HAVING n >= ?", (min_asist,)).fetchall()
+            "GROUP BY u.id HAVING COUNT(*) >= ?", (min_asist,)).fetchall()
         staff = db.execute("SELECT id FROM users WHERE role IN ('admin','profesor')").fetchall()
         if not staff:
             return 0
@@ -2178,7 +2192,7 @@ def api_familia_hijo_quitar(uid):
     if uid == u['id']:
         return jsonify({'error': 'No podés desvincularte solo de tu grupo'}), 400
     ex = db.execute(
-        'SELECT 1 FROM familia_miembros WHERE familia_id=? AND user_id=? AND relacion="hijo/a"',
+        'SELECT 1 FROM familia_miembros WHERE familia_id=? AND user_id=? AND relacion=\'hijo/a\'',
         (fam_id, uid)).fetchone()
     if not ex:
         return jsonify({'error': 'Ese alumno no está vinculado como hijo/a'}), 404
@@ -3210,17 +3224,8 @@ def api_videos_upload():
     return jsonify({'ok': True, 'id': vid})
 
 
-@app.route('/api/video/<int:vid>/archivo')
-def api_video_archivo(vid):
-    v = get_db().execute('SELECT url, data FROM videos WHERE id=?', (vid,)).fetchone()
-    if not v or not v['data']:
-        return jsonify({'error': 'Video no encontrado'}), 404
-    ext = os.path.splitext(v['url'])[1].lower()
-    mime = {'.mp4': 'video/mp4', '.webm': 'video/webm', '.ogg': 'video/ogg', '.mov': 'video/quicktime'}.get(ext, 'video/mp4')
-    try:
-        raw = base64.b64decode(v['data'])
-    except Exception:
-        return jsonify({'error': 'Video dañado'}), 500
+def _video_range_response(raw, mime):
+    """Devuelve el video con soporte real de Range (206/416) para streaming."""
     length = len(raw)
     range_hdr = request.headers.get('Range')
     base_headers = {'Accept-Ranges': 'bytes', 'Content-Type': mime}
@@ -3235,7 +3240,6 @@ def api_video_archivo(vid):
     start = int(s) if s else None
     end = int(e) if e else None
     if start is None:
-        # rango sufijo: bytes=-N (ultimos N bytes)
         n = end or 0
         start = max(0, length - n)
         end = length - 1
@@ -3251,6 +3255,20 @@ def api_video_archivo(vid):
     headers['Content-Range'] = 'bytes %d-%d/%d' % (start, end, length)
     headers['Content-Length'] = str(len(body))
     return Response(body, status=206, headers=headers)
+
+
+@app.route('/api/video/<int:vid>/archivo')
+def api_video_archivo(vid):
+    v = get_db().execute('SELECT url, data FROM videos WHERE id=?', (vid,)).fetchone()
+    if not v or not v['data']:
+        return jsonify({'error': 'Video no encontrado'}), 404
+    ext = os.path.splitext(v['url'])[1].lower()
+    mime = {'.mp4': 'video/mp4', '.webm': 'video/webm', '.ogg': 'video/ogg', '.mov': 'video/quicktime'}.get(ext, 'video/mp4')
+    try:
+        raw = base64.b64decode(v['data'])
+    except Exception:
+        return jsonify({'error': 'Video dañado'}), 500
+    return _video_range_response(raw, mime)
 
 
 @app.route('/api/videos/<int:vid>/view', methods=['POST'])
@@ -3781,7 +3799,7 @@ def api_muro_video(muro_vid):
         raw = base64.b64decode(m.group(2))
     except Exception:
         return jsonify({'error': 'Video dañado'}), 500
-    return Response(raw, mimetype=m.group(1), headers={'Accept-Ranges': 'bytes'})
+    return _video_range_response(raw, m.group(1))
 
 
 # ---------------------------------------------------------------------------
@@ -3914,8 +3932,8 @@ def api_historial():
         'SELECT anio, mes, COALESCE(SUM(monto),0) AS monto, COUNT(*) AS n '
         'FROM pagos GROUP BY anio, mes ORDER BY anio, mes').fetchall()
     asis = db.execute(
-        'SELECT DATE(fecha) AS d, COUNT(DISTINCT alumno_id) AS n FROM asistencia '
-        'WHERE fecha >= ? GROUP BY d ORDER BY d',
+        'SELECT substr(fecha,1,10) AS d, COUNT(DISTINCT alumno_id) AS n FROM asistencia '
+        'WHERE fecha >= ? GROUP BY substr(fecha,1,10) ORDER BY substr(fecha,1,10)',
         (_hoy_academy().strftime('%Y-%m-01'))).fetchall()
     return jsonify({
         'pagos': [dict(r) for r in pagos],
@@ -3986,8 +4004,11 @@ def api_mp_webhook():
                        'El alumno pagó por MercadoPago. Revisá y confirmá el aviso #%d.' % aviso_id,
                        'info', push=True)
         return jsonify({'ok': True})
-    except Exception:
-        return jsonify({'ok': True}), 200
+    except Exception as e:
+        import traceback as _tb
+        print('MP_WEBHOOK_ERROR:', e)
+        _tb.print_exc()
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 # ---------------------------------------------------------------------------
