@@ -41,6 +41,11 @@ const escJs = (s) => String(s == null ? '' : s)
   .replace(/>/g, '&gt;');
 const num = (s) => (s == null ? '' : Number(s).toLocaleString('es-AR'));
 const normBelt = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+let CHAT_ACTIVO = null;
+let CHAT_TIMER = null;
+let CHAT_ADJ = null;
+let CHAT_LAST_MSG = 0;
+let deferredPrompt = null;
 
 function beltHTML(cinturon) {
   if (!cinturon) return '—';
@@ -632,7 +637,6 @@ function setupFoto() {
 }
 
 /* ---------- INSTALAR APP (PWA) ---------- */
-let deferredPrompt = null;
 function setupInstall() {
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
@@ -2990,10 +2994,6 @@ try { fetch('/api/settings').then(r => r.json()).then(s => {
 /* =====================================================================
    CHAT + GRUPOS POR CATEGORÍA
    ===================================================================== */
-let CHAT_ACTIVO = null;
-let CHAT_TIMER = null;
-let CHAT_ADJ = null;
-let CHAT_LAST_MSG = 0;
 
 async function renderChat(el) {
   const d = await api('/api/chats').catch(() => ({ chats: [] }));
