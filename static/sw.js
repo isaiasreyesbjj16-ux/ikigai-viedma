@@ -1,9 +1,8 @@
 /* Service worker - Academia */
-const CACHE_NAME = 'ikigai-static-v27';
+const CACHE_NAME = 'ikigai-static-v28';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
-  e.waitUntil(caches.open(CACHE_NAME).then((c) => c.add('/').catch(() => {})));
 });
 
 self.addEventListener('activate', (e) => {
@@ -30,7 +29,7 @@ self.addEventListener('fetch', (e) => {
       }
       return res;
     }).catch(() =>
-      caches.match(req).then((hit) => hit || caches.match('/')))
+      caches.match(req))
   );
 });
 
