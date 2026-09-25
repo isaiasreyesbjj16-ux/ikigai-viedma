@@ -1827,8 +1827,7 @@ async function renderPagos(el) {
             ? `<div class="mt"><img src="${a.comprobante}" onclick="verComprobante(${a.id})" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer" title="Ver comprobante"></div>`
             : `<div class="mt"><div onclick="verComprobante(${a.id})" style="width:72px;height:72px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border-radius:8px;cursor:pointer;font-size:28px" title="Ver comprobante (PDF)">📄</div></div>`) : ''}
           <div class="flex mt" style="gap:8px">
-            <button class="btn ghost small" onclick="verComprobante(${a.id})">🧾 Ver comprobante</button>
-            <button class="btn primary small" onclick="confirmarAviso(${a.id})">✅ Confirmar y registrar</button>
+            <button class="btn primary small" onclick="verComprobante(${a.id})">🧾 Ver comprobante y confirmar</button>
             ${R === 'admin' ? `<button class="btn bad small" onclick="descartarAviso(${a.id})">🗑 Descartar</button>` : ''}
           </div>
         </div>`).join('')}
@@ -1841,6 +1840,7 @@ async function renderPagos(el) {
         <div class="field"><label>¿A qué profesor le pagó? (el dueño de este dinero)</label><select id="pProfe" required>
           ${profesores.profesores.map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}</select></div>
         <div class="field"><label>Monto ($)</label><input type="number" step="0.01" id="pMonto" required></div>
+        <div class="field" style="grid-column:1/-1"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="pAum" checked style="width:18px;height:18px"> Sumar aumento (recargo por demora) — desmarcalo si el alumno pagó antes del vencimiento 📅</label></div>
         <div class="field"><label>Método</label><select id="pMetodo">
           ${METODOS.map(m => `<option>${m}</option>`).join('')}</select></div>
         <div class="field"><label>Mes</label><select id="pMes">
@@ -1883,7 +1883,8 @@ async function renderPagos(el) {
     e.preventDefault();
     const body = { alumno_id: +$('#pAlumno').value, profesor_id: +$('#pProfe').value,
       monto: +$('#pMonto').value, metodo: $('#pMetodo').value, mes: +$('#pMes').value,
-      anio: +$('#pAnio').value, nota: $('#pNota').value };
+      anio: +$('#pAnio').value, nota: $('#pNota').value,
+      aplicar_cargo: $('#pAum') ? $('#pAum').checked : true };
     try {
       const res = await api('/api/pagos', { method: 'POST', body });
       toast(res.cargo ? `Pago registrado ✓ (incluye $${num(res.cargo)} de recargo por demora)` : 'Pago registrado. Notificaciones enviadas ✓');
@@ -1914,6 +1915,7 @@ async function abrirPagoFamilia() {
       <div class="field"><label>Mes</label><select id="pfMes">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${i + 1 === mes ? 'selected' : ''}>${i + 1}</option>`).join('')}</select></div>
     </div>
     <div class="field"><label>Año</label><input type="number" id="pfAnio" value="${new Date().getFullYear()}"></div>
+    <div class="field"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="pfAum" checked style="width:18px;height:18px"> Sumar aumento (recargo por demora) — desmarcalo si pagaron antes del vencimiento 📅</label></div>
     <div class="field"><label>Nota (opcional)</label><input type="text" id="pfNota" placeholder="Ej: cuota familiar agosto"></div>
     <button class="btn primary btn-block mt" onclick="pagarFamilia()">💳 Registrar pago de toda la familia</button>
     <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
@@ -1928,7 +1930,8 @@ async function pagarFamilia() {
       mes: +$('#pfMes').value,
       anio: +$('#pfAnio').value,
       metodo: $('#pfMetodo').value,
-      nota: $('#pfNota').value } });
+      nota: $('#pfNota').value,
+      aplicar_cargo: $('#pfAum') ? $('#pfAum').checked : true } });
     toast(`💳 ${res.cantidad} pagos registrados de ${esc(res.familia)} por $${num(res.total)}`);
     closeModal();
     renderPagos($('#sec-pagos'));
