@@ -2382,7 +2382,10 @@ def api_pagos_create():
     if profesor_id == -1 or (profesor_id is None and (data.get('profesor_id') == -1)):
         profesor_id = None
     base, cargo, final = calcular_demora(monto, mes, anio)
-    monto = final if (data.get('aplicar_cargo', True)) else monto
+    if data.get('aplicar_cargo', True):
+        monto = final
+    else:
+        cargo = 0
     get_db().execute(
         """INSERT INTO pagos(alumno_id, profesor_id, monto, mes, anio, metodo, concepto, nota, fecha, registrado_por)
            VALUES(?,?,?,?,?,?,?,?,?,?)""",
