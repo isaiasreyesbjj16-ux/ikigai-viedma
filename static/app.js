@@ -46,6 +46,7 @@ let CHAT_TIMER = null;
 let CHAT_ADJ = null;
 let CHAT_LAST_MSG = 0;
 let deferredPrompt = null;
+let AVISO_AUMENTO = true;
 
 function beltHTML(cinturon) {
   if (!cinturon) return '—';
@@ -2058,6 +2059,7 @@ async function abrirMetricas() {
 function verComprobante(id) {
   const a = AVISOS_CACHE[id];
   if (!a || !a.comprobante) { toast('No hay comprobante'); return; }
+  AVISO_AUMENTO = true;
   const esImg = a.comprobante.indexOf('data:image/') === 0;
   const cuerpo = esImg
     ? `<img src="${a.comprobante}" style="width:100%;border-radius:10px;background:#fff">`
@@ -2068,19 +2070,32 @@ function verComprobante(id) {
     <h3>🧾 Comprobante · ${esc(a.alumno_nombre)}</h3>
     <p class="small">Cuota de <b>${a.mes}/${a.anio}</b> por <b>$${num(a.monto)}</b>${a.nota && a.nota !== 'Cuota mensual' ? ' · ' + esc(a.nota) : ''}</p>
     ${cuerpo}
+    <div class="field"><label>Monto a registrar (ajustalo si pagó el valor anterior)</label>
+      <input type="number" id="avMonto" value="${a.monto || ''}" min="1">
+      <p class="small" style="margin:2px 0 0;color:var(--muted)">El recargo por demora se calcula sobre este monto.</p></div>
+    <button type="button" id="avAumBtn" class="btn small btn-block" style="margin:0 0 10px" onclick="toggleAvisoAumento()"></button>
     <div class="flex mt" style="gap:8px">
       <button class="btn primary small" onclick="confirmarAviso(${a.id})">✅ Confirmar y registrar</button>
       ${USER.role === 'admin' ? `<button class="btn bad small" onclick="descartarAviso(${a.id})">🗑 Descartar</button>` : ''}
     </div>
   `);
+  actualizarBotonAumento();
 }
+function actualizarBotonAumento() {
+  const b = $('#avAumBtn');
+  if (!b) return;
+  b.innerHTML = 'Sumar aumento (recargo por demora): <b style="color:' + (AVISO_AUMENTO ? 'var(--warn)' : '#7fd87f') + '">' + (AVISO_AUMENTO ? 'SÍ' : 'NO') + '</b>';
+}
+function toggleAvisoAumento() { AVISO_AUMENTO = !AVISO_AUMENTO; actualizarBotonAumento(); }
 async function confirmarAviso(id) {
   const a = AVISOS_CACHE[id] || {};
-  if (!confirm(`¿Confirmar el pago de ${a.alumno_nombre || 'este alumno'} (cuota ${a.mes}/${a.anio})? Revisá antes el comprobante (tocá "Ver comprobante"). Se registra el pago y se notifica al alumno.`)) return;
+  const mEl = $('#avMonto');
+  let monto = mEl ? parseFloat(mEl.value) : (a.monto || 0);
+  if (!monto || isNaN(monto) || monto <= 0) { toast('Ingresá un monto válido'); return; }
   closeModal();
   try {
-    await api('/api/avisos_pago/' + id + '/confirmar', { method: 'POST' });
-    toast('Pago confirmado y registrado ✓ El alumno fue notificado.');
+    const res = await api('/api/avisos_pago/' + id + '/confirmar', { method: 'POST', body: { monto, aplicar_cargo: AVISO_AUMENTO } });
+    toast(res.cargo ? 'Pago confirmado ✓ (incluye $' + num(res.cargo) + ' de recargo por demora)' : 'Pago confirmado y registrado ✓ (sin aumento)');
     renderPagos($('#sec-pagos'));
   } catch (e) { toast(e.message); }
 }
