@@ -2880,7 +2880,15 @@ def api_avisos_confirmar(aid):
     if a['estado'] == 'confirmado':
         return jsonify({'error': 'Este aviso ya fue confirmado'}), 400
     who = current_user()
-    base, cargo, final = calcular_demora(a['monto'] or 0, a['mes'], a['anio'])
+    data = parse_json()
+    # El admin puede ajustar el monto real (ej: pagó con el valor de la cuota
+    # anterior) y decidir si se suma el aumento/recargo por demora (por defecto
+    # se suma como antes; se desactiva si el alumno pagó antes del vencimiento).
+    monto_base = to_float(data.get('monto')) or (a['monto'] or 0)
+    aplicar_cargo = bool(data.get('aplicar_cargo', True))
+    base, cargo, final = calcular_demora(monto_base, a['mes'], a['anio'])
+    if not aplicar_cargo:
+        cargo, final = 0, base
     get_db().execute(
         'INSERT INTO pagos(alumno_id, profesor_id, monto, mes, anio, metodo, concepto, nota, fecha, registrado_por) VALUES(?,?,?,?,?,?,?,?,?,?)',
         (a['alumno_id'], None, final, a['mes'], a['anio'], 'Aviso', 'Cuota mensual',
@@ -2895,7 +2903,7 @@ def api_avisos_confirmar(aid):
     notify(a['alumno_id'], 'Pago confirmado',
            f'Tu aviso de pago de la cuota {a["mes"]}/{a["anio"]} por ${final:,.0f} fue confirmado por {who["nombre"]}{nota}.'.replace(',', '.'),
            'pago')
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'base': base, 'cargo': cargo, 'monto': final})
 
 
 @app.route('/api/avisos_pago/<int:aid>', methods=['DELETE'])
