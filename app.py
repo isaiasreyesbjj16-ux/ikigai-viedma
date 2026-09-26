@@ -3679,9 +3679,10 @@ def api_video_progress(vid):
             'INSERT INTO video_progress(video_id, user_id, segundos, duracion, completado, fecha) VALUES(?,?,?,?,?,?)',
             (vid, u['id'], seg, dur, completado, now))
     db.commit()
+    nuevo_completado = bool(completado) and (prev is None or not prev['completado'])
     if completado and u['role'] == 'alumno':
         chequear_logros(u['id'])
-    if completado and v['subido_por']:
+    if nuevo_completado and v['subido_por']:
         notify(v['subido_por'], 'Video completado',
                '%s terminó de ver "%s"' % (u['nombre'], v['titulo']), 'info', push=True)
     return jsonify({'ok': True, 'completado': completado})
