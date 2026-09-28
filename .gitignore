@@ -7,3 +7,21 @@ static/uploads/
 cloudflared.exe
 *.zip
 .DS_Store
+
+# Datos personales / material de trabajo: nunca subirlos al repo.
+# El repo es publico: comprobantes de pago con nombre, listados de alumnos,
+# fotos y videos de prueba no tienen que estar en GitHub.
+intro progra/
+*.xlsx
+*.xls
+*.docx
+*.mp4
+*.mov
+comprobante*.pdf
+comprobante*.jpg
+comprobante*.png
+comprobante*.webp
+
+# Credenciales
+.env
+*.pem

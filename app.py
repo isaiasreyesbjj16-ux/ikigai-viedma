@@ -170,6 +170,7 @@ def get_db():
     if 'db' not in g:
         if DB_MODE == 'mysql':
             db = dbadapter.connect_mysql()
+            g.db = db
             row = db.execute(
                 "SELECT COUNT(*) AS c FROM information_schema.tables "
                 "WHERE table_schema = DATABASE() AND table_name IN ('settings','videos')").fetchone()
@@ -179,6 +180,7 @@ def get_db():
                 db = dbadapter.connect_mysql()
         elif DB_MODE == 'postgres':
             db = dbadapter.connect_postgres()
+            g.db = db
             row = db.execute(
                 "SELECT COUNT(*) AS c FROM information_schema.tables "
                 "WHERE table_schema = current_schema() AND table_name IN ('settings','videos')").fetchone()
@@ -188,6 +190,9 @@ def get_db():
                 db = dbadapter.connect_postgres()
         else:
             db = dbadapter.connect_sqlite(app.config['DATABASE'])
+            # Asignar antes del SELECT: si la query falla, teardown_appcontext
+            # cierra la connection igual en vez de fugarla.
+            g.db = db
             row = db.execute(
                 "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name IN ('settings','videos')").fetchone()
             if row['c'] < 2:
@@ -526,6 +531,18 @@ def init_db():
         db = dbadapter.connect_mysql()
     else:
         db = dbadapter.connect_sqlite(app.config['DATABASE'])
+    # try/finally: antes la conexion solo se cerraba al final del camino feliz y
+    # cualquier error en una migracion la dejaba abierta (fuga + pool agotado).
+    try:
+        _init_db_body(db)
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
+def _init_db_body(db):
     db.executescript(SCHEMA)
     c = db.cursor()
     # migracion: agregar columnas nuevas si faltan
@@ -623,6 +640,7 @@ def init_db():
         'asis_min_examen': '30',
         'mp_access_token': '',
         'wp_numero': '',
+        'public_url': '',
     }
     for k, v in defaults.items():
         c.execute('INSERT OR IGNORE INTO settings(k, value) VALUES(?,?)', (k, v))
@@ -637,7 +655,6 @@ def init_db():
         print('  CAMBIA LA CONTRASENA EN MI PERFIL cuando puedas.')
         print('=' * 60)
     db.commit()
-    db.close()
 
 
 def get_setting(key, default=None):
@@ -942,7 +959,10 @@ def aviso_renovacion():
             "SELECT u.id, u.nombre, u.cinturon, COUNT(a.id) AS n "
             "FROM users u LEFT JOIN asistencia a ON a.alumno_id=u.id "
             "WHERE u.role='alumno' AND u.activo=1 "
-            "GROUP BY u.id HAVING COUNT(*) >= ?", (min_asist,)).fetchall()
+            # COUNT(*) contaba tambien la fila vacia del LEFT JOIN, por eso el
+            # aviso salia con una asistencia menos (off-by-one). COUNT(a.id)
+            # cuenta solo asistencias reales.
+            "GROUP BY u.id HAVING COUNT(a.id) >= ?", (min_asist,)).fetchall()
         staff = db.execute("SELECT id FROM users WHERE role IN ('admin','profesor')").fetchall()
         if not staff:
             return 0
@@ -1082,6 +1102,27 @@ def validar_mes_anio(mes, anio):
     if not 2000 <= a <= hoy.year + 1:
         return m, a, 'Año inválido.'
     return m, a, None
+
+
+def txt_str(v):
+    """Equivale a (v or '').strip() pero sin reventar si v no es string.
+    Antes, un cliente que mandaba un numero o un booleano en un campo de texto
+    (por ejemplo firma_tyc: true)iba a .strip() sobre un int/bool -> HTTP 500."""
+    if not v:
+        return ''
+    return str(v).strip()
+
+
+def fecha_iso(valor, hoy=None):
+    if valor is None or valor == '':
+        return ((hoy or _hoy_academy()).strftime('%Y-%m-%d')), None
+    if not isinstance(valor, str):
+        return None, 'Fecha inválida'
+    v = valor.strip()
+    try:
+        return datetime.strptime(v, '%Y-%m-%d').strftime('%Y-%m-%d'), None
+    except ValueError:
+        return None, 'Fecha inválida'
 
 
 DATA_IMG_RE = re.compile(r'^data:image/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=\s]+$', re.I)
@@ -1467,7 +1508,7 @@ def server_error(e):
 @app.route('/api/login', methods=['POST'])
 def api_login():
     data = parse_json()
-    username = (data.get('username') or '').strip()
+    username = txt_str(data.get('username'))
     password = data.get('password') or ''
     u = get_db().execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
     if not u or not check_password_hash(u['password_hash'], password):
@@ -1487,7 +1528,7 @@ def api_login():
 def api_recuperar():
     """Devuelve la pregunta de seguridad de un usuario (sin exponer la respuesta)."""
     data = parse_json()
-    username = (data.get('username') or '').strip()
+    username = txt_str(data.get('username'))
     u = get_db().execute('SELECT id, security_q FROM users WHERE username=?', (username,)).fetchone()
     if not u:
         return jsonify({'error': 'Ese usuario no existe'}), 404
@@ -1500,8 +1541,8 @@ def api_recuperar():
 def api_recuperar_verificar():
     """Verifica la respuesta de seguridad y cambia la contrasena."""
     data = parse_json()
-    username = (data.get('username') or '').strip()
-    resp = (data.get('respuesta') or '').strip()
+    username = txt_str(data.get('username'))
+    resp = txt_str(data.get('respuesta'))
     nueva = data.get('nueva_password') or ''
     if len(nueva) < 4:
         return jsonify({'error': 'La nueva contrasena debe tener al menos 4 caracteres'}), 400
@@ -1524,8 +1565,8 @@ def api_recuperar_verificar():
 def api_perfil_seguridad():
     u = current_user()
     data = parse_json()
-    q = (data.get('pregunta') or '').strip()
-    a = (data.get('respuesta') or '').strip()
+    q = txt_str(data.get('pregunta'))
+    a = txt_str(data.get('respuesta'))
     nueva = data.get('nueva_password') or ''
     if not q or not a:
         return jsonify({'error': 'Completa la pregunta y la respuesta'}), 400
@@ -1574,9 +1615,9 @@ def api_register():
     role = data.get('role')
     if role not in ('alumno', 'profesor'):
         return jsonify({'error': 'Rol invalido'}), 400
-    username = (data.get('username') or '').strip()
+    username = txt_str(data.get('username'))
     password = data.get('password') or ''
-    nombre = (data.get('nombre') or '').strip()
+    nombre = txt_str(data.get('nombre'))
     if not username or not password or not nombre:
         return jsonify({'error': 'Completa usuario, contrasena y nombre'}), 400
     if len(password) < 4:
@@ -1584,7 +1625,7 @@ def api_register():
     if get_db().execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
         return jsonify({'error': 'Ese usuario ya existe'}), 400
 
-    nacimiento = (data.get('nacimiento') or '').strip()
+    nacimiento = txt_str(data.get('nacimiento'))
     if not nacimiento:
         return jsonify({'error': 'La fecha de nacimiento es obligatoria al crear tu perfil.'}), 400
     try:
@@ -1594,24 +1635,29 @@ def api_register():
         return jsonify({'error': 'Fecha de nacimiento inválida (formato AAAA-MM-DD).'}), 400
 
     if role == 'profesor':
-        codigo = (data.get('codigo') or '').strip()
+        codigo = txt_str(data.get('codigo'))
         if codigo != get_setting('academy_code'):
             return jsonify({'error': 'Codigo de academia incorrecto. Pedile el codigo al administrador.'}), 400
 
     categoria = data.get('categoria') or 'adulto'
-    tel_tutor = (data.get('tel_tutor') or '').strip()
+    # Sin este check, un categoria arbitraria se guardaba y rompia los filtros de
+    # videos/cinturon y los selectores del frontend.
+    if categoria not in CATEGORIAS:
+        return jsonify({'error': 'Categoría inválida'}), 400
+    tel_tutor = txt_str(data.get('tel_tutor'))
     if role == 'alumno' and categoria in ('kids', 'juveniles') and not tel_tutor:
         return jsonify({'error': 'Para menores (Kids/Juveniles) es obligatorio el telefono del padre, madre o tutor responsable.'}), 400
     foto_ok = 1 if data.get('foto_ok') else 0
     if role == 'alumno' and categoria in ('kids', 'juveniles') and not foto_ok:
         return jsonify({'error': 'Para menores (Kids/Juveniles) debe autorizar el mayor, padre, madre o tutor que las fotos del menor puedan exponerse.'}), 400
-    tel_2 = (data.get('tel_2') or '').strip() or None
+    tel_2 = txt_str(data.get('tel_2')) or None
 
     if not data.get('acepto_tyc'):
         return jsonify({'error': 'Debés aceptar los Términos y Condiciones para crear tu cuenta.'}), 400
 
-    firma_tyc = (data.get('firma_tyc') or '').strip()
-    firma_foto = (data.get('firma_foto') or '').strip()
+    # str(): un booleano (firma_tyc: true) reventaba con 500 en .strip()
+    firma_tyc = txt_str(data.get('firma_tyc'))
+    firma_foto = txt_str(data.get('firma_foto'))
     menor = role == 'alumno' and categoria in ('kids', 'juveniles')
     if menor and not firma_tyc:
         return jsonify({'error': 'Firmá en el recuadro de Términos y Condiciones para crear tu cuenta.'}), 400
@@ -1629,14 +1675,14 @@ def api_register():
              data.get('cinturon'), categoria,
              data.get('gi_pref') or 'Ambas',
              cuota_reg,
-             (data.get('tel') or '').strip() or None,
-             (data.get('nacimiento') or '').strip() or None,
-             (data.get('medic_info') or '').strip() or None,
-             (data.get('emergency_contact') or '').strip() or None,
+             txt_str(data.get('tel')) or None,
+             txt_str(data.get('nacimiento')) or None,
+             txt_str(data.get('medic_info')) or None,
+             txt_str(data.get('emergency_contact')) or None,
              tel_tutor or None,
              tel_2,
-             (data.get('direccion') or '').strip() or None,
-             (data.get('dni') or '').strip() or None,
+             txt_str(data.get('direccion')) or None,
+             txt_str(data.get('dni')) or None,
              foto_ok,
              datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
              firma_tyc or None,
@@ -1715,7 +1761,7 @@ def api_horarios():
 def api_horarios_create():
     data = parse_json()
     dia = to_int(data.get('dia'))
-    hora = (data.get('hora') or '').strip()
+    hora = txt_str(data.get('hora'))
     tipo = data.get('tipo') or 'Gi'
     if dia is None or dia not in range(7) or not hora:
         return jsonify({'error': 'Dia u hora invalidos'}), 400
@@ -1732,7 +1778,7 @@ def api_horarios_create():
 def api_horarios_update(cid):
     data = parse_json()
     dia = to_int(data.get('dia'))
-    hora = (data.get('hora') or '').strip()
+    hora = txt_str(data.get('hora'))
     if dia is None or dia not in range(7) or not hora:
         return jsonify({'error': 'Dia u hora invalidos'}), 400
     get_db().execute(
@@ -1800,15 +1846,15 @@ def api_alumnos():
 @role_required('admin', 'profesor')
 def api_alumnos_create():
     data = parse_json()
-    nombre = (data.get('nombre') or '').strip()
+    nombre = txt_str(data.get('nombre'))
     if not nombre:
         return jsonify({'error': 'El nombre es obligatorio'}), 400
-    username = (data.get('username') or '').strip() or f"alumno{secrets.token_hex(3)}"
+    username = txt_str(data.get('username')) or f"alumno{secrets.token_hex(3)}"
     if get_db().execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
         return jsonify({'error': 'Ese usuario ya existe'}), 400
     password = data.get('password') or 'alumno123'
     cuota = to_float(data.get('cuota_mensual')) or (to_float(get_setting('default_cuota', '15000')) or 15000)
-    nacimiento = (data.get('nacimiento') or '').strip()
+    nacimiento = txt_str(data.get('nacimiento'))
     if not nacimiento:
         return jsonify({'error': 'La fecha de nacimiento es obligatoria al crear el perfil.'}), 400
     try:
@@ -1836,7 +1882,7 @@ def api_alumnos_update(uid):
     u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
     if not u:
         return jsonify({'error': 'Alumno no encontrado'}), 404
-    nac_upd = (data.get('nacimiento', u['nacimiento']) or '').strip()
+    nac_upd = txt_str(data.get('nacimiento', u['nacimiento']))
     if nac_upd:
         try:
             if datetime.strptime(nac_upd, '%Y-%m-%d').date() >= _hoy_academy():
@@ -1849,19 +1895,19 @@ def api_alumnos_update(uid):
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
          data.get('categoria', u['categoria']), data.get('gi_pref', u['gi_pref']),
          1 if data.get('activo', u['activo']) else 0,
-         (data.get('tel', u['tel']) or '').strip() or None,
+         txt_str(data.get('tel', u['tel'])) or None,
          nac_upd or None,
          data.get('medic_info', u['medic_info']),
          data.get('emergency_contact', u['emergency_contact']),
-         (data.get('tel_tutor', u['tel_tutor']) or '').strip() or None,
-         (data.get('tel_2', u['tel_2']) or '').strip() or None,
-         (data.get('direccion', u['direccion']) or '').strip() or None,
-         (data.get('dni', u['dni']) or '').strip() or None,
+         txt_str(data.get('tel_tutor', u['tel_tutor'])) or None,
+         txt_str(data.get('tel_2', u['tel_2'])) or None,
+         txt_str(data.get('direccion', u['direccion'])) or None,
+         txt_str(data.get('dni', u['dni'])) or None,
          1 if data.get('foto_ok', u['foto_ok']) else 0,
-         (data.get('pausa_desde', u['pausa_desde']) or '').strip() or None,
-         (data.get('pausa_hasta', u['pausa_hasta']) or '').strip() or None, uid))
+         txt_str(data.get('pausa_desde', u['pausa_desde'])) or None,
+         txt_str(data.get('pausa_hasta', u['pausa_hasta'])) or None, uid))
     get_db().commit()
-    nuevo_pausa = bool((data.get('pausa_desde', u['pausa_desde']) or '').strip())
+    nuevo_pausa = bool(txt_str(data.get('pausa_desde', u['pausa_desde'])))
     if nuevo_pausa and not en_pausa(u) and en_pausa(get_db().execute('SELECT * FROM users WHERE id=?', (uid,)).fetchone()):
         notify(uid, '⏸ Pausa temporal',
                'Registramos tu pausa. Mientras estés de pausa no se te cobra ni contás como deudor.',
@@ -1913,10 +1959,10 @@ def api_profesores():
 @role_required('admin')
 def api_profesores_create():
     data = parse_json()
-    nombre = (data.get('nombre') or '').strip()
+    nombre = txt_str(data.get('nombre'))
     if not nombre:
         return jsonify({'error': 'El nombre es obligatorio'}), 400
-    username = (data.get('username') or '').strip() or f"profe{secrets.token_hex(3)}"
+    username = txt_str(data.get('username')) or f"profe{secrets.token_hex(3)}"
     if get_db().execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
         return jsonify({'error': 'Ese usuario ya existe'}), 400
     password = data.get('password') or 'profe123'
@@ -1982,7 +2028,7 @@ def api_alumno_notas(uid):
     u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
     if not u:
         return jsonify({'error': 'Alumno no encontrado'}), 404
-    notas = (data.get('notas') or '').strip()
+    notas = txt_str(data.get('notas'))
     get_db().execute('UPDATE users SET notas_internas=? WHERE id=?', (notas, uid))
     get_db().commit()
     return jsonify({'ok': True})
@@ -1999,12 +2045,12 @@ def api_alumno_ficha(uid):
     db = get_db()
     db.execute(
         'UPDATE users SET medic_info=?, emergency_contact=?, medic_enfermedades=?, medic_alergias=?, medic_medicacion=?, medic_lesiones=?, ficha_fecha=? WHERE id=?',
-        ((data.get('medic_info') or '').strip() or None,
-         (data.get('emergency_contact') or '').strip() or None,
-         (data.get('medic_enfermedades') or '').strip() or None,
-         (data.get('medic_alergias') or '').strip() or None,
-         (data.get('medic_medicacion') or '').strip() or None,
-         (data.get('medic_lesiones') or '').strip() or None,
+        (txt_str(data.get('medic_info')) or None,
+         txt_str(data.get('emergency_contact')) or None,
+         txt_str(data.get('medic_enfermedades')) or None,
+         txt_str(data.get('medic_alergias')) or None,
+         txt_str(data.get('medic_medicacion')) or None,
+         txt_str(data.get('medic_lesiones')) or None,
          data.get('ficha_fecha') or datetime.now().strftime('%d/%m/%Y'),
          uid))
     db.commit()
@@ -2100,7 +2146,7 @@ def api_familias():
 @role_required('admin', 'profesor')
 def api_familia_crear():
     data = parse_json()
-    nombre = (data.get('nombre') or '').strip()
+    nombre = txt_str(data.get('nombre'))
     if not nombre:
         return jsonify({'error': 'Poné un nombre al grupo familiar'}), 400
     titular_id = to_int(data.get('titular_id'))
@@ -2179,7 +2225,7 @@ def api_familia_borrar(fam_id):
 @role_required('admin', 'profesor')
 def api_familia_editar(fam_id):
     data = parse_json()
-    nombre = (data.get('nombre') or '').strip()
+    nombre = txt_str(data.get('nombre'))
     db = get_db()
     if not db.execute('SELECT id FROM familias WHERE id=?', (fam_id,)).fetchone():
         return jsonify({'error': 'Grupo no encontrado'}), 404
@@ -2284,9 +2330,9 @@ def api_familia_hijo_alta():
     """Alta de una cuenta de menor (Kids/Juveniles) creada desde el perfil del padre."""
     u = current_user()
     data = parse_json()
-    username = (data.get('username') or '').strip()
+    username = txt_str(data.get('username'))
     password = data.get('password') or ''
-    nombre = (data.get('nombre') or '').strip()
+    nombre = txt_str(data.get('nombre'))
     if not username or not password or not nombre:
         return jsonify({'error': 'Completa usuario, contrasena, nombre del menor y contrasena'}), 400
     if len(password) < 4:
@@ -2294,7 +2340,7 @@ def api_familia_hijo_alta():
     if get_db().execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
         return jsonify({'error': 'Ese usuario ya existe. Si es la cuenta de tu hijo/a, usa "Vincular cuenta".'}), 400
 
-    nacimiento = (data.get('nacimiento') or '').strip()
+    nacimiento = txt_str(data.get('nacimiento'))
     if not nacimiento:
         return jsonify({'error': 'La fecha de nacimiento es obligatoria al crear el perfil del menor.'}), 400
     try:
@@ -2306,7 +2352,7 @@ def api_familia_hijo_alta():
     categoria = data.get('categoria') or 'kids'
     if categoria not in ('kids', 'juveniles'):
         return jsonify({'error': 'Solo se pueden dar de alta menores (Kids/Juveniles) desde el perfil de un padre'}), 400
-    tel_tutor = (data.get('tel_tutor') or '').strip() or u['tel'] or u['tel_2'] or ''
+    tel_tutor = txt_str(data.get('tel_tutor')) or u['tel'] or u['tel_2'] or ''
     if not tel_tutor:
         return jsonify({'error': 'Cargá primero tu telefono en tu perfil para poder ser el tutor responsable.'}), 400
     if not data.get('foto_ok'):
@@ -2329,9 +2375,9 @@ def api_familia_hijo_alta():
              data.get('cinturon') or 'Blanco', categoria,
              data.get('gi_pref') or 'Ambas', cuota_menor,
              None, nacimiento,
-             (data.get('medic_info') or '').strip() or None,
-             (data.get('emergency_contact') or '').strip() or None,
-             tel_tutor, None, None, (data.get('dni') or '').strip() or None,
+             txt_str(data.get('medic_info')) or None,
+             txt_str(data.get('emergency_contact')) or None,
+             tel_tutor, None, None, txt_str(data.get('dni')) or None,
              1, datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
              data.get('firma_tyc'), data.get('firma_foto'), firma_fecha,
              datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
@@ -2351,7 +2397,7 @@ def api_familia_vincular():
     """El padre vincula la cuenta YA CREADA de su hijo/a menor, validando el tel_tutor."""
     u = current_user()
     data = parse_json()
-    username = (data.get('username') or '').strip()
+    username = txt_str(data.get('username'))
     if not username:
         return jsonify({'error': 'Ingresá el usuario de la cuenta del menor'}), 400
     db = get_db()
@@ -2419,8 +2465,8 @@ def api_diario():
 def api_diario_crear():
     u = current_user()
     data = parse_json()
-    titulo = (data.get('titulo') or '').strip()
-    texto = (data.get('texto') or '').strip()
+    titulo = txt_str(data.get('titulo'))
+    texto = txt_str(data.get('texto'))
     if not titulo and not texto:
         return jsonify({'error': 'Escribí al menos la crónica del día'}), 400
     hoy = _hoy_academy().strftime('%Y-%m-%d')
@@ -2540,7 +2586,7 @@ def api_pagos_familia():
     mes = to_int(data.get('mes')) or _hoy_academy().month
     anio = to_int(data.get('anio')) or _hoy_academy().year
     metodo = (data.get('metodo') or 'Efectivo').strip() or 'Efectivo'
-    nota = (data.get('nota') or '').strip()
+    nota = txt_str(data.get('nota'))
     if not titular_id:
         return jsonify({'error': 'Elegí el titular de la familia'}), 400
     mes, anio, err = validar_mes_anio(mes, anio)
@@ -2685,16 +2731,24 @@ def api_notify_deuda():
 def api_asistencia_marcar():
     data = parse_json()
     clase_id = to_int(data.get('clase_id'))
-    fecha = (data.get('fecha') or _hoy_academy().strftime('%Y-%m-%d'))
-    presentes = data.get('presentes') or []
+    presentes = data.get('presentes')
     if not clase_id:
         return jsonify({'error': 'Selecciona una clase'}), 400
+    fecha, err = fecha_iso(data.get('fecha'))
+    if err:
+        return jsonify({'error': err}), 400
+    # Sin esto, un "presentes": "12" (string) se iteraba caracter por caracter y
+    # cada to_int devolvia None -> INSERT con alumno_id NULL.
+    if not isinstance(presentes, list):
+        presentes = []
+    ids = [to_int(p) for p in presentes]
+    ids = [i for i in ids if i]
     # borra asistencia existente de ese dia/clase para re-marcar
     get_db().execute('DELETE FROM asistencia WHERE clase_id=? AND fecha=?', (clase_id, fecha))
-    for pid in presentes:
+    for pid in ids:
         get_db().execute(
             'INSERT OR IGNORE INTO asistencia(clase_id, alumno_id, fecha, presente) VALUES(?,?,?,1)',
-            (clase_id, to_int(pid), fecha))
+            (clase_id, pid, fecha))
     get_db().commit()
     return jsonify({'ok': True})
 
@@ -2703,7 +2757,9 @@ def api_asistencia_marcar():
 @role_required('admin', 'profesor')
 def api_asistencia_dia():
     clase_id = to_int(request.args.get('clase_id'))
-    fecha = request.args.get('fecha') or _hoy_academy().strftime('%Y-%m-%d')
+    fecha, err = fecha_iso(request.args.get('fecha'))
+    if err:
+        return jsonify({'error': err}), 400
     rows = get_db().execute('SELECT alumno_id FROM asistencia WHERE clase_id=? AND fecha=? AND presente=1',
                             (clase_id, fecha)).fetchall()
     return jsonify({'presentes': [r['alumno_id'] for r in rows]})
@@ -2855,9 +2911,9 @@ def api_clase_valorar():
     u = current_user()
     data = parse_json()
     clase_id = to_int(data.get('clase_id'))
-    fecha = (data.get('fecha') or '').strip()
+    fecha = txt_str(data.get('fecha'))
     estrellas = to_int(data.get('estrellas'))
-    comentario = (data.get('comentario') or '').strip()
+    comentario = txt_str(data.get('comentario'))
     if not clase_id or not fecha:
         return jsonify({'error': 'Faltan datos de la clase'}), 400
     if not estrellas or estrellas < 1 or estrellas > 5:
@@ -2961,7 +3017,7 @@ def api_avisar_pago():
     monto = to_float(data.get('monto'))
     if not monto:
         monto = to_float(u['cuota_mensual']) or 0
-    comp = (data.get('comprobante') or '').strip()
+    comp = txt_str(data.get('comprobante'))
     if not comprobante_valido(comp):
         return jsonify({'error': 'Tenés que subir el comprobante de pago (foto, captura o PDF)'}), 400
     if len(comp) > 12 * 1024 * 1024:
@@ -3072,6 +3128,12 @@ def api_asistencia_directo():
     c = get_db().execute('SELECT * FROM classes WHERE id=?', (clase_id,)).fetchone()
     if not c:
         return jsonify({'error': 'Clase no encontrada'}), 404
+    # La asistencia directa es para marcar HOY (accesibilidad). Antes aceptaba
+    # cualquier string y lo guardaba como fecha, ensuciando el historial y
+    # dejando que el alumno se auto-asignara dias arbitrarios.
+    hoy = _hoy_academy().strftime('%Y-%m-%d')
+    if not isinstance(fecha, str) or fecha.strip() != hoy:
+        return jsonify({'error': 'Solo se puede marcar la asistencia de hoy'}), 400
     get_db().execute(
         'INSERT OR IGNORE INTO asistencia(clase_id, alumno_id, fecha, presente) VALUES(?,?,?,1)',
         (clase_id, u['id'], fecha))
@@ -3218,13 +3280,17 @@ def api_perfil_update():
     u = current_user()
     data = parse_json()
     cat = data.get('categoria', u['categoria'])
-    tel_tutor = (data.get('tel_tutor', u['tel_tutor']) or '').strip() or None
+    # El alumno podia mandarse una categoria cualquiera y romper los filtros de
+    # videos, cinturones y los chats por categoria.
+    if cat not in CATEGORIAS:
+        return jsonify({'error': 'Categoría inválida'}), 400
+    tel_tutor = txt_str(data.get('tel_tutor', u['tel_tutor'])) or None
     if u['role'] == 'alumno' and cat in ('kids', 'juveniles') and not tel_tutor:
         return jsonify({'error': 'Para menores (Kids/Juveniles) es obligatorio el telefono del padre, madre o tutor responsable.'}), 400
     foto_ok = data.get('foto_ok', u['foto_ok'])
     if u['role'] == 'alumno' and cat in ('kids', 'juveniles') and not foto_ok:
         return jsonify({'error': 'Para menores (Kids/Juveniles) debe autorizar el mayor, padre, madre o tutor que las fotos del menor puedan exponerse.'}), 400
-    nac_upd = (data.get('nacimiento', u['nacimiento']) or '').strip()
+    nac_upd = txt_str(data.get('nacimiento', u['nacimiento']))
     if nac_upd:
         try:
             if datetime.strptime(nac_upd, '%Y-%m-%d').date() >= _hoy_academy():
@@ -3236,14 +3302,14 @@ def api_perfil_update():
         ((data.get('nombre') or u['nombre']), to_int(data.get('edad', u['edad'])),
          to_float(data.get('peso', u['peso'])), data.get('cinturon', u['cinturon']),
          cat, data.get('gi_pref', u['gi_pref']),
-         (data.get('tel', u['tel']) or '').strip() or None,
+         txt_str(data.get('tel', u['tel'])) or None,
          nac_upd or None,
          data.get('medic_info', u['medic_info']),
          data.get('emergency_contact', u['emergency_contact']),
          tel_tutor,
-         (data.get('tel_2', u['tel_2']) or '').strip() or None,
-         (data.get('direccion', u['direccion']) or '').strip() or None,
-         (data.get('dni', u['dni']) or '').strip() or None,
+         txt_str(data.get('tel_2', u['tel_2'])) or None,
+         txt_str(data.get('direccion', u['direccion'])) or None,
+         txt_str(data.get('dni', u['dni'])) or None,
          1 if foto_ok else 0,
          data.get('medic_enfermedades', u['medic_enfermedades']),
          data.get('medic_alergias', u['medic_alergias']),
@@ -3266,8 +3332,8 @@ def api_pausa_set():
     """El alumno activa una pausa temporal: no se le cobra ni cuenta como deudor."""
     u = current_user()
     data = parse_json()
-    desde = (data.get('desde') or '').strip() or _hoy_academy().strftime('%Y-%m-%d')
-    hasta = (data.get('hasta') or '').strip()
+    desde = txt_str(data.get('desde')) or _hoy_academy().strftime('%Y-%m-%d')
+    hasta = txt_str(data.get('hasta'))
     if not hasta:
         return jsonify({'error': 'Indicá hasta qué día estás de pausa'}), 400
     try:
@@ -3302,7 +3368,8 @@ def api_pausa_delete():
 def api_foto():
     data = parse_json()
     b64 = data.get('foto') or ''
-    if ',' not in b64:
+    # Sin este isinstance, un {"foto": 123} reventaba con 500 en `',' not in b64`.
+    if not isinstance(b64, str) or ',' not in b64:
         return jsonify({'error': 'No hay imagen'}), 400
     try:
         img_bytes = base64.b64decode(b64.split(',', 1)[1])
@@ -3397,17 +3464,17 @@ def api_videos_list():
 def api_videos_create():
     u = current_user()
     data = parse_json()
-    titulo = (data.get('titulo') or '').strip()
+    titulo = txt_str(data.get('titulo'))
     if not titulo:
         return jsonify({'error': 'El título es obligatorio'}), 400
-    url = (data.get('url') or '').strip()
+    url = txt_str(data.get('url'))
     if not url:
         return jsonify({'error': 'Falta el link o el video'}), 400
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     db = get_db()
     cur = db.execute(
         'INSERT INTO videos(titulo, descripcion, belt, categoria, url, tipo, subido_por, fecha) VALUES(?,?,?,?,?,?,?,?)',
-        (titulo, (data.get('descripcion') or '').strip(), (data.get('belt') or 'Todos'),
+        (titulo, txt_str(data.get('descripcion')), (data.get('belt') or 'Todos'),
          (data.get('categoria') or 'adulto'), url, 'link', u['id'], now))
     db.commit()
     return jsonify({'ok': True, 'id': cur.lastrowid})
@@ -3701,6 +3768,11 @@ def api_chat_crear():
     otro = to_int(data.get('user_id'))
     if not otro or otro == u['id']:
         return jsonify({'error': 'Elegí un contacto válido'}), 400
+    # Sin este check, un user_id inexistente reventaba con 500 al insertar en
+    # chat_members (FK). Solo se puede chatear con alguien que exista y este activo.
+    destino = db.execute('SELECT id FROM users WHERE id=? AND activo=1', (otro,)).fetchone()
+    if not destino:
+        return jsonify({'error': 'El contacto no existe'}), 404
     exist = db.execute(
         'SELECT c.id FROM chats c JOIN chat_members m1 ON m1.chat_id=c.id JOIN chat_members m2 ON m2.chat_id=c.id '
         'WHERE c.tipo=\'directo\' AND m1.user_id=? AND m2.user_id=? '
@@ -3737,9 +3809,9 @@ def api_chat_mensajes(chat_id):
 def api_chat_enviar(chat_id):
     u = current_user()
     data = parse_json()
-    msj = (data.get('mensaje') or '').strip()
-    adjunto = (data.get('adjunto') or '').strip()
-    adjunto_tipo = (data.get('adjunto_tipo') or '').strip()
+    msj = txt_str(data.get('mensaje'))
+    adjunto = txt_str(data.get('adjunto'))
+    adjunto_tipo = txt_str(data.get('adjunto_tipo'))
     if not msj and not adjunto:
         return jsonify({'error': 'Escribí un mensaje o adjuntá una foto/video'}), 400
     # solo permitir imagenes y videos en el adjunto
@@ -3850,7 +3922,7 @@ def api_metas():
 def api_meta_crear():
     u = current_user()
     data = parse_json()
-    titulo = (data.get('titulo') or '').strip()
+    titulo = txt_str(data.get('titulo'))
     if not titulo:
         return jsonify({'error': 'Poné el título de la meta'}), 400
     obj = to_int(data.get('objetivo')) or 3
@@ -3874,7 +3946,7 @@ def api_meta_actualizar(meta_id):
         db.execute('UPDATE metas SET cumplida=1 WHERE id=?', (meta_id,))
     else:
         db.execute('UPDATE metas SET titulo=?, tipo=?, objetivo=? WHERE id=?',
-                   ((data.get('titulo') or '').strip(), data.get('tipo') or 'semanas',
+                   (txt_str(data.get('titulo')), data.get('tipo') or 'semanas',
                     to_int(data.get('objetivo')) or 3, meta_id))
     db.commit()
     return jsonify({'ok': True})
@@ -3943,11 +4015,11 @@ def api_alumno_grado(uid):
     u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
     if not u:
         return jsonify({'error': 'Alumno no encontrado'}), 404
-    cinturon = (data.get('cinturon') or '').strip()
+    cinturon = txt_str(data.get('cinturon'))
     if not cinturon:
         return jsonify({'error': 'Elegí el cinturón'}), 400
     fecha = (data.get('fecha') or _hoy_academy().strftime('%Y-%m-%d')).strip()
-    notas = (data.get('notas') or '').strip()
+    notas = txt_str(data.get('notas'))
     me = current_user()
     db = get_db()
     db.execute('INSERT INTO grados(alumno_id, cinturon, fecha, notas, registrado_por) VALUES(?,?,?,?,?)',
@@ -3971,7 +4043,7 @@ def api_alumno_proximo_examen(uid):
     u = get_db().execute('SELECT * FROM users WHERE id=? AND role="alumno"', (uid,)).fetchone()
     if not u:
         return jsonify({'error': 'Alumno no encontrado'}), 404
-    fecha = (data.get('fecha') or '').strip() or None
+    fecha = txt_str(data.get('fecha')) or None
     db = get_db()
     db.execute('UPDATE users SET proximo_examen=? WHERE id=?', (fecha, uid))
     db.commit()
@@ -4012,7 +4084,7 @@ def api_muro():
 def api_muro_crear():
     u = current_user()
     data = parse_json()
-    texto = (data.get('texto') or '').strip()
+    texto = txt_str(data.get('texto'))
     fotos = data.get('fotos') or []
     video = data.get('video') or {}
     link = (video.get('link') or '').strip()
@@ -4124,7 +4196,7 @@ def api_encuestas():
 def api_encuesta_crear():
     u = current_user()
     data = parse_json()
-    titulo = (data.get('titulo') or '').strip()
+    titulo = txt_str(data.get('titulo'))
     opciones = [str(x).strip() for x in (data.get('opciones') or []) if str(x).strip()]
     if not titulo or len(opciones) < 2:
         return jsonify({'error': 'Necesitás título y al menos 2 opciones'}), 400
@@ -4179,16 +4251,16 @@ def api_eventos():
 def api_evento_crear():
     u = current_user()
     data = parse_json()
-    titulo = (data.get('titulo') or '').strip()
+    titulo = txt_str(data.get('titulo'))
     if not titulo:
         return jsonify({'error': 'Poné el título del evento'}), 400
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     db = get_db()
     cur = db.execute(
         'INSERT INTO eventos(user_id, titulo, descripcion, fecha, hora, lugar, fecha_evento) VALUES(?,?,?,?,?,?,?)',
-        (u['id'], titulo, (data.get('descripcion') or '').strip(), now,
-         (data.get('hora') or '').strip(), (data.get('lugar') or '').strip(),
-         (data.get('fecha_evento') or '').strip() or now[:10]))
+        (u['id'], titulo, txt_str(data.get('descripcion')), now,
+         txt_str(data.get('hora')), txt_str(data.get('lugar')),
+         txt_str(data.get('fecha_evento')) or now[:10]))
     eid = cur.lastrowid
     # Fotos / flyer del evento (max 5, imagenes raster validas; nada de SVG ni PDF)
     fotos = data.get('fotos')
@@ -4360,7 +4432,7 @@ def api_notificaciones_leer_todas():
 @role_required('admin', 'profesor')
 def api_mensajes_broadcast():
     data = parse_json()
-    texto = (data.get('texto') or '').strip()
+    texto = txt_str(data.get('texto'))
     if not texto:
         return jsonify({'error': 'Escribe el mensaje para los alumnos'}), 400
     if len(texto) > 500:
@@ -4477,7 +4549,7 @@ def api_planes():
 @role_required('admin', 'profesor')
 def api_planes_crear():
     data = parse_json()
-    titulo = (data.get('titulo') or '').strip()
+    titulo = txt_str(data.get('titulo'))
     if not titulo:
         return jsonify({'error': 'El título es obligatorio'}), 400
     lunes, _ = _semana_actual()
@@ -4489,7 +4561,7 @@ def api_planes_crear():
         pass
     get_db().execute(
         'INSERT INTO planes(titulo, descripcion, categoria, cinturon, fecha, autor_id, creado) VALUES(?,?,?,?,?,?,?)',
-        (titulo, (data.get('descripcion') or '').strip(),
+        (titulo, txt_str(data.get('descripcion')),
          data.get('categoria') or 'todos', data.get('cinturon') or 'todos',
          lunes.strftime('%Y-%m-%d'), current_user()['id'],
          datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
@@ -4556,7 +4628,7 @@ def api_settings_get():
         keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_link', 'pago_alias',
                 'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
                 'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar',
-                'desc_familiar2', 'desc_familiar3', 'desc_familiar4', 'tz_offset', 'academy_color']
+                'desc_familiar2', 'desc_familiar3', 'desc_familiar4', 'tz_offset', 'public_url', 'academy_color']
         return jsonify({k: get_setting(k) for k in keys})
     # Alumno/profesor: solo lo publicable. academy_code permite registrarse como
     # profesor y mp_access_token es una credencial de MercadoPago: no se exponen.
@@ -4569,11 +4641,36 @@ def api_settings_get():
 @role_required('admin')
 def api_settings_put():
     data = parse_json()
+    # Rangos: sin esto cualquier string se guardaba y despues reventaba al
+    # calcular la demora o al mostrar el calendario (due_day=abc, cuota=NaN...).
+    numericos = {
+        'default_cuota': (0, 10_000_000),
+        'due_day': (1, 31),
+        'cargo_demora_pct': (0, 100),
+        'auto_inact_dias': (0, 3650),
+        'auto_deuda_dias': (0, 3650),
+        'logro_asist': (0, 1000),
+        'logro_videos': (0, 1000),
+        'asis_min_examen': (0, 1000),
+        'tz_offset': (-12, 14),
+    }
+    for k, (lo, hi) in numericos.items():
+        if k not in data or data[k] is None or data[k] == '':
+            continue
+        n = to_float(data[k])
+        if n is None or not (lo <= n <= hi):
+            return jsonify({'error': 'Valor inválido para %s (debe ir de %s a %s)' % (k, lo, hi)}), 400
+        data[k] = int(n) if k in ('due_day', 'auto_inact_dias', 'auto_deuda_dias',
+                                  'logro_asist', 'logro_videos', 'asis_min_examen', 'tz_offset') else n
     for k in ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'academy_color', 'pago_link', 'pago_alias',
               'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
-              'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar',
+              'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar', 'public_url',
               'desc_familiar2', 'desc_familiar3', 'desc_familiar4', 'tz_offset']:
         if k in data and data[k] is not None:
+            if k in ('auto_mensaje_activo',):
+                data[k] = 1 if as_bool(data[k]) else 0
+            elif not isinstance(data[k], (str, int, float)):
+                return jsonify({'error': 'Valor inválido para %s' % k}), 400
             set_setting(k, data[k])
     return jsonify({'ok': True})
 
@@ -4629,11 +4726,33 @@ def qr_print():
     return render_template('qr_print.html')
 
 
+def _url_qr_asistencia():
+    """URL que se imprime en el cartel QR.
+
+    Antes usaba request.host_url, que sale del header Host: un host manipulado
+    metia el QR_SECRET (el mismo del cartel ya impreso) en un dominio ajeno.
+    Ahora se prioriza el setting 'public_url' y el Host solo se acepta si es un
+    hostname simple. NO se toca QR_SECRET: el cartel físico ya impreso debe
+    seguir funcionando.
+    """
+    base = (get_setting('public_url', '') or '').strip().rstrip('/')
+    if base:
+        if not re.match(r'^https?://[A-Za-z0-9.-]+(:\d+)?$', base):
+            return None
+        return base + '/?qr=1&t=' + QR_SECRET
+    host = (request.host or '').strip()
+    if not re.match(r'^[A-Za-z0-9.-]+(:\d+)?$', host):
+        return None
+    return request.host_url + '?qr=1&t=' + QR_SECRET
+
+
 @app.route('/qr_print.png')
 @role_required('admin', 'profesor')
 def qr_print_png():
     import qrcode
-    url = request.host_url + '?qr=1&t=' + QR_SECRET
+    url = _url_qr_asistencia()
+    if not url:
+        return jsonify({'error': 'No se pudo determinar la URL pública. Configurá "public_url" en Ajustes.'}), 500
     img = qrcode.make(url)
     buf = io.BytesIO()
     img.save(buf, 'PNG')
