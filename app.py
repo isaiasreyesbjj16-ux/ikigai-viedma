@@ -99,6 +99,45 @@ def _storage_delete(url):
         except Exception:
             pass
 
+
+def _storage_stream(url, range_hdr, ctype='video/mp4'):
+    """Proxy a un objeto del bucket streamando, respetando Range y con caché larga.
+
+    Así el video sale de Supabase UNA vez por navegador (la primera reproducción)
+    y las repeticiones se sirven desde la caché del dispositivo, sin gastar egress.
+    """
+    headers = {'Range': range_hdr} if range_hdr else {}
+    req = urllib.request.Request(url, headers=headers, method='GET')
+    try:
+        r = urllib.request.urlopen(req, timeout=30)
+    except urllib.error.HTTPError as e:
+        if e.code == 416:
+            return Response(status=416, headers={
+                'Content-Range': e.headers.get('Content-Range', 'bytes */1'),
+                'Cache-Control': 'no-store'})
+        return None
+    out_headers = {
+        'Content-Type': ctype,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'public, max-age=15552000, immutable',
+    }
+    for h in ('Content-Length', 'Content-Range'):
+        val = r.headers.get(h)
+        if val:
+            out_headers[h] = val
+
+    def _gen():
+        try:
+            while True:
+                chunk = r.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            r.close()
+
+    return Response(_gen(), status=r.getcode(), headers=out_headers)
+
 # Token secreto embebido en el QR físico de asistencia. Solo quien escanea
 # el QR del gimnasio (que contiene este token) puede registrar su asistencia.
 QR_SECRET = os.environ.get('QR_SECRET', 'ikigai2024-nopuedesmarcardesdecasa')
@@ -3229,6 +3268,8 @@ def _video_public(v, u):
         'subido_por': v['subido_por'], 'fecha': v['fecha'],
         'subidor_nombre': v['subidor_nombre'], 'vistas': vistas, 'visto': visto,
     }
+    if v['url'] and v['url'].startswith(SUPABASE_URL):
+        out['url'] = '/api/video/%d/archivo' % v['id']
     if u['role'] == 'alumno':
         prog = d.execute('SELECT * FROM video_progress WHERE video_id=? AND user_id=?',
                          (v['id'], u['id'])).fetchone()
@@ -3388,10 +3429,12 @@ def api_video_archivo(vid):
         except Exception:
             return jsonify({'error': 'Video dañado'}), 500
         return _video_range_response(raw, mime)
-    # Video en Supabase Storage: el front usa la URL pública directo; si algo
-    # hace referencia al endpoint viejo, lo redirigimos sin tocar la RAM.
+    # Video en Supabase Storage: se sirve vía proxy con caché larga para no
+    # gastar egress en cada reproducción (Range incluido).
     if v['url'] and v['url'].startswith(SUPABASE_URL):
-        return redirect(v['url'], code=302)
+        ext = os.path.splitext(v['url'])[1].lower()
+        return _storage_stream(v['url'], request.headers.get('Range'),
+                               EXT_MIME.get(ext, 'video/mp4')) or (jsonify({'error': 'Video no disponible'}), 502)
     return jsonify({'error': 'Video no encontrado'}), 404
 
 
@@ -3863,8 +3906,11 @@ def api_muro():
     out = []
     for r in filas:
         fotos = [f['data'] for f in db.execute('SELECT data FROM muro_fotos WHERE muro_id=?', (r['id'],)).fetchall()]
-        v = db.execute('SELECT url, tipo FROM muro_videos WHERE muro_id=? ORDER BY id LIMIT 1', (r['id'],)).fetchone()
-        out.append({**dict(r), 'fotos': fotos, 'video': dict(v) if v else None})
+        v = db.execute('SELECT id, url, tipo FROM muro_videos WHERE muro_id=? ORDER BY id LIMIT 1', (r['id'],)).fetchone()
+        vd = dict(v) if v else None
+        if vd and vd['url'] and vd['url'].startswith(SUPABASE_URL):
+            vd['url'] = '/api/muro_video/%d' % vd['id']
+        out.append({**dict(r), 'fotos': fotos, 'video': vd})
     return jsonify({'muro': out})
 
 
@@ -3944,7 +3990,9 @@ def api_muro_video(muro_vid):
             return jsonify({'error': 'Video dañado'}), 500
         return _video_range_response(raw, m.group(1))
     if r['url'] and r['url'].startswith(SUPABASE_URL):
-        return redirect(r['url'], code=302)
+        ext = os.path.splitext(r['url'])[1].lower()
+        return _storage_stream(r['url'], request.headers.get('Range'),
+                               EXT_MIME.get(ext, 'video/mp4')) or (jsonify({'error': 'Video no disponible'}), 502)
     return jsonify({'error': 'Video no encontrado'}), 404
 
 
