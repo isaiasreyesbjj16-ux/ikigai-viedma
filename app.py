@@ -152,6 +152,7 @@ QR_SECRET = os.environ.get('QR_SECRET', 'ikigai2024-nopuedesmarcardesdecasa')
 
 BELTS_ADULT = ['Blanco', 'Azul', 'Púrpura', 'Marrón', 'Negro']
 BELTS_KIDS = ['Gris', 'Amarillo', 'Naranja', 'Verde', 'Blanco']
+BELTS_JUV = ['Blanco', 'Gris', 'Amarillo', 'Naranja', 'Verde']
 CATEGORIAS = ['adulto', 'juveniles', 'kids']
 TIPOS_CLASE = ['Gi', 'NoGi', 'Kids', 'Juveniles', 'Abierto']
 METODOS_PAGO = ['Efectivo', 'Transferencia', 'Débito', 'Crédito', 'Otro']
@@ -432,6 +433,12 @@ CREATE TABLE IF NOT EXISTS evento_asistencias (
     evento_id INTEGER NOT NULL REFERENCES eventos(id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (evento_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS evento_fotos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evento_id INTEGER NOT NULL REFERENCES eventos(id) ON DELETE CASCADE,
+    data TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS grados (
@@ -1045,6 +1052,59 @@ def to_float(v):
         return None
 
 
+def as_bool(v, default=True):
+    """Convierte a booleano tolerando el string "false" que llega de algunos
+    clientes (HTML forms / fetch). bool('false') es True en Python y aplicaba
+    recargos que el usuario creia desactivados."""
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    s = str(v).strip().lower()
+    if s in ('false', '0', 'no', 'off', ''):
+        return False
+    return True
+
+
+def validar_mes_anio(mes, anio):
+    """Normaliza (mes, anio). Devuelve (mes, anio, error) para no romper pagos
+    con meses imposibles (que antes reventaban con 500 al construir la fecha)."""
+    hoy = _hoy_academy()
+    try:
+        m = int(mes)
+        a = int(anio)
+    except (TypeError, ValueError):
+        m, a = hoy.month, hoy.year
+    if not 1 <= m <= 12:
+        return m, a, 'Mes inválido (debe ir de 1 a 12).'
+    if not 2000 <= a <= hoy.year + 1:
+        return m, a, 'Año inválido.'
+    return m, a, None
+
+
+DATA_IMG_RE = re.compile(r'^data:image/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=\s]+$', re.I)
+DATA_PDF_RE = re.compile(r'^data:application/pdf;base64,[A-Za-z0-9+/=\s]+$', re.I)
+
+
+def comprobante_valido(comp, max_bytes=12 * 1024 * 1024):
+    """Valida que el comprobante sea una data-URL de imagen o PDF real.
+    Antes solo se chequeaba el prefijo 'data:image/', lo que dejaba pasar SVG y
+    payloads que al interpolarse en el HTML ejecutaban JS (XSS almacenado)."""
+    if not comp or len(comp) > max_bytes:
+        return False
+    return bool(DATA_IMG_RE.match(comp) or DATA_PDF_RE.match(comp))
+
+
+def imagen_valida(img, max_bytes=12 * 1024 * 1024):
+    """Solo imagenes raster (png/jpg/webp/gif). Rechaza SVG, HTML y payloads XSS.
+    Para galerias (Muro, Eventos) el PDF no tiene sentido y solo abria el riesgo."""
+    if not img or not isinstance(img, str) or len(img) > max_bytes:
+        return False
+    return bool(DATA_IMG_RE.match(img))
+
+
 def user_public(u):
     return {
         'id': u['id'],
@@ -1350,7 +1410,7 @@ def app_page():
         return redirect(url_for('index'))
     u = current_user()
     return render_template('dashboard.html', user=user_public(u), belts_adult=BELTS_ADULT,
-                           belts_kids=BELTS_KIDS, categorias=CATEGORIAS,
+                           belts_kids=BELTS_KIDS, belts_juveniles=BELTS_JUV, categorias=CATEGORIAS,
                            tipos_clase=TIPOS_CLASE, metodos=METODOS_PAGO,
                            dias=DIAS, academy_name=get_setting('academy_name'))
 
@@ -2426,10 +2486,13 @@ def api_pagos_create():
     anio = to_int(data.get('anio')) or _hoy_academy().year
     if not alumno_id or not monto or monto <= 0:
         return jsonify({'error': 'Alumno y monto son obligatorios'}), 400
+    mes, anio, err = validar_mes_anio(mes, anio)
+    if err:
+        return jsonify({'error': err}), 400
     if profesor_id == -1 or (profesor_id is None and (data.get('profesor_id') == -1)):
         profesor_id = None
     base, cargo, final = calcular_demora(monto, mes, anio)
-    if data.get('aplicar_cargo', True):
+    if as_bool(data.get('aplicar_cargo')):
         monto = final
     else:
         cargo = 0
@@ -2480,6 +2543,9 @@ def api_pagos_familia():
     nota = (data.get('nota') or '').strip()
     if not titular_id:
         return jsonify({'error': 'Elegí el titular de la familia'}), 400
+    mes, anio, err = validar_mes_anio(mes, anio)
+    if err:
+        return jsonify({'error': err}), 400
     db = get_db()
     fam = db.execute('SELECT * FROM familias WHERE titular_id=?', (titular_id,)).fetchone()
     if not fam:
@@ -2512,7 +2578,7 @@ def api_pagos_familia():
         if monto <= 0:
             continue
         _, cargo, monto_final = calcular_demora(monto, mes, anio)
-        if not data.get('aplicar_cargo', True):
+        if not as_bool(data.get('aplicar_cargo')):
             monto_final = monto
         pago_monto = int(round(monto_final))
         db.execute(
@@ -2884,6 +2950,9 @@ def api_avisar_pago():
     hoy = _hoy_academy()
     mes = to_int(data.get('mes')) or hoy.month
     anio = to_int(data.get('anio')) or hoy.year
+    mes, anio, err = validar_mes_anio(mes, anio)
+    if err:
+        return jsonify({'error': err}), 400
     ex = get_db().execute(
         "SELECT * FROM avisos_pago WHERE alumno_id=? AND mes=? AND anio=? AND estado='pendiente'",
         (u['id'], mes, anio)).fetchone()
@@ -2893,7 +2962,7 @@ def api_avisar_pago():
     if not monto:
         monto = to_float(u['cuota_mensual']) or 0
     comp = (data.get('comprobante') or '').strip()
-    if not (comp.startswith('data:image/') or comp.startswith('data:application/pdf')):
+    if not comprobante_valido(comp):
         return jsonify({'error': 'Tenés que subir el comprobante de pago (foto, captura o PDF)'}), 400
     if len(comp) > 12 * 1024 * 1024:
         return jsonify({'error': 'El comprobante es muy grande (máx 12MB)'}), 400
@@ -2935,7 +3004,7 @@ def api_avisos_confirmar(aid):
     # anterior) y decidir si se suma el aumento/recargo por demora (por defecto
     # se suma como antes; se desactiva si el alumno pagó antes del vencimiento).
     monto_base = to_float(data.get('monto')) or (a['monto'] or 0)
-    aplicar_cargo = bool(data.get('aplicar_cargo', True))
+    aplicar_cargo = as_bool(data.get('aplicar_cargo'))
     base, cargo, final = calcular_demora(monto_base, a['mes'], a['anio'])
     if not aplicar_cargo:
         cargo, final = 0, base
@@ -3425,10 +3494,19 @@ def _video_range_response(raw, mime):
 
 
 @app.route('/api/video/<int:vid>/archivo')
+@login_required
 def api_video_archivo(vid):
-    v = get_db().execute('SELECT url, data FROM videos WHERE id=?', (vid,)).fetchone()
+    u = current_user()
+    v = get_db().execute('SELECT url, data, belt, categoria FROM videos WHERE id=?', (vid,)).fetchone()
     if not v:
         return jsonify({'error': 'Video no encontrado'}), 404
+    # Mismo filtro que el listado: un alumno no puede bajar el archivo de un
+    # video de otra categoria ni de otro cinturon.
+    if u['role'] == 'alumno':
+        if v['categoria'] and v['categoria'] != u['categoria']:
+            return jsonify({'error': 'Este video no es de tu categoria'}), 403
+        if v['belt'] and v['belt'] != 'Todos' and v['belt'] != u['cinturon']:
+            return jsonify({'error': 'Este video no es para tu cinturon'}), 403
     if v['data']:
         ext = os.path.splitext(v['url'])[1].lower()
         mime = EXT_MIME.get(ext, 'video/mp4')
@@ -3462,11 +3540,13 @@ def api_videos_view(vid):
         if not prog or not prog['completado']:
             return jsonify({'error': 'Terminá de ver el video para poder marcarlo como visto'}), 403
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
-    db.execute(
+    # Solo avisar la PRIMERA vez: el endpoint es idempotente y se puede llamar
+    # varias veces por el mismo video (antes notificaba en cada llamada).
+    nuevo = db.execute(
         'INSERT OR IGNORE INTO video_views(video_id, user_id, fecha) VALUES(?,?,?)',
-        (vid, u['id'], now))
+        (vid, u['id'], now)).rowcount > 0
     db.commit()
-    if v['subido_por']:
+    if nuevo and v['subido_por']:
         notify(v['subido_por'], 'Nuevo visto',
                '%s vio el video "%s"' % (u['nombre'], v['titulo']), 'info', push=True)
     return jsonify({'ok': True, 'visto': True})
@@ -3598,6 +3678,11 @@ def api_chat_crear():
                 "SELECT id FROM chats WHERE tipo='grupo' AND nombre=? ORDER BY id ASC LIMIT 1",
                 (cat,)).fetchone()
             if exist:
+                # El grupo ya existia: hay que agregar al usuario actual como
+                # miembro, si no /mensajes le daba 403 y no podia escribir.
+                db.execute('INSERT OR IGNORE INTO chat_members(chat_id, user_id) VALUES(?,?)',
+                           (exist['id'], u['id']))
+                db.commit()
                 return jsonify({'ok': True, 'id': exist['id'], 'nombre': cat, 'tipo': 'grupo'})
             cur = db.execute(
                 "INSERT INTO chats(nombre, tipo, creado_por, fecha) VALUES(?,?,?,?)",
@@ -3943,7 +4028,8 @@ def api_muro_crear():
     cur = db.execute('INSERT INTO muro(user_id, texto, fecha) VALUES(?,?,?)', (u['id'], texto, now))
     mid = cur.lastrowid
     for f in fotos[:5]:
-        if isinstance(f, str) and f.startswith('data:image/'):
+        # Antes solo se chequeaba el prefijo 'data:image/' y eso dejaba pasar SVG con JS (XSS).
+        if imagen_valida(f, max_bytes=6 * 1024 * 1024):
             db.execute('INSERT INTO muro_fotos(muro_id, data) VALUES(?,?)', (mid, f))
     if link:
         db.execute('INSERT INTO muro_videos(muro_id, tipo, url, data) VALUES(?,?,?,?)', (mid, 'link', link, ''))
@@ -3974,6 +4060,11 @@ def api_muro_crear():
 def api_muro_borrar(muro_id):
     u = current_user()
     db = get_db()
+    # Ownership primero: antes se borraban los videos/fotos de cualquier muro
+    # (y del Storage) aunque el DELETE del post no afectara al de otro usuario.
+    post = db.execute('SELECT id FROM muro WHERE id=? AND user_id=?', (muro_id, u['id'])).fetchone()
+    if not post:
+        return jsonify({'error': 'Publicación no encontrada'}), 404
     for r in db.execute('SELECT url FROM muro_videos WHERE muro_id=?', (muro_id,)).fetchall():
         _storage_delete(r['url'])
     db.execute('DELETE FROM muro_videos WHERE muro_id=?', (muro_id,))
@@ -4077,7 +4168,9 @@ def api_eventos():
     for r in filas:
         asisten = db.execute('SELECT COUNT(*) AS n FROM evento_asistencias WHERE evento_id=?', (r['id'],)).fetchone()['n']
         voy = db.execute('SELECT 1 FROM evento_asistencias WHERE evento_id=? AND user_id=?', (r['id'], u['id'])).fetchone()
-        out.append({**dict(r), 'asisten_conf': asisten, 'voy': 1 if voy else 0})
+        fotos = [f['data'] for f in db.execute(
+            'SELECT data FROM evento_fotos WHERE evento_id=? ORDER BY id', (r['id'],)).fetchall()]
+        out.append({**dict(r), 'asisten_conf': asisten, 'voy': 1 if voy else 0, 'fotos': fotos})
     return jsonify({'eventos': out})
 
 
@@ -4090,13 +4183,21 @@ def api_evento_crear():
     if not titulo:
         return jsonify({'error': 'Poné el título del evento'}), 400
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
-    cur = get_db().execute(
+    db = get_db()
+    cur = db.execute(
         'INSERT INTO eventos(user_id, titulo, descripcion, fecha, hora, lugar, fecha_evento) VALUES(?,?,?,?,?,?,?)',
         (u['id'], titulo, (data.get('descripcion') or '').strip(), now,
          (data.get('hora') or '').strip(), (data.get('lugar') or '').strip(),
          (data.get('fecha_evento') or '').strip() or now[:10]))
-    get_db().commit()
-    return jsonify({'ok': True, 'id': cur.lastrowid})
+    eid = cur.lastrowid
+    # Fotos / flyer del evento (max 5, imagenes raster validas; nada de SVG ni PDF)
+    fotos = data.get('fotos')
+    fotos = fotos if isinstance(fotos, list) else []
+    for f in fotos[:5]:
+        if imagen_valida(f, max_bytes=6 * 1024 * 1024):
+            db.execute('INSERT INTO evento_fotos(evento_id, data) VALUES(?,?)', (eid, f))
+    db.commit()
+    return jsonify({'ok': True, 'id': eid})
 
 
 @app.route('/api/eventos/<int:eid>/asistir', methods=['POST'])
@@ -4106,6 +4207,9 @@ def api_evento_asistir(eid):
     db = get_db()
     data = parse_json()
     quitar = data.get('quitar')
+    # Sin este check, un eid inexistente reventaba con 500 por FK.
+    if not db.execute('SELECT 1 FROM eventos WHERE id=?', (eid,)).fetchone():
+        return jsonify({'error': 'Evento no encontrado'}), 404
     if quitar:
         db.execute('DELETE FROM evento_asistencias WHERE evento_id=? AND user_id=?', (eid, u['id']))
     else:
@@ -4117,8 +4221,13 @@ def api_evento_asistir(eid):
 @app.route('/api/eventos/<int:eid>', methods=['DELETE'])
 @role_required('admin')
 def api_evento_borrar(eid):
-    get_db().execute('DELETE FROM eventos WHERE id=?', (eid,))
-    get_db().commit()
+    db = get_db()
+    if not db.execute('SELECT 1 FROM eventos WHERE id=?', (eid,)).fetchone():
+        return jsonify({'error': 'Evento no encontrado'}), 404
+    db.execute('DELETE FROM evento_fotos WHERE evento_id=?', (eid,))
+    db.execute('DELETE FROM evento_asistencias WHERE evento_id=?', (eid,))
+    db.execute('DELETE FROM eventos WHERE id=?', (eid,))
+    db.commit()
     return jsonify({'ok': True})
 
 
@@ -4420,6 +4529,9 @@ def api_planes_delete(pid):
 def api_planes_hecho(pid):
     u = current_user()
     db = get_db()
+    # Sin este check, un pid inexistente reventaba con 500 por FK.
+    if not db.execute('SELECT 1 FROM planes WHERE id=?', (pid,)).fetchone():
+        return jsonify({'error': 'Plan no encontrado'}), 404
     existe = db.execute('SELECT 1 FROM plan_hecho WHERE plan_id=? AND user_id=?', (pid, u['id'])).fetchone()
     if existe:
         db.execute('DELETE FROM plan_hecho WHERE plan_id=? AND user_id=?', (pid, u['id']))
@@ -4440,13 +4552,17 @@ def api_planes_hecho(pid):
 @login_required
 def api_settings_get():
     u = current_user()
-    keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_link', 'pago_alias',
-            'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
-            'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar',
-            'desc_familiar2', 'desc_familiar3', 'desc_familiar4', 'tz_offset']
     if u['role'] == 'admin':
-        keys += ['academy_color']
-    return jsonify({k: get_setting(k) for k in keys})
+        keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_link', 'pago_alias',
+                'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
+                'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar',
+                'desc_familiar2', 'desc_familiar3', 'desc_familiar4', 'tz_offset', 'academy_color']
+        return jsonify({k: get_setting(k) for k in keys})
+    # Alumno/profesor: solo lo publicable. academy_code permite registrarse como
+    # profesor y mp_access_token es una credencial de MercadoPago: no se exponen.
+    pub = ['academy_name', 'pago_link', 'pago_alias', 'logro_asist', 'logro_videos',
+           'desc_familiar', 'desc_familiar2', 'desc_familiar3', 'desc_familiar4']
+    return jsonify({k: get_setting(k) for k in pub})
 
 
 @app.route('/api/settings', methods=['PUT'])

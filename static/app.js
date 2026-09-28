@@ -2,7 +2,7 @@
 const BELTS_ADULT = window.BELTS_ADULT || ['Blanco', 'Azul', 'Púrpura', 'Marrón', 'Negro'];
 const BELTS_KIDS = window.BELTS_KIDS || ['Gris', 'Amarillo', 'Naranja', 'Verde', 'Blanco'];
 const BELTS_JUV = window.BELTS_JUV || ['Blanco', 'Gris', 'Amarillo', 'Naranja', 'Verde'];
-const catLabel = (c) => ({ adulto: 'Adulto', juveniles: 'Juveniles', kids: 'Kids' })[c] || c;
+const catLabel = (c) => esc({ adulto: 'Adulto', juveniles: 'Juveniles', kids: 'Kids' })[c] || esc(c);
 let filtroAlumnosCat = 'todos';
 const BELTS_POR_CAT = { kids: BELTS_KIDS, juveniles: BELTS_JUV, adulto: BELTS_ADULT };
 const CATS_VIDEOS = ['kids', 'juveniles', 'adulto']; // todas las categorías para staff
@@ -55,6 +55,7 @@ function beltHTML(cinturon) {
 
 function toast(msg, ms = 3200) {
   const t = $('#toast');
+  if (!t) return;
   t.textContent = msg;
   t.className = 'toast show';
   if (/✓|✅|correcto|guardad|actualizad|enviad|cread/.test(msg)) t.classList.add('ok');
@@ -116,6 +117,12 @@ async function api(path, opts = {}) {
   });
   let data = {};
   try { data = await res.json(); } catch (e) {}
+  // Sesion vencida (401) dentro de la app: volver al login en vez de mostrar
+  // un error generico. Se excluye /api/login para no pisar su mensaje.
+  if (res.status === 401 && !path.startsWith('/api/login') && location.pathname.startsWith('/app')) {
+    location.href = '/';
+    throw new Error('Tu sesion se vencio. Volve a iniciar sesion.');
+  }
   if (!res.ok && !data.ok) throw new Error(data.error || 'Error de servidor');
   return data;
 }
@@ -1573,7 +1580,7 @@ async function renderMiFamilia(box) {
             <div class="flex space-between" style="align-items:center">
               <span>${avatarHTML(h.foto, h.nombre, 'sm')} <b>${esc(h.nombre)}</b>
                 ${h.en_pausa ? '<span class="tag tag-pausa">⏸ En pausa</span>' : ''}
-                <span class="small" style="color:var(--muted)">· ${esc(catLabel(h.categoria))} · ${beltHTML(h.cinturon)}</span></span>
+                <span class="small" style="color:var(--muted)">· ${catLabel(h.categoria)} · ${beltHTML(h.cinturon)}</span></span>
               <button class="btn ghost small" onclick="quitarHijo(${h.id})" title="Desvincular">🗑</button>
             </div>
             <div class="small" style="margin-top:4px">
@@ -1824,7 +1831,7 @@ async function renderPagos(el) {
           <div><b>${esc(a.alumno_nombre)}</b> avisó que pagó la cuota de <b>${a.mes}/${a.anio}</b>${a.monto ? ' por <b>$' + num(a.monto) + '</b>' : ''}</div>
           <div class="small" style="color:var(--muted)">${esc(a.fecha)}${a.nota && a.nota !== 'Cuota mensual' ? ' · ' + esc(a.nota) : ''}</div>
           ${a.comprobante ? (a.comprobante.indexOf('data:image/') === 0
-            ? `<div class="mt"><img src="${a.comprobante}" onclick="verComprobante(${a.id})" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer" title="Ver comprobante"></div>`
+            ? `<div class="mt"><img src="${esc(a.comprobante)}" onclick="verComprobante(${a.id})" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer" title="Ver comprobante"></div>`
             : `<div class="mt"><div onclick="verComprobante(${a.id})" style="width:72px;height:72px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border-radius:8px;cursor:pointer;font-size:28px" title="Ver comprobante (PDF)">📄</div></div>`) : ''}
           <div class="flex mt" style="gap:8px">
             <button class="btn primary small" onclick="verComprobante(${a.id})">🧾 Ver comprobante y confirmar</button>
@@ -2065,10 +2072,10 @@ function verComprobante(id) {
   AVISO_AUMENTO = true;
   const esImg = a.comprobante.indexOf('data:image/') === 0;
   const cuerpo = esImg
-    ? `<img src="${a.comprobante}" style="width:100%;border-radius:10px;background:#fff">`
+    ? `<img src="${esc(a.comprobante)}" style="width:100%;border-radius:10px;background:#fff">`
     : `<div class="flex center" style="flex-direction:column;gap:10px;padding:20px 0;color:var(--muted)"><div style="font-size:44px">📄</div><p style="margin:0">Comprobante en formato PDF</p>
-       <a class="btn primary small" href="${a.comprobante}" download="comprobante-${esc(a.alumno_nombre || id)}.pdf" style="text-decoration:none">⬇ Descargar PDF</a>
-       <a class="btn ghost small" href="${a.comprobante}" target="_blank" rel="noopener" style="text-decoration:none">👁 Ver PDF</a></div>`;
+       <a class="btn primary small" href="${esc(a.comprobante)}" download="comprobante-${esc(a.alumno_nombre || id)}.pdf" style="text-decoration:none">⬇ Descargar PDF</a>
+       <a class="btn ghost small" href="${esc(a.comprobante)}" target="_blank" rel="noopener" style="text-decoration:none">👁 Ver PDF</a></div>`;
   openModal(`
     <h3>🧾 Comprobante · ${esc(a.alumno_nombre)}</h3>
     <p class="small">Cuota de <b>${a.mes}/${a.anio}</b> por <b>$${num(a.monto)}</b>${a.nota && a.nota !== 'Cuota mensual' ? ' · ' + esc(a.nota) : ''}</p>
@@ -3406,9 +3413,11 @@ async function votarEncuesta(id, op) {
 /* =====================================================================
    EVENTOS Y ACTIVIDADES
    ===================================================================== */
+let EVENTOS_CACHE = {};
 async function renderEventos(el) {
   const d = await api('/api/eventos').catch(() => ({ eventos: [] }));
   const esStaff = USER.role !== 'alumno';
+  EVENTOS_CACHE = {};
   el.innerHTML = `
     ${secHeader('🗓️ Eventos y actividades')}
     ${esStaff ? `<div class="card">
@@ -3419,6 +3428,11 @@ async function renderEventos(el) {
         <div class="field"><label>Hora</label><input type="time" id="vHora"></div>
         <div class="field"><label>Lugar</label><input id="vLugar"></div>
         <div class="field" style="grid-column:1/-1"><label>Descripción</label><textarea id="vDesc" style="width:100%;min-height:60px"></textarea></div>
+        <div class="field" style="grid-column:1/-1"><label>Foto del evento / flyer (hasta 5)</label>
+          <input type="file" id="vFotos" accept="image/*" multiple>
+          <div class="flex wrap mt" id="vFotosPre" style="gap:6px"></div>
+          <small class="hint">Subí el cartel o flyer del evento. Queda visible para todos.</small>
+        </div>
         <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Publicar evento</button></div>
       </form>
     </div>` : ''}
@@ -3429,6 +3443,7 @@ async function renderEventos(el) {
             <b>${esc(ev.titulo)}</b>
             <div class="small" style="color:var(--muted)">${esc(ev.fecha_evento)}${ev.hora ? ' · ' + esc(ev.hora) : ''}${ev.lugar ? ' · ' + esc(ev.lugar) : ''}</div>
             ${ev.descripcion ? `<div class="small">${esc(ev.descripcion)}</div>` : ''}
+            ${ev.fotos && ev.fotos.length ? `<div class="flex wrap mt" style="gap:6px">${ev.fotos.map((f, i) => `<img src="${esc(f)}" data-foto-ev="${ev.id}" data-foto-i="${i}" onclick="abrirFotoEvento(this)" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer" title="Ver foto">`).join('')}</div>` : ''}
             <div class="small" style="color:var(--muted)">👥 ${ev.asisten_conf} confirmaron</div>
           </div>
           <span>
@@ -3436,16 +3451,42 @@ async function renderEventos(el) {
             ${USER.role === 'admin' ? `<button class="btn ghost small" onclick="borrarEvento(${ev.id})">🗑</button>` : ''}
           </span>
         </div>`).join('') : '<div class="empty">No hay eventos próximos.</div>'}
-    </div>`;
-  if (esStaff) $('#evForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    try {
-      await api('/api/eventos', { method: 'POST', body: {
-        titulo: $('#vTitulo').value, fecha_evento: $('#vFecha').value, hora: $('#vHora').value,
-        lugar: $('#vLugar').value, descripcion: $('#vDesc').value } });
-      renderEventos($('#sec-eventos'));
-    } catch (err) { toast(err.message); }
-  });
+      </div>`;
+  d.eventos.forEach(ev => { EVENTOS_CACHE[ev.id] = ev; });
+  if (esStaff) {
+    let fotos = [];
+    $('#vFotos').addEventListener('change', async (e) => {
+      fotos = [];
+      $('#vFotosPre').innerHTML = '';
+      const files = Array.from(e.target.files || []).slice(0, 5);
+      for (const f of files) {
+        try {
+          const dataUrl = await comprimirImagen(f, 1200);
+          fotos.push(dataUrl);
+          $('#vFotosPre').insertAdjacentHTML('beforeend',
+            `<img src="${esc(dataUrl)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)">`);
+        } catch (err) { toast('No se pudo leer ' + f.name); }
+      }
+    });
+    $('#evForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api('/api/eventos', { method: 'POST', body: {
+          titulo: $('#vTitulo').value, fecha_evento: $('#vFecha').value, hora: $('#vHora').value,
+          lugar: $('#vLugar').value, descripcion: $('#vDesc').value, fotos: fotos } });
+        fotos = [];
+        toast('Evento publicado');
+        renderEventos($('#sec-eventos'));
+      } catch (err) { toast(err.message); }
+    });
+  }
+}
+// El src se lee del DOM y se resuelve via el cache, en vez de interpolarse dentro
+// del atributo onclick: asi la data-URL nunca queda en el HTML.
+function abrirFotoEvento(el) {
+  const ev = (EVENTOS_CACHE || {})[el.getAttribute('data-foto-ev')];
+  if (!ev || !ev.fotos || !ev.fotos.length) { toast('No hay fotos para este evento'); return; }
+  verFoto(ev.fotos[Number(el.getAttribute('data-foto-i'))] || ev.fotos[0]);
 }
 async function asistirEvento(id, voy) {
   try { await api('/api/eventos/' + id + '/asistir', { method: 'POST', body: { quitar: voy ? 1 : 0 } }); renderEventos($('#sec-eventos')); }
