@@ -88,14 +88,22 @@ def _storage_upload(key, raw, ctype):
     return None
 
 
+def _storage_prefix():
+    return SUPABASE_URL + '/storage/v1/object/public/' + SUPABASE_BUCKET + '/'
+
+
+def _is_storage_url(url):
+    """True solo si Storage está configurado Y la URL apunta a nuestro bucket."""
+    return bool(_storage_enabled() and url and url.startswith(_storage_prefix()))
+
+
 def _storage_delete(url):
     """Borra el objeto del Storage si la URL apunta a nuestro bucket."""
     if not _storage_enabled() or not url:
         return
-    prefix = SUPABASE_URL + '/storage/v1/object/public/' + SUPABASE_BUCKET + '/'
-    if url.startswith(prefix):
+    if _is_storage_url(url):
         try:
-            _storage_request('DELETE', '/object/%s/%s' % (SUPABASE_BUCKET, url[len(prefix):]))
+            _storage_request('DELETE', '/object/%s/%s' % (SUPABASE_BUCKET, url[len(_storage_prefix()):]))
         except Exception:
             pass
 
@@ -3268,7 +3276,7 @@ def _video_public(v, u):
         'subido_por': v['subido_por'], 'fecha': v['fecha'],
         'subidor_nombre': v['subidor_nombre'], 'vistas': vistas, 'visto': visto,
     }
-    if v['url'] and v['url'].startswith(SUPABASE_URL):
+    if _is_storage_url(v['url']):
         out['url'] = '/api/video/%d/archivo' % v['id']
     if u['role'] == 'alumno':
         prog = d.execute('SELECT * FROM video_progress WHERE video_id=? AND user_id=?',
@@ -3431,7 +3439,7 @@ def api_video_archivo(vid):
         return _video_range_response(raw, mime)
     # Video en Supabase Storage: se sirve vía proxy con caché larga para no
     # gastar egress en cada reproducción (Range incluido).
-    if v['url'] and v['url'].startswith(SUPABASE_URL):
+    if _is_storage_url(v['url']):
         ext = os.path.splitext(v['url'])[1].lower()
         return _storage_stream(v['url'], request.headers.get('Range'),
                                EXT_MIME.get(ext, 'video/mp4')) or (jsonify({'error': 'Video no disponible'}), 502)
@@ -3908,7 +3916,7 @@ def api_muro():
         fotos = [f['data'] for f in db.execute('SELECT data FROM muro_fotos WHERE muro_id=?', (r['id'],)).fetchall()]
         v = db.execute('SELECT id, url, tipo FROM muro_videos WHERE muro_id=? ORDER BY id LIMIT 1', (r['id'],)).fetchone()
         vd = dict(v) if v else None
-        if vd and vd['url'] and vd['url'].startswith(SUPABASE_URL):
+        if vd and _is_storage_url(vd['url']):
             vd['url'] = '/api/muro_video/%d' % vd['id']
         out.append({**dict(r), 'fotos': fotos, 'video': vd})
     return jsonify({'muro': out})
@@ -3989,7 +3997,7 @@ def api_muro_video(muro_vid):
         except Exception:
             return jsonify({'error': 'Video dañado'}), 500
         return _video_range_response(raw, m.group(1))
-    if r['url'] and r['url'].startswith(SUPABASE_URL):
+    if _is_storage_url(r['url']):
         ext = os.path.splitext(r['url'])[1].lower()
         return _storage_stream(r['url'], request.headers.get('Range'),
                                EXT_MIME.get(ext, 'video/mp4')) or (jsonify({'error': 'Video no disponible'}), 502)
