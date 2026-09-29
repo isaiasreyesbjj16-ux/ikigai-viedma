@@ -1456,6 +1456,93 @@ def app_page():
                            dias=DIAS, academy_name=get_setting('academy_name'))
 
 
+# =============================================================================
+#  PAGINA DE PRESENTACION DE LA ACADEMIA  ->  /presentacion
+# =============================================================================
+#  ###############  DONDE PONER LAS FOTOS DE LOS PROFESORES  ###############
+#  1) Copia cada foto dentro de la carpeta:  static/fotos/
+#  2) Abajo, en FOTOS_PROFES, escribi el nombre del profe (como figura en la
+#     app) y el nombre del archivo de la foto:
+#
+#         FOTOS_PROFES = {
+#             'Juan Perez': 'juan.jpg',
+#             'Maria Lopez': 'maria.png',
+#         }
+#
+#  - Se puede escribir con o sin tildes/ñ (no importa).
+#  - Si a un profe no lo pones, la pagina usa la foto de perfil que tenga
+#    cargada en la app; y si no tiene ninguna, muestra sus iniciales.
+#  - Tamaño recomendado de la foto: 600x600 px (cuadrada).
+#  ###########################################################################
+FOTOS_PROFES = {
+    # 'Nombre Apellido': 'archivo.jpg',
+}
+
+#  ####################  LINK DE INSTAGRAM (abajo de la pagina)  ####################
+#  Cambiá esta linea por el link real de la cuenta de la academia.
+INSTAGRAM_URL = 'https://www.instagram.com/ikigaiviedma'
+INSTAGRAM_USUARIO = '@ikigaiviedma'
+#  ###############################################################################
+
+
+def _norm_txt(s):
+    """Compara nombres sin tildes ni mayusculas (para las fotos de los profes)."""
+    import unicodedata
+    s = (s or '').lower().strip()
+    return ''.join(ch for ch in unicodedata.normalize('NFD', s)
+                   if unicodedata.category(ch) != 'Mn')
+
+
+@app.route('/presentacion')
+def presentacion():
+    db = get_db()
+    fotos = {_norm_txt(k): v for k, v in FOTOS_PROFES.items() if v}
+    profes = db.execute(
+        "SELECT id, nombre, cinturon, foto FROM users "
+        "WHERE role IN ('admin','profesor') AND activo=1 ORDER BY nombre").fetchall()
+    clases = db.execute(
+        """SELECT c.dia, c.hora, c.tipo, c.nivel, c.duracion, c.profesor_id,
+                  u.nombre AS profesor_nombre
+           FROM classes c LEFT JOIN users u ON u.id=c.profesor_id
+           ORDER BY c.dia, c.hora""").fetchall()
+
+    def item(c):
+        return {'dia': c['dia'], 'dia_nombre': DIAS[c['dia']], 'hora': c['hora'],
+                'tipo': c['tipo'], 'nivel': c['nivel'] or 'Todos',
+                'duracion': c['duracion'], 'profesor': c['profesor_nombre'] or 'Sin asignar'}
+
+    por_profes = {}
+    por_dia = {}
+    for c in clases:
+        por_dia.setdefault(c['dia'], []).append(item(c))
+        if c['profesor_id']:
+            por_profes.setdefault(c['profesor_id'], []).append(item(c))
+
+    lista = []
+    for p in profes:
+        manual = (fotos.get(_norm_txt(p['nombre'])) or '').strip()
+        lista.append({
+            'nombre': p['nombre'],
+            'cinturon': p['cinturon'] or '',
+            'foto': ('/static/fotos/' + manual) if manual else (p['foto'] or ''),
+            'foto_manual': bool(manual),
+            'horarios': por_profes.get(p['id'], []),
+            'iniciales': ''.join(w[0] for w in (p['nombre'] or '?').split()[:2]).upper(),
+        })
+
+    dias_horario = [{'dia': d, 'dia_nombre': DIAS[d], 'clases': por_dia.get(d, [])}
+                    for d in range(7) if por_dia.get(d)]
+    return render_template(
+        'presentacion.html',
+        titulo='IKIGAI CIENCIA Y ARTE DEL CONOCIMIENTO - JIU JITSU VIEDMA',
+        subtitulo='Ciencia y Arte del Conocimiento',
+        profes=lista,
+        dias_horario=dias_horario,
+        instagram_url=INSTAGRAM_URL,
+        instagram_usuario=INSTAGRAM_USUARIO,
+    )
+
+
 @app.route('/recibo/<int:pid>')
 @login_required
 def recibo(pid):
@@ -4442,16 +4529,27 @@ def api_mensajes_broadcast():
     envio = data.get('push', True)
     who = current_user()['nombre']
     alumno_id = to_int(data.get('alumno_id'))
+    # Si un aviso/codigo previo dejo la transaccion abortada (Postgres),
+    # recuperar la conexion antes de la primera consulta de este request.
+    try:
+        get_db().execute('ROLLBACK')
+    except Exception:
+        pass
     if alumno_id:
         rows = get_db().execute("SELECT id, nombre FROM users WHERE id=? AND activo=1", (alumno_id,)).fetchall()
     elif quienes == 'todos':
         rows = get_db().execute("SELECT id, nombre FROM users WHERE activo=1").fetchall()
     else:
         rows = get_db().execute("SELECT id, nombre FROM users WHERE role='alumno' AND activo=1").fetchall()
+    enviados = 0
+    errores = []
     for r in rows:
-        notify(r['id'], titulo, f'{texto}',
-               tipo='mensaje', push=envio)
-    return jsonify({'ok': True, 'destinatarios': len(rows)})
+        try:
+            notify(r['id'], titulo, texto, tipo='mensaje', push=envio)
+            enviados += 1
+        except Exception as e:
+            errores.append({'id': r['id'], 'error': str(e)})
+    return jsonify({'ok': True, 'destinatarios': len(rows), 'enviados': enviados, 'errores': errores[:5]})
 
 
 @app.route('/api/vapid_public_key')
