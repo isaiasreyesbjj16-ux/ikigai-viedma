@@ -1478,10 +1478,15 @@ FOTOS_PROFES = {
     # 'Nombre Apellido': 'archivo.jpg',
 }
 
-#  ####################  LINK DE INSTAGRAM (abajo de la pagina)  ####################
-#  Cambiá esta linea por el link real de la cuenta de la academia.
-INSTAGRAM_URL = 'https://www.instagram.com/ikigaiviedma'
-INSTAGRAM_USUARIO = '@ikigaiviedma'
+#  ####################  DATOS DEL SITIO (web + presentacion)  ####################
+#  Link de Instagram (aparece arriba, abajo y en contacto).
+INSTAGRAM_URL = 'https://www.instagram.com/ikigai_viedma/'
+INSTAGRAM_USUARIO = '@ikigai_viedma'
+#  Direccion de la academia.
+DIRECCION = 'Tucumán 149, Viedma, Río Negro, Argentina'
+#  WhatsApp para consultas: solo numeros con prefijo internacional, sin + ni espacios.
+#  Ej: '54292123456789'. Si queda vacio, el boton de WhatsApp NO se muestra.
+WHATSAPP_NUMERO = ''
 #  ###############################################################################
 
 
@@ -1493,8 +1498,13 @@ def _norm_txt(s):
                    if unicodedata.category(ch) != 'Mn')
 
 
-@app.route('/presentacion')
-def presentacion():
+def _datos_web():
+    """Datos publicos del sitio: profesores (con foto) y horarios de clases.
+
+    Se leen de la base, asi que si en la app cambias un horario, agregas un
+    profe o subis su foto de perfil, el sitio se actualiza solo.
+    """
+    from urllib.parse import quote
     db = get_db()
     fotos = {_norm_txt(k): v for k, v in FOTOS_PROFES.items() if v}
     profes = db.execute(
@@ -1511,8 +1521,7 @@ def presentacion():
                 'tipo': c['tipo'], 'nivel': c['nivel'] or 'Todos',
                 'duracion': c['duracion'], 'profesor': c['profesor_nombre'] or 'Sin asignar'}
 
-    por_profes = {}
-    por_dia = {}
+    por_profes, por_dia = {}, {}
     for c in clases:
         por_dia.setdefault(c['dia'], []).append(item(c))
         if c['profesor_id']:
@@ -1532,15 +1541,75 @@ def presentacion():
 
     dias_horario = [{'dia': d, 'dia_nombre': DIAS[d], 'clases': por_dia.get(d, [])}
                     for d in range(7) if por_dia.get(d)]
+    return {
+        'profes': lista,
+        'dias_horario': dias_horario,
+        'total_clases': len(clases),
+        'dias_con_clase': len(dias_horario),
+        'tipos': sorted({c['tipo'] for c in clases if c['tipo']}),
+        'niveles': sorted({(c['nivel'] or 'Todos') for c in clases}),
+    }
+
+
+@app.context_processor
+def _web_global():
+    """Datos comunes a todas las paginas del sitio."""
+    from urllib.parse import quote
+    wa = ''.join(ch for ch in (WHATSAPP_NUMERO or '') if ch.isdigit())
+    return {
+        'WEB_TITULO': 'IKIGAI - Ciencia y Arte del Conocimiento - Jiu Jitsu Viedma',
+        'instagram_url': INSTAGRAM_URL,
+        'instagram_usuario': INSTAGRAM_USUARIO,
+        'direccion': DIRECCION,
+        'maps_url': 'https://www.google.com/maps/search/?api=1&query=' + quote(DIRECCION),
+        'whatsapp_url': ('https://wa.me/' + wa) if wa else '',
+    }
+
+
+@app.route('/presentacion')
+def presentacion():
+    d = _datos_web()
     return render_template(
         'presentacion.html',
         titulo='IKIGAI CIENCIA Y ARTE DEL CONOCIMIENTO - JIU JITSU VIEDMA',
         subtitulo='Ciencia y Arte del Conocimiento',
-        profes=lista,
-        dias_horario=dias_horario,
+        profes=d['profes'],
+        dias_horario=d['dias_horario'],
         instagram_url=INSTAGRAM_URL,
         instagram_usuario=INSTAGRAM_USUARIO,
     )
+
+
+# =============================================================================
+#  SITIO WEB DE LA ACADEMIA  ->  /web  (inicio, profesores, horarios, contacto)
+# =============================================================================
+@app.route('/web')
+@app.route('/web/')
+def web_inicio():
+    d = _datos_web()
+    return render_template('web_inicio.html', seccion='inicio', profes=d['profes'][:4],
+                           dias_horario=d['dias_horario'], total_clases=d['total_clases'],
+                           dias_con_clase=d['dias_con_clase'], tipos=d['tipos'])
+
+
+@app.route('/web/profesores')
+def web_profesores():
+    d = _datos_web()
+    return render_template('web_profesores.html', seccion='profesores', profes=d['profes'])
+
+
+@app.route('/web/horarios')
+def web_horarios():
+    d = _datos_web()
+    return render_template('web_horarios.html', seccion='horarios', dias_horario=d['dias_horario'],
+                           total_clases=d['total_clases'], dias_con_clase=d['dias_con_clase'])
+
+
+@app.route('/web/contacto')
+def web_contacto():
+    d = _datos_web()
+    return render_template('web_contacto.html', seccion='contacto', dias_horario=d['dias_horario'],
+                           total_clases=d['total_clases'])
 
 
 @app.route('/recibo/<int:pid>')

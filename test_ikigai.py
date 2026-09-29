@@ -199,6 +199,39 @@ if profes:
 c2anon = A.app.test_client()
 check('presentacion se ve sin loguearse', c2anon.get('/presentacion').status_code == 200, 'r=%s' % c2anon.get('/presentacion').status_code)
 
+# ===========================================================================
+print('== SITIO WEB (/web) ==')
+PAGINAS = ['/web', '/web/profesores', '/web/horarios', '/web/contacto']
+h_ini = h_pro = h_hor = h_con = ''
+for u in PAGINAS:
+    r = c2anon.get(u)
+    h = r.get_data(as_text=True)
+    check('sitio: %s responde 200 sin loguearse' % u, r.status_code == 200, 'r=%s' % r.status_code)
+    if u == '/web':
+        h_ini = h
+    elif u == '/web/profesores':
+        h_pro = h
+    elif u == '/web/horarios':
+        h_hor = h
+    else:
+        h_con = h
+
+check('sitio: menu con las 4 secciones', all(x in h_ini for x in
+      ['/web/profesores', '/web/horarios', '/web/contacto']), 'falta alguna seccion del menu')
+check('sitio: css compartido cargado', '/static/web.css' in h_ini, 'falta web.css')
+check('sitio: instagram correcto en inicio', 'instagram.com/ikigai_viedma' in h_ini, 'no esta el link nuevo')
+check('sitio: direccion en contacto',
+      'Tucum' in h_con and '149' in h_con and 'Viedma' in h_con, 'falta la direccion')
+check('sitio: link de google maps', 'google.com/maps' in h_con, 'falta el link del mapa')
+check('sitio: horarios cargados', '19:30' in h_hor and '18:00' in h_hor, 'faltan horarios')
+check('sitio: profes en su pagina', 'Profesores' in h_pro or 'profesores' in h_pro, 'falta el listado')
+if profes:
+    check('sitio: aparece el profe en /web/profesores',
+          profes[0]['nombre'] in h_pro, 'nombre=%s' % profes[0]['nombre'])
+check('sitio: CTA a la app', '/app' in h_ini, 'falta el link a la app')
+check('sitio: whatsapp oculto si no hay numero',
+      'wa.me' not in h_con, 'whatsapp deberia estar oculto con WHATSAPP_NUMERO vacio')
+
 print()
 print('RESULTADO: %d OK, %d FAIL' % (len(PASS), len(FAIL)))
 if FAIL:
