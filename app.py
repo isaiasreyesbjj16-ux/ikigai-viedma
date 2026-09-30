@@ -9,6 +9,7 @@ import zipfile
 import threading
 import urllib.request
 import urllib.error
+from urllib.parse import urlparse
 from datetime import datetime, date, timedelta, timezone
 
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template, g, send_from_directory, Response
@@ -158,6 +159,9 @@ TIPOS_CLASE = ['Gi', 'NoGi', 'Kids', 'Juveniles', 'Abierto']
 METODOS_PAGO = ['Efectivo', 'Transferencia', 'Débito', 'Crédito', 'Otro']
 DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
 MESES_NOMBRE = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
+# Link de pago online de la academia. Se puede overridear en Ajustes > pago_link.
+PAGO_LINK_DEFAULT = 'https://link.mercadopago.com.ar/bjjviedma'
 
 VAPID_PRIVATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vapid_private.pem')
 VAPID_PUBLIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vapid_public.pem')
@@ -641,6 +645,8 @@ def _init_db_body(db):
         'mp_access_token': '',
         'wp_numero': '',
         'public_url': '',
+        'pago_link': PAGO_LINK_DEFAULT,
+        'pago_alias': '',
     }
     for k, v in defaults.items():
         c.execute('INSERT OR IGNORE INTO settings(k, value) VALUES(?,?)', (k, v))
@@ -823,7 +829,6 @@ def send_push(user_id, titulo, mensaje, extra=None, _diag=None):
                     if _diag is not None and not _diag.get('error'):
                         host = '?'
                         try:
-                            from urllib.parse import urlparse
                             host = urlparse(ep).netloc
                         except Exception:
                             pass
@@ -1144,6 +1149,23 @@ def imagen_valida(img, max_bytes=12 * 1024 * 1024):
     if not img or not isinstance(img, str) or len(img) > max_bytes:
         return False
     return bool(DATA_IMG_RE.match(img))
+
+
+def url_http_valida(u, max_len=600):
+    """Solo URLs http/https absolutas. El link de pago se interpola en un href,
+    asi que 'javascript:' o 'data:' ejecutarian codigo en la app del alumno."""
+    if not u or not isinstance(u, str):
+        return ''
+    u = u.strip()
+    if not u or len(u) > max_len:
+        return ''
+    try:
+        p = urlparse(u)
+    except ValueError:
+        return ''
+    if p.scheme not in ('http', 'https') or not p.netloc:
+        return ''
+    return u
 
 
 def user_public(u):
@@ -1874,7 +1896,7 @@ def api_me():
     d = user_public(u)
     if u['role'] == 'alumno':
         d['cuota'] = cuota_status(u)
-    d['pago_link'] = get_setting('pago_link', '')
+    d['pago_link'] = url_http_valida(get_setting('pago_link', '')) or PAGO_LINK_DEFAULT
     d['pago_alias'] = get_setting('pago_alias', '')
     d['mp_habilitado'] = bool((get_setting('mp_access_token', '') or '').strip())
     d['wp_numero'] = get_setting('wp_numero', '')
@@ -4829,6 +4851,13 @@ def api_settings_put():
             return jsonify({'error': 'Valor inválido para %s (debe ir de %s a %s)' % (k, lo, hi)}), 400
         data[k] = int(n) if k in ('due_day', 'auto_inact_dias', 'auto_deuda_dias',
                                   'logro_asist', 'logro_videos', 'asis_min_examen', 'tz_offset') else n
+    if 'pago_link' in data and data['pago_link'] not in (None, ''):
+        link = url_http_valida(data['pago_link'])
+        if not link:
+            return jsonify({'error': 'El link de pago debe ser una URL http/https válida'}), 400
+        data['pago_link'] = link
+    if 'pago_link' in data:
+        data['pago_link'] = url_http_valida(data['pago_link'])
     for k in ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'academy_color', 'pago_link', 'pago_alias',
               'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
               'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar', 'public_url',

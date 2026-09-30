@@ -1250,7 +1250,7 @@ async function renderInicio(el) {
             </div>
             <button class="btn ghost small" onclick="showSec('mispagos')">Ver mi cuenta</button>
           </div>
-          ${estado !== 'al_dia' ? `<p class="small" style="color:#ff9b8f;margin-bottom:0">⚠️ Aboná tu cuota y <b>mandá el comprobante de pago</b>${me.pago_alias ? ' (por transferencia al alias/CVU de la academia)' : ''}. El pago se confirma solo cuando el profe/admin lo revisa.</p><button class="btn primary btn-block mt" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
+          ${estado !== 'al_dia' ? `<p class="small" style="color:#ff9b8f;margin-bottom:0">⚠️ Aboná tu cuota y <b>mandá el comprobante de pago</b>${me.pago_alias ? ' (por transferencia al alias/CVU de la academia)' : ''}. El pago se confirma solo cuando el profe/admin lo revisa.</p><button class="btn primary btn-block mt" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>${me.pago_link ? `<a class="btn primary btn-block mt" href="${esc(me.pago_link)}" target="_blank" rel="noopener noreferrer" onclick="marcarLinkPago(this)">🔗 Pagar online</a>` : ''}` : ''}
         </div>
 
         <div class="feed-card">
@@ -2141,7 +2141,7 @@ async function renderMisPagos(el) {
         </div>
         <div class="tag ${cls}" style="font-size:14px;padding:6px 14px">${lbl}</div>
       </div>
-      ${exento ? '' : `<p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_alias ? ' por transferencia al alias/CVU de la academia' : ' en la academia'} y <b>sí o sí mandá el comprobante de pago</b>: sin comprobante, el pago no se confirma.</p>`}
+      ${exento ? '' : `<p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_alias ? ' por transferencia al alias/CVU de la academia' : ''} y <b>sí o sí mandá el comprobante de pago</b>: sin comprobante, el pago no se confirma.</p>`}
       ${aviso && !exento ? `<p class="small mt" style="color:var(--warn)">⏳ Comprobante de ${aviso.mes}/${aviso.anio} enviado. Esperá la confirmación.</p>` : ''}
       ${!exento && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
       ${!exento && me.mp_habilitado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" style="background:linear-gradient(90deg,#00c3ff,#0aa2e0);border:none" onclick="pagarMercadoPago()">💳 Pagar con MercadoPago</button>` : ''}
@@ -2152,6 +2152,13 @@ async function renderMisPagos(el) {
       <p class="small">Págale al alias/CVU de la academia y después <b>mandá el comprobante</b> (foto o captura). El pago se confirma cuando lo revisa el profe/admin.</p>
       <div class="alias-box" id="aliasBox">${esc(me.pago_alias)}</div>
       <button class="btn ghost btn-block" onclick="copiarAlias()">📋 Copiar alias / CVU</button>
+    </div>` : ''}
+    ${me.pago_link ? `
+    <div class="card">
+      <h3>🔗 Pagar online</h3>
+      <p class="small">Te llevamos al link de pago de la academia. Después <b>mandá el comprobante</b> (foto o captura) para que el profe/admin confirme tu cuota.</p>
+      <a class="btn primary btn-block" href="${esc(me.pago_link)}" target="_blank" rel="noopener noreferrer" onclick="marcarLinkPago(this)">💳 Pagar con MercadoPago</a>
+      <div class="small" style="color:var(--muted);margin-top:8px;word-break:break-all">${esc(me.pago_link)}</div>
     </div>` : ''}
     <div class="card"><h3>Mis pagos</h3>
       <div style="overflow:auto"><table>
@@ -2165,11 +2172,21 @@ async function renderMisPagos(el) {
     </div>`;
 }
 async function pagarMercadoPago() {
+  const btn = event && event.currentTarget;
+  if (btn) { btn.disabled = true; btn.textContent = 'Abriendo MercadoPago…'; }
   try {
     const r = await api('/api/checkout', { method: 'POST' });
-    if (r.init_point) { window.open(r.init_point, '_blank'); }
-    else toast(r.error || 'No se pudo generar el pago');
+    if (r.init_point) {
+      const w = window.open(r.init_point, '_blank', 'noopener');
+      if (!w) location.href = r.init_point;
+      else toast('Abrimos MercadoPago en una pestaña nueva 🛒');
+    } else toast(r.error || 'No se pudo generar el pago');
   } catch (e) { toast(e.message); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = '💳 Pagar con MercadoPago'; } }
+}
+function marcarLinkPago(a) {
+  try { a.dataset.clic = '1'; a.style.opacity = '.75'; } catch (e) {}
+  toast('Abriendo el link de pago 🛒 Después mandá el comprobante.');
 }
 async function avisarPago() {
   openModal(`
