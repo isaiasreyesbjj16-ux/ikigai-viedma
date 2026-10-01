@@ -127,6 +127,18 @@ cf = A.app.test_client()
 login(cf, 'alu0')
 mf = cf.get('/api/mi_familia')
 check('el titular ve su familia', mf.status_code == 200 and (mf.get_json() or {}).get('familia'), 'r=%s' % mf.status_code)
+# el pago familiar es SOLO del admin: ni el titular ni el profesor pueden
+r = cf.post('/api/pagos/familia', json={'titular_id': alu[0], 'mes': mes_f,
+                                       'anio': hoy_academy().year})
+check('el titular (dueño del plan) NO puede pagar la familia -> 403',
+      r.status_code == 403, 'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:100]))
+r = A.app.test_client()
+c.post('/api/profesores', json={'nombre': 'Profe Prueba', 'username': 'profe1', 'password': '1234'})
+login(r, 'profe1', '1234')
+r = r.post('/api/pagos/familia', json={'titular_id': alu[0], 'mes': mes_f,
+                                       'anio': hoy_academy().year})
+check('el profesor NO puede pagar la familia -> 403',
+      r.status_code == 403, 'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:100]))
 
 # ===========================================================================
 print('== BECA ==')

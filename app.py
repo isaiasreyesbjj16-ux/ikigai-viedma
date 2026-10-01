@@ -2753,11 +2753,13 @@ def api_pagos_create():
 
 
 @app.route('/api/pagos/familia', methods=['POST'])
-@role_required('admin', 'profesor')
+@role_required('admin')
 def api_pagos_familia():
     """Registra la cuota (con descuento familiar) de TODOS los integrantes del
     grupo de un titular, en un solo paso. Saltea becados, profesores y quien
-    ya tiene pago de ese mes/año."""
+    ya tiene pago de ese mes/año.
+
+    Solo el ADMIN lo puede hacer: ni el alumno titular ni los profesores."""
     data = parse_json()
     titular_id = to_int(data.get('titular_id'))
     profesor_id = to_int(data.get('profesor_id'))

@@ -1855,7 +1855,7 @@ async function renderPagos(el) {
         <div class="field"><label>Año</label><input type="number" id="pAnio" value="${anio}"></div>
         <div class="field" style="grid-column:1/-1"><label>Nota (opcional)</label><input type="text" id="pNota" placeholder="Ej: cuota agosto"></div>
         <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">💳 Registrar pago y notificar</button></div>
-        <div class="field" style="grid-column:1/-1"><button class="btn warn btn-block" type="button" style="margin-top:6px" onclick="abrirPagoFamilia()">👨‍👩‍👧 Pagar familia completa</button></div>
+        ${R === 'admin' ? `<div class="field" style="grid-column:1/-1"><button class="btn warn btn-block" type="button" style="margin-top:6px" onclick="abrirPagoFamilia()">👨‍👩‍👧 Pagar familia completa</button></div>` : ''}
       </form>
     </div>
     <div class="card">
@@ -2145,7 +2145,16 @@ async function renderMisPagos(el) {
       ${aviso && !exento ? `<p class="small mt" style="color:var(--warn)">⏳ Comprobante de ${aviso.mes}/${aviso.anio} enviado. Esperá la confirmación.</p>` : ''}
       ${!exento && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
       ${!exento && me.mp_habilitado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" style="background:linear-gradient(90deg,#00c3ff,#0aa2e0);border:none" onclick="pagarMercadoPago()">💳 Pagar con MercadoPago</button>` : ''}
+      ${!exento && me.pago_link && !me.mp_habilitado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" style="background:linear-gradient(90deg,#00c3ff,#0aa2e0);border:none" onclick="pagarPorLink()">🔗 Pagar online con MercadoPago</button>` : ''}
     </div>
+    ${me.pago_link ? `
+    <div class="card">
+      <h3>🔗 Pagar online</h3>
+      <p class="small">Pagá tu cuota con MercadoPago (tarjeta, débito o dinero en cuenta) y después
+      <b>mandá el comprobante</b> para que lo confirmemos. El pago se registra cuando lo revisa el
+      profe o el admin.</p>
+      <a class="btn ghost btn-block" href="${esc(me.pago_link)}" target="_blank" rel="noopener">Abrir el link de pago</a>
+    </div>` : ''}
     ${me.pago_alias ? `
     <div class="card">
       <h3>🏦 Pagar por transferencia</h3>
@@ -2187,6 +2196,10 @@ async function pagarMercadoPago() {
 function marcarLinkPago(a) {
   try { a.dataset.clic = '1'; a.style.opacity = '.75'; } catch (e) {}
   toast('Abriendo el link de pago 🛒 Después mandá el comprobante.');
+}
+function pagarPorLink() {
+  if (!me.pago_link) return;
+  window.open(me.pago_link, '_blank', 'noopener');
 }
 async function avisarPago() {
   openModal(`

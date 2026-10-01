@@ -34,3 +34,6 @@ comprobante*.webp
 # Archivos temporales / locales
 cloudflared.exe
 static/uploads/
+
+# Trabajos de la facultad (no son de la app)
+ipoo/
