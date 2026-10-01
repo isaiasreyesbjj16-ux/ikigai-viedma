@@ -1590,10 +1590,10 @@ async function renderMiFamilia(box) {
             </div>
           </div>`).join('')}` : ''}
       <div class="flex mt" style="gap:8px;flex-wrap:wrap">
-        ${soyTitular ? `<button class="btn warn" onclick="abrirPagoFamiliaPropia()">👨‍👩‍👧 Pagar la cuota de mi familia</button>
-        <button class="btn primary" onclick="abrirAltaHijo()">➕ Alta de hijo/a menor</button>
+        ${soyTitular ? `<button class="btn primary" onclick="abrirAltaHijo()">➕ Alta de hijo/a menor</button>
         <button class="btn ghost" onclick="vincularHijo()">🔗 Vincular cuenta existente</button>` : ''}
       </div>
+      ${soyTitular ? `<p class="small" style="color:var(--muted);margin-bottom:0;margin-top:8px">Para pagar la cuota de todo el grupo andá a <b>Pagos → Cuota familiar</b> y mandá un solo comprobante.</p>` : ''}
       <p class="small" style="color:var(--muted);margin-bottom:0;margin-top:6px">Descuento familiar: ${(d.escala || []).map(e => `<b>${e.integrantes} ${e.integrantes === 4 ? 'o más' : ''}:</b> ${e.pct}%`).join(' · ')}. Con 2 o más integrantes, <b>todos</b> pagan con descuento${soyTitular && d.descuento ? ` (este grupo: <b>${d.descuento}%</b>)` : ''}.</p>`;
   } catch (e) {
     box.innerHTML = '';
@@ -1945,63 +1945,75 @@ async function pagarFamilia() {
     renderPagos($('#sec-pagos'));
   } catch (e) { toast(e.message); }
 }
-async function abrirPagoFamiliaPropia() {
+async function avisarPagoFamilia() {
+  const me = await api('/api/me').catch(() => ({}));
   const d = await api('/api/mi_familia').catch(() => ({ familia: null }));
-  if (!d.familia) { toast('No tenés un grupo familiar'); return; }
-  if (d.familia.titular_id !== USER.id) { toast('Solo el titular del grupo puede pagar la familia'); return; }
   const fam = d.familia;
-  const pendientes = (fam.miembros || []).filter(m => (m.cuota_final || 0) > 0);
-  if (!pendientes.length) { toast('No hay cuotas por cobrar en tu familia'); return; }
+  if (!fam || fam.titular_id !== USER.id) { toast('Solo el titular del grupo puede avisar el pago familiar'); return; }
+  const pendientes = (fam.miembros || []).filter(m => (m.cuota_final || 0) > 0 && !m.aviso_pendiente && !m.pago_hecho);
+  if (!pendientes.length) { toast('Este mes ya mandaste el comprobante de toda tu familia. Esperá la confirmación.'); return; }
   const total = pendientes.reduce((s, m) => s + (m.cuota_final || 0), 0);
-  const mes = new Date().getMonth() + 1;
-  const profe = await api('/api/profesores').catch(() => ({ profesores: [] }));
   openModal(`
-    <h3>👨‍👩‍👧 Pagar la cuota de mi familia</h3>
-    <p class="small" style="color:var(--muted);margin:0">Registra de una vez la cuota de todos los
-    integrantes de <b>${esc(fam.nombre)}</b>, con el descuento familiar ya aplicado.
-    Saltea becados, profesores y los que ya pagaron este mes.</p>
+    <h3>🧾 Comprobante de la cuota familiar</h3>
+    <p class="small" style="color:var(--muted);margin:0">Mandá <b>un solo comprobante</b> del mes y lo aplicamos a
+    todos los integrantes de <b>${esc(fam.nombre)}</b>, con el descuento familiar ya incluido.</p>
     <div class="card" style="margin:12px 0;background:var(--bg2)">
-      ${pendientes.map(m => `<div class="flex space-between" style="padding:4px 0;font-size:14px">
-        <span>${avatarHTML(m.foto, m.nombre, 'sm')} ${esc(m.nombre)} <span style="color:var(--muted)">· ${esc(m.relacion || '')}</span></span>
-        <span><b>$${num(m.cuota_final)}</b>${m.descuento ? ` <span style="color:var(--good)">(-${num(m.descuento)}%)</span>` : ''}</span>
-      </div>`).join('')}
+      ${(fam.miembros || []).filter(m => (m.cuota_final || 0) > 0).map(m => `
+        <div class="flex space-between" style="padding:4px 0;font-size:14px">
+          <span>${avatarHTML(m.foto, m.nombre, 'sm')} ${esc(m.nombre)}
+            <span style="color:var(--muted)">· ${esc(m.relacion || '')}</span>
+            ${m.pago_hecho ? ' <span class="tag tag-al-dia">ya pagado</span>'
+              : m.aviso_pendiente ? ' <span class="tag tag-por-vencer">⏳ esperando</span>' : ''}</span>
+          <span><b>$${num(m.cuota_final)}</b></span>
+        </div>`).join('')}
       <div class="flex space-between" style="padding:8px 0 2px;border-top:1px dashed var(--line);font-size:15px">
-        <span><b>Total del mes</b></span><b>$${num(total)}</b>
+        <span><b>Total a pagar</b></span><b>$${num(total)}</b>
       </div>
     </div>
-    <div class="field"><label>¿A qué profesor le pagás?</label><select id="pfProfe">
-      ${(profe.profesores || []).map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}
-    </select></div>
-    <div class="grid2">
-      <div class="field"><label>Método</label><select id="pfMetodo">${METODOS.map(m => `<option>${m}</option>`).join('')}</select></div>
-      <div class="field"><label>Mes</label><select id="pfMes">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${i + 1 === mes ? 'selected' : ''}>${i + 1}</option>`).join('')}</select></div>
+    ${me.pago_link ? `<a class="btn primary btn-block" href="${esc(me.pago_link)}" target="_blank" rel="noopener" onclick="marcarLinkPago(this)">💳 Pagar $${num(total)} online</a>` : ''}
+    ${me.pago_alias ? `<div class="alias-box mt" id="aliasBoxFam">${esc(me.pago_alias)}</div>` : ''}
+    <div class="field mt"><label>Comprobante del pago (JPG, PNG o PDF)</label>
+      <input type="file" id="avfComprobante" accept="image/*,application/pdf">
+      <div id="avfPreview" class="mt" style="display:none"><img id="avfPreviewImg" style="max-width:100%;border-radius:10px;background:#fff"></div>
+      <div id="avfFileName" class="small mt" style="display:none;color:var(--muted)"></div>
     </div>
-    <div class="field"><label>Año</label><input type="number" id="pfAnio" value="${new Date().getFullYear()}"></div>
-    <div class="field"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="pfAum" checked style="width:18px;height:18px"> Sumar aumento (recargo por demora)</label></div>
-    <div class="field"><label>Nota (opcional)</label><input type="text" id="pfNota" placeholder="Ej: cuota familiar"></div>
-    <button class="btn warn btn-block mt" onclick="pagarFamiliaMia()">💳 Registrar el pago de toda la familia</button>
-    <p class="small" style="color:var(--muted);margin-top:8px">Queda pendiente de confirmación del profe o admin,
-    que es quien le informa al profesor de la academia.</p>
+    <button class="btn primary btn-block" id="avfEnviar">📤 Enviar comprobante familiar</button>
+    <p class="small" style="color:var(--muted);margin-top:8px">Queda pendiente de confirmación del profe/admin.
+    No vas a poder volver a avisar hasta que confirmen o descarten.</p>
     <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
-  const sel = $('#pfTitular');
-  if (sel) sel.value = String(fam.titular_id);
-}
-async function pagarFamiliaMia() {
-  try {
-    const d = await api('/api/mi_familia');
-    const titular_id = d.familia ? d.familia.titular_id : USER.id;
-    const res = await api('/api/pagos/familia', { method: 'POST', body: {
-      titular_id,
-      profesor_id: +$('#pfProfe').value,
-      mes: +$('#pfMes').value,
-      anio: +$('#pfAnio').value,
-      metodo: $('#pfMetodo').value,
-      nota: $('#pfNota').value,
-      aplicar_cargo: $('#pfAum') ? $('#pfAum').checked : true } });
-    toast(`💳 ${res.cantidad} pagos registrados por $${num(res.total)}. Quedan pendientes de confirmación.`);
-    closeModal();
-    renderMiFamilia($('#miFamiliaCard'));
-  } catch (e) { toast(e.message); }
+  const input = $('#avfComprobante');
+  input.addEventListener('change', () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    if (!/^image\/(png|jpe?g|webp|gif)|^application\/pdf/.test(f.type)) { toast('Elegí una imagen (JPG/PNG) o un PDF'); input.value = ''; return; }
+    if (f.size > 12 * 1024 * 1024) { toast('El archivo es muy grande (máx 12MB)'); input.value = ''; return; }
+    $('#avfFileName').style.display = 'none';
+    if (f.type.indexOf('image/') === 0) {
+      const r = new FileReader();
+      r.onload = () => { $('#avfPreview').style.display = ''; $('#avfPreviewImg').src = r.result; };
+      r.readAsDataURL(f);
+    } else {
+      $('#avfPreview').style.display = 'none';
+      $('#avfFileName').style.display = '';
+      $('#avfFileName').textContent = '📄 ' + f.name + ' (' + (Math.round(f.size / 1024)) + ' KB)';
+    }
+  });
+  $('#avfEnviar').addEventListener('click', () => {
+    const f = input.files && input.files[0];
+    if (!f) { toast('Elegí el comprobante primero'); return; }
+    const r = new FileReader();
+    r.onload = async () => {
+      const btn = $('#avfEnviar');
+      btn.disabled = true; btn.textContent = 'Enviando…';
+      try {
+        const res = await api('/api/avisar_pago_familia', { method: 'POST', body: { comprobante: r.result } });
+        closeModal();
+        toast(`📤 Comprobante enviado por $${num(res.total)}. Te avisamos cuando lo confirmen.`);
+        renderMisPagos($('#sec-mispagos'));
+      } catch (e) { btn.disabled = false; btn.textContent = '📤 Enviar comprobante familiar'; toast(e.message); }
+    };
+    r.readAsDataURL(f);
+  });
 }
 async function borrarPago(id) {
   if (!confirm('¿Eliminar este pago?')) return;
@@ -2182,7 +2194,8 @@ async function descartarAviso(id) {
    MIS PAGOS (alumno)
    ===================================================================== */
 async function renderMisPagos(el) {
-  const [me, pagos] = await Promise.all([api('/api/me'), api('/api/mis_pagos')]);
+  const [me, pagos, fam] = await Promise.all([api('/api/me'), api('/api/mis_pagos'),
+    api('/api/mi_familia').catch(() => ({ familia: null }))]);
   const c = me.cuota || {};
   const estado = c.estado;
   const cls = estado === 'al_dia' || estado === 'becado' || estado === 'profesor' ? 'tag-al-dia' : estado === 'por_vencer' ? 'tag-por-vencer' : 'tag-deuda';
@@ -2205,6 +2218,29 @@ async function renderMisPagos(el) {
       ${!exento && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
       ${!exento && me.mp_habilitado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" style="background:linear-gradient(90deg,#00c3ff,#0aa2e0);border:none" onclick="pagarMercadoPago()">💳 Pagar con MercadoPago</button>` : ''}
     </div>
+    ${fam.familia && fam.familia.titular_id === USER.id && (fam.familia.miembros || []).some(m => (m.cuota_final || 0) > 0) ? `
+    <div class="card">
+      <div class="flex space-between">
+        <h3 style="margin:0">👨‍👩‍👧 Cuota familiar · ${esc(fam.familia.nombre)}</h3>
+        <span class="tag ${fam.descuento ? 'tag-al-dia' : ''}">${fam.descuento ? '-' + num(fam.descuento) + '% en todos' : 'sin descuento'}</span>
+      </div>
+      <p class="small">Con 2 o más integrantes, <b>todos</b> pagan con descuento. Mandá <b>un solo comprobante</b>
+      del mes y lo aplicamos a cada uno; el profe/admin lo revisa y confirma.</p>
+      ${(fam.familia.miembros || []).filter(m => (m.cuota_final || 0) > 0).map(m => `
+        <div class="flex space-between" style="padding:5px 0;border-bottom:1px dashed var(--line);font-size:14px">
+          <span>${avatarHTML(m.foto, m.nombre, 'sm')} ${esc(m.nombre)} <span style="color:var(--muted)">· ${esc(m.relacion || '')}</span></span>
+          <span><b>$${num(m.cuota_final)}</b>
+            ${m.pago_hecho ? ' <span class="tag tag-al-dia">pagado</span>'
+              : m.aviso_pendiente ? ' <span class="tag tag-por-vencer">⏳ esperando confirmación</span>' : ''}</span>
+        </div>`).join('')}
+      ${(() => {
+        const pend = (fam.familia.miembros || []).filter(m => (m.cuota_final || 0) > 0 && !m.aviso_pendiente && !m.pago_hecho);
+        if (!pend.length) return `<p class="small mt" style="color:var(--warn);margin-bottom:0">⏳ Comprobante familiar de ${c.mes || ''}/${c.anio || ''} enviado. Esperá la confirmación del profe/admin.</p>`;
+        const tot = pend.reduce((s, m) => s + (m.cuota_final || 0), 0);
+        return `<div class="flex space-between mt" style="padding-top:8px;font-size:15px"><span><b>Total del mes</b></span><b>$${num(tot)}</b></div>
+          <button class="btn warn btn-block mt" onclick="avisarPagoFamilia()">🧾 Mandar comprobante de la cuota familiar</button>`;
+      })()}
+    </div>` : ''}
     ${me.pago_alias ? `
     <div class="card">
       <h3>🏦 Pagar por transferencia</h3>

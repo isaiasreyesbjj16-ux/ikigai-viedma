@@ -2429,12 +2429,21 @@ def api_mi_familia():
            JOIN familias f ON f.id=fm.familia_id
            WHERE fm.familia_id=? ORDER BY es_titular DESC, u.nombre""", (fam_id,)).fetchall()
     lista = []
+    hoy = _hoy_academy()
     for m in miem:
         base, desc, final = familia_cuota(dict(m), len(miem))
+        avisado = bool(get_db().execute(
+            "SELECT 1 FROM avisos_pago WHERE alumno_id=? AND mes=? AND anio=? AND estado='pendiente'",
+            (m['id'], hoy.month, hoy.year)).fetchone())
+        pagado = bool(get_db().execute(
+            'SELECT 1 FROM pagos WHERE alumno_id=? AND mes=? AND anio=?',
+            (m['id'], hoy.month, hoy.year)).fetchone())
         lista.append({'id': m['id'], 'nombre': m['nombre'], 'cinturon': m['cinturon'],
                       'foto': m['foto'], 'relacion': m['relacion'],
                       'es_titular': bool(m['es_titular']), 'cuota': base,
-                      'descuento': desc, 'cuota_final': final})
+                      'descuento': desc, 'cuota_final': final,
+                      'beca': bool(m['beca']), 'role': m['role'],
+                      'aviso_pendiente': avisado, 'pago_hecho': pagado})
     descto = _descuento_familiar_pct(len(miem))
     return jsonify({'familia': {'id': fam_id, 'nombre': nombre, 'titular_id': titular_id,
                                 'miembros': lista},
@@ -2753,15 +2762,15 @@ def api_pagos_create():
 
 
 @app.route('/api/pagos/familia', methods=['POST'])
-@login_required
+@role_required('admin', 'profesor')
 def api_pagos_familia():
     """Registra la cuota (con descuento familiar) de TODOS los integrantes del
     grupo de un titular, en un solo paso. Saltea becados, profesores y quien
     ya tiene pago de ese mes/año.
 
-    Puede hacerlo el admin (cualquier familia) o el propio alumno titular
-    (solo la suya). Un alumno no puede pagar la familia de otro, y los
-    profesores no pueden: el pago familiar toca la cuota de varios alumnos."""
+    Es el registro directo que hace el staff cuando cobra en el mostrador.
+    El alumno titular, en cambio, manda el comprobante con
+    /api/avisar_pago_familia y queda pendiente de confirmación."""
     data = parse_json()
     titular_id = to_int(data.get('titular_id'))
     profesor_id = to_int(data.get('profesor_id'))
@@ -2778,11 +2787,6 @@ def api_pagos_familia():
     fam = db.execute('SELECT * FROM familias WHERE titular_id=?', (titular_id,)).fetchone()
     if not fam:
         return jsonify({'error': 'Ese alumno no es titular de ningún grupo familiar'}), 404
-    # permisos: admin cualquiera; el titular solo la propia familia
-    yo = current_user()
-    if yo['role'] != 'admin':
-        if fam['titular_id'] != yo['id']:
-            return jsonify({'error': 'Solo podés pagar la cuota de tu propia familia'}), 403
     miem = db.execute(
         """SELECT u.*, fm.relacion,
                   (CASE WHEN f.titular_id=u.id THEN 1 ELSE 0 END) AS es_titular
@@ -3221,6 +3225,79 @@ def api_avisar_pago():
                f'{u["nombre"]} avisó que pagó la cuota de {mes}/{anio}. Revisá el comprobante y confirmá el pago.',
                'pago')
     return jsonify({'ok': True})
+
+
+@app.route('/api/avisar_pago_familia', methods=['POST'])
+@login_required
+def api_avisar_pago_familia():
+    """El TITULAR del grupo familiar manda un solo comprobante del mes y se
+    generan un aviso pendiente por cada integrante con cuota (con descuento
+    familiar ya aplicado). El staff revisa y confirma cada uno.
+
+    Es el mismo circuito que el comprobante individual (/api/avisar_pago):
+    el alumno nunca registra pagos, solo los avisa."""
+    u = current_user()
+    data = parse_json()
+    hoy = _hoy_academy()
+    mes = to_int(data.get('mes')) or hoy.month
+    anio = to_int(data.get('anio')) or hoy.year
+    mes, anio, err = validar_mes_anio(mes, anio)
+    if err:
+        return jsonify({'error': err}), 400
+    comp = txt_str(data.get('comprobante'))
+    if not comprobante_valido(comp):
+        return jsonify({'error': 'Tenés que subir el comprobante de pago (foto, captura o PDF)'}), 400
+    fam_id, nombre_fam, titular_id = familia_de(u['id'])
+    if not fam_id or titular_id != u['id']:
+        return jsonify({'error': 'Solo el titular del grupo familiar puede mandar el comprobante familiar'}), 403
+    db = get_db()
+    miem = db.execute(
+        """SELECT u.*, fm.relacion,
+                  (CASE WHEN f.titular_id=u.id THEN 1 ELSE 0 END) AS es_titular
+           FROM familia_miembros fm
+           JOIN users u ON u.id=fm.user_id
+           JOIN familias f ON f.id=fm.familia_id
+           WHERE fm.familia_id=?
+           ORDER BY es_titular DESC, u.nombre""", (fam_id,)).fetchall()
+    if not miem:
+        return jsonify({'error': 'Tu grupo no tiene integrantes'}), 404
+    ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    creados = []
+    ya_avisados = []
+    total = 0
+    for m in miem:
+        md = dict(m)
+        if md.get('beca') or md.get('role') == 'profesor':
+            continue
+        base, desc, final = familia_cuota(md, len(miem))
+        if final <= 0:
+            continue
+        if db.execute("SELECT 1 FROM avisos_pago WHERE alumno_id=? AND mes=? AND anio=? AND estado='pendiente'",
+                      (m['id'], mes, anio)).fetchone():
+            ya_avisados.append(m['nombre'])
+            continue
+        if db.execute('SELECT 1 FROM pagos WHERE alumno_id=? AND mes=? AND anio=?',
+                      (m['id'], mes, anio)).fetchone():
+            ya_avisados.append(m['nombre'])
+            continue
+        db.execute(
+            'INSERT INTO avisos_pago(alumno_id, monto, mes, anio, nota, comprobante, estado, fecha)'
+            ' VALUES(?,?,?,?,?,?,?,?)',
+            (m['id'], final, mes, anio, 'Cuota familiar · %s' % nombre_fam, comp, 'pendiente', ahora))
+        creados.append(m['nombre'])
+        total += final
+    if not creados:
+        return jsonify({'error': 'Este mes ya avisaste el pago de toda tu familia. Esperá la confirmación.'}), 400
+    db.commit()
+    staff = db.execute("SELECT id FROM users WHERE role IN ('admin','profesor') AND activo=1").fetchall()
+    for s in staff:
+        notify(s['id'], 'Aviso de pago familiar',
+               f'{u["nombre"]} mand\u00f3 el comprobante de la cuota familiar de {mes}/{anio} '
+               f'({len(creados)} integrantes, ${total:,.0f}). Revis\u00e1 y confirm\u00e1 cada pago.'.replace(',', '.'),
+               'pago')
+    return jsonify({'ok': True, 'cantidad': len(creados), 'total': total,
+                    'familia': nombre_fam, 'integrantes': creados,
+                    'ya_avisados': ya_avisados})
 
 
 @app.route('/api/avisos_pago')

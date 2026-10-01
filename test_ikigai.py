@@ -127,29 +127,47 @@ cf = A.app.test_client()
 login(cf, 'alu0')
 mf = cf.get('/api/mi_familia')
 check('el titular ve su familia', mf.status_code == 200 and (mf.get_json() or {}).get('familia'), 'r=%s' % mf.status_code)
-# el titular (dueño del plan) PUEDE pagar su propia familia
+# el alumno NO registra pagos: manda el comprobante y queda pendiente
+# (para el mes siguiente: en el actual el admin ya lo registró en el mostrador)
 mes_t = mes_f % 12 + 1
 anio_t = hoy_academy().year + (1 if mes_f == 12 else 0)
-r = cf.post('/api/pagos/familia', json={'titular_id': alu[0], 'mes': mes_t,
-                                       'anio': anio_t, 'aplicar_cargo': False})
-jf2 = r.get_json(silent=True) or {}
-check('el titular puede pagar su propia familia', r.status_code == 200 and jf2.get('cantidad') == 3,
-      'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:150]))
-# un alumno que NO es titular no puede pagar la familia de otro
+COMP = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+r = cf.post('/api/avisar_pago_familia', json={'comprobante': COMP, 'mes': mes_t, 'anio': anio_t})
+jav = r.get_json(silent=True) or {}
+check('el titular manda el comprobante familiar (3 avisos pendientes)',
+      r.status_code == 200 and jav.get('cantidad') == 3, 'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:150]))
+pend = [a for a in c.get('/api/avisos_pago').get_json()['avisos']
+        if a['estado'] == 'pendiente' and 'familiar' in (a['nota'] or '').lower()]
+check('los 3 avisos quedan pendientes con el comprobante',
+      len(pend) == 3 and all(a['comprobante'] == COMP for a in pend), 'n=%d' % len(pend))
+check('cada aviso pide el total descontado de la familia', jav.get('total') == total_esp,
+      'total=%s esperado=%s' % (jav.get('total'), total_esp))
+r = cf.post('/api/avisar_pago_familia', json={'comprobante': COMP})
+check('reavisar el mismo mes no duplica avisos -> 400', r.status_code == 400, 'r=%s' % r.status_code)
+r = cf.post('/api/avisar_pago_familia', json={'comprobante': 'no-es-comprobante'})
+check('sin comprobante válido no se genera nada -> 400', r.status_code == 400, 'r=%s' % r.status_code)
+r = cf.post('/api/pagos/familia', json={'titular_id': alu[0], 'mes': mes_t, 'anio': anio_t})
+check('el alumno no puede registrar el pago directamente -> 403', r.status_code == 403,
+      'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:100]))
+# un alumno que NO es titular no puede mandar el comprobante familiar
 cf2 = A.app.test_client()
 login(cf2, 'alu1')
-r = cf2.post('/api/pagos/familia', json={'titular_id': alu[0], 'mes': mes_f,
-                                        'anio': hoy_academy().year})
-check('un alumno no titular NO puede pagar la familia de otro -> 403',
+r = cf2.post('/api/avisar_pago_familia', json={'comprobante': COMP})
+check('un alumno no titular no puede mandar el comprobante familiar -> 403',
       r.status_code == 403, 'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:100]))
 # el profesor tampoco
 r = A.app.test_client()
 c.post('/api/profesores', json={'nombre': 'Profe Prueba', 'username': 'profe1', 'password': '1234'})
 login(r, 'profe1', '1234')
-r = r.post('/api/pagos/familia', json={'titular_id': alu[0], 'mes': mes_f,
-                                       'anio': hoy_academy().year})
-check('el profesor NO puede pagar la familia -> 403',
+r = r.post('/api/avisar_pago_familia', json={'comprobante': COMP})
+check('el profesor no puede mandar el comprobante familiar -> 403',
       r.status_code == 403, 'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:100]))
+# el admin sigue registrando pagos de familia en el mostrador
+mes_t = mes_f % 12 + 1
+anio_t = hoy_academy().year + (1 if mes_f == 12 else 0)
+r = c.post('/api/pagos/familia', json={'titular_id': alu[0], 'mes': mes_t, 'anio': anio_t})
+check('el admin puede registrar la familia en el mostrador', r.status_code == 200,
+      'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:150]))
 
 # ===========================================================================
 print('== BECA ==')
