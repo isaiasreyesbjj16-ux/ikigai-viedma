@@ -2753,13 +2753,15 @@ def api_pagos_create():
 
 
 @app.route('/api/pagos/familia', methods=['POST'])
-@role_required('admin')
+@login_required
 def api_pagos_familia():
     """Registra la cuota (con descuento familiar) de TODOS los integrantes del
     grupo de un titular, en un solo paso. Saltea becados, profesores y quien
     ya tiene pago de ese mes/año.
 
-    Solo el ADMIN lo puede hacer: ni el alumno titular ni los profesores."""
+    Puede hacerlo el admin (cualquier familia) o el propio alumno titular
+    (solo la suya). Un alumno no puede pagar la familia de otro, y los
+    profesores no pueden: el pago familiar toca la cuota de varios alumnos."""
     data = parse_json()
     titular_id = to_int(data.get('titular_id'))
     profesor_id = to_int(data.get('profesor_id'))
@@ -2776,6 +2778,11 @@ def api_pagos_familia():
     fam = db.execute('SELECT * FROM familias WHERE titular_id=?', (titular_id,)).fetchone()
     if not fam:
         return jsonify({'error': 'Ese alumno no es titular de ningún grupo familiar'}), 404
+    # permisos: admin cualquiera; el titular solo la propia familia
+    yo = current_user()
+    if yo['role'] != 'admin':
+        if fam['titular_id'] != yo['id']:
+            return jsonify({'error': 'Solo podés pagar la cuota de tu propia familia'}), 403
     miem = db.execute(
         """SELECT u.*, fm.relacion,
                   (CASE WHEN f.titular_id=u.id THEN 1 ELSE 0 END) AS es_titular

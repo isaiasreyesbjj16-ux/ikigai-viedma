@@ -127,11 +127,22 @@ cf = A.app.test_client()
 login(cf, 'alu0')
 mf = cf.get('/api/mi_familia')
 check('el titular ve su familia', mf.status_code == 200 and (mf.get_json() or {}).get('familia'), 'r=%s' % mf.status_code)
-# el pago familiar es SOLO del admin: ni el titular ni el profesor pueden
-r = cf.post('/api/pagos/familia', json={'titular_id': alu[0], 'mes': mes_f,
-                                       'anio': hoy_academy().year})
-check('el titular (dueño del plan) NO puede pagar la familia -> 403',
+# el titular (dueño del plan) PUEDE pagar su propia familia
+mes_t = mes_f % 12 + 1
+anio_t = hoy_academy().year + (1 if mes_f == 12 else 0)
+r = cf.post('/api/pagos/familia', json={'titular_id': alu[0], 'mes': mes_t,
+                                       'anio': anio_t, 'aplicar_cargo': False})
+jf2 = r.get_json(silent=True) or {}
+check('el titular puede pagar su propia familia', r.status_code == 200 and jf2.get('cantidad') == 3,
+      'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:150]))
+# un alumno que NO es titular no puede pagar la familia de otro
+cf2 = A.app.test_client()
+login(cf2, 'alu1')
+r = cf2.post('/api/pagos/familia', json={'titular_id': alu[0], 'mes': mes_f,
+                                        'anio': hoy_academy().year})
+check('un alumno no titular NO puede pagar la familia de otro -> 403',
       r.status_code == 403, 'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:100]))
+# el profesor tampoco
 r = A.app.test_client()
 c.post('/api/profesores', json={'nombre': 'Profe Prueba', 'username': 'profe1', 'password': '1234'})
 login(r, 'profe1', '1234')

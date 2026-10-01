@@ -1590,7 +1590,8 @@ async function renderMiFamilia(box) {
             </div>
           </div>`).join('')}` : ''}
       <div class="flex mt" style="gap:8px;flex-wrap:wrap">
-        ${soyTitular ? `<button class="btn primary" onclick="abrirAltaHijo()">➕ Alta de hijo/a menor</button>
+        ${soyTitular ? `<button class="btn warn" onclick="abrirPagoFamiliaPropia()">👨‍👩‍👧 Pagar la cuota de mi familia</button>
+        <button class="btn primary" onclick="abrirAltaHijo()">➕ Alta de hijo/a menor</button>
         <button class="btn ghost" onclick="vincularHijo()">🔗 Vincular cuenta existente</button>` : ''}
       </div>
       <p class="small" style="color:var(--muted);margin-bottom:0;margin-top:6px">Descuento familiar: ${(d.escala || []).map(e => `<b>${e.integrantes} ${e.integrantes === 4 ? 'o más' : ''}:</b> ${e.pct}%`).join(' · ')}. Con 2 o más integrantes, <b>todos</b> pagan con descuento${soyTitular && d.descuento ? ` (este grupo: <b>${d.descuento}%</b>)` : ''}.</p>`;
@@ -1855,7 +1856,7 @@ async function renderPagos(el) {
         <div class="field"><label>Año</label><input type="number" id="pAnio" value="${anio}"></div>
         <div class="field" style="grid-column:1/-1"><label>Nota (opcional)</label><input type="text" id="pNota" placeholder="Ej: cuota agosto"></div>
         <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">💳 Registrar pago y notificar</button></div>
-        ${R === 'admin' ? `<div class="field" style="grid-column:1/-1"><button class="btn warn btn-block" type="button" style="margin-top:6px" onclick="abrirPagoFamilia()">👨‍👩‍👧 Pagar familia completa</button></div>` : ''}
+        <div class="field" style="grid-column:1/-1"><button class="btn warn btn-block" type="button" style="margin-top:6px" onclick="abrirPagoFamilia()">👨‍👩‍👧 Pagar familia completa</button></div>
       </form>
     </div>
     <div class="card">
@@ -1942,6 +1943,64 @@ async function pagarFamilia() {
     toast(`💳 ${res.cantidad} pagos registrados de ${esc(res.familia)} por $${num(res.total)}`);
     closeModal();
     renderPagos($('#sec-pagos'));
+  } catch (e) { toast(e.message); }
+}
+async function abrirPagoFamiliaPropia() {
+  const d = await api('/api/mi_familia').catch(() => ({ familia: null }));
+  if (!d.familia) { toast('No tenés un grupo familiar'); return; }
+  if (d.familia.titular_id !== USER.id) { toast('Solo el titular del grupo puede pagar la familia'); return; }
+  const fam = d.familia;
+  const pendientes = (fam.miembros || []).filter(m => (m.cuota_final || 0) > 0);
+  if (!pendientes.length) { toast('No hay cuotas por cobrar en tu familia'); return; }
+  const total = pendientes.reduce((s, m) => s + (m.cuota_final || 0), 0);
+  const mes = new Date().getMonth() + 1;
+  const profe = await api('/api/profesores').catch(() => ({ profesores: [] }));
+  openModal(`
+    <h3>👨‍👩‍👧 Pagar la cuota de mi familia</h3>
+    <p class="small" style="color:var(--muted);margin:0">Registra de una vez la cuota de todos los
+    integrantes de <b>${esc(fam.nombre)}</b>, con el descuento familiar ya aplicado.
+    Saltea becados, profesores y los que ya pagaron este mes.</p>
+    <div class="card" style="margin:12px 0;background:var(--bg2)">
+      ${pendientes.map(m => `<div class="flex space-between" style="padding:4px 0;font-size:14px">
+        <span>${avatarHTML(m.foto, m.nombre, 'sm')} ${esc(m.nombre)} <span style="color:var(--muted)">· ${esc(m.relacion || '')}</span></span>
+        <span><b>$${num(m.cuota_final)}</b>${m.descuento ? ` <span style="color:var(--good)">(-${num(m.descuento)}%)</span>` : ''}</span>
+      </div>`).join('')}
+      <div class="flex space-between" style="padding:8px 0 2px;border-top:1px dashed var(--line);font-size:15px">
+        <span><b>Total del mes</b></span><b>$${num(total)}</b>
+      </div>
+    </div>
+    <div class="field"><label>¿A qué profesor le pagás?</label><select id="pfProfe">
+      ${(profe.profesores || []).map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('')}
+    </select></div>
+    <div class="grid2">
+      <div class="field"><label>Método</label><select id="pfMetodo">${METODOS.map(m => `<option>${m}</option>`).join('')}</select></div>
+      <div class="field"><label>Mes</label><select id="pfMes">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${i + 1 === mes ? 'selected' : ''}>${i + 1}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label>Año</label><input type="number" id="pfAnio" value="${new Date().getFullYear()}"></div>
+    <div class="field"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="pfAum" checked style="width:18px;height:18px"> Sumar aumento (recargo por demora)</label></div>
+    <div class="field"><label>Nota (opcional)</label><input type="text" id="pfNota" placeholder="Ej: cuota familiar"></div>
+    <button class="btn warn btn-block mt" onclick="pagarFamiliaMia()">💳 Registrar el pago de toda la familia</button>
+    <p class="small" style="color:var(--muted);margin-top:8px">Queda pendiente de confirmación del profe o admin,
+    que es quien le informa al profesor de la academia.</p>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+  const sel = $('#pfTitular');
+  if (sel) sel.value = String(fam.titular_id);
+}
+async function pagarFamiliaMia() {
+  try {
+    const d = await api('/api/mi_familia');
+    const titular_id = d.familia ? d.familia.titular_id : USER.id;
+    const res = await api('/api/pagos/familia', { method: 'POST', body: {
+      titular_id,
+      profesor_id: +$('#pfProfe').value,
+      mes: +$('#pfMes').value,
+      anio: +$('#pfAnio').value,
+      metodo: $('#pfMetodo').value,
+      nota: $('#pfNota').value,
+      aplicar_cargo: $('#pfAum') ? $('#pfAum').checked : true } });
+    toast(`💳 ${res.cantidad} pagos registrados por $${num(res.total)}. Quedan pendientes de confirmación.`);
+    closeModal();
+    renderMiFamilia($('#miFamiliaCard'));
   } catch (e) { toast(e.message); }
 }
 async function borrarPago(id) {
