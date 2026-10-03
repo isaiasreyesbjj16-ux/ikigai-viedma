@@ -469,7 +469,7 @@ function initDashboard() {
   const seccionesValidas = ['inicio', 'perfil', 'horarios', 'pagos', 'mispagos', 'alumnos',
     'asistencia', 'deudores', 'profesores', 'config', 'mi_asistencia', 'videos', 'chat',
     'muro', 'galeria', 'ranking', 'metas', 'encuestas', 'eventos', 'historial', 'familias', 'diario',
-    'planes', 'estadisticas'];
+    'planes', 'estadisticas', 'torneos'];
   if (secParam && seccionesValidas.includes(secParam)) showSec(secParam);
   history.replaceState(null, '', location.pathname);
   if ('serviceWorker' in navigator) {
@@ -519,6 +519,7 @@ function showSec(name) {
     eventos: renderEventos, historial: renderHistorial,
     familias: renderFamilias, diario: renderDiario,
     planes: renderPlanes, estadisticas: renderEstadisticas,
+    torneos: renderTorneos,
   };
   if (renderers[name]) renderers[name](el);
 }
@@ -1276,7 +1277,8 @@ async function renderInicio(el) {
           <button class="chip" onclick="showSec('metas')">🎯 Mis metas</button>
           <button class="chip" onclick="showSec('muro')">📢 Muro</button>
           <button class="chip" onclick="showSec('chat')">💬 Chat</button>
-          <button class="chip" onclick="showSec('eventos')">🗓️ Eventos</button>
+<button class="chip" onclick="showSec('eventos')">🗓️ Eventos</button>
+          <button class="chip" onclick="showSec('torneos')">🏆 Torneos</button>
           <button class="chip" onclick="showSec('encuestas')">📊 Encuestas</button>
           <button class="chip" onclick="showSec('diario')">📓 Diario</button>
           <button class="chip" onclick="abrirScannerQR()">📷 Escanear QR</button>
@@ -1308,6 +1310,7 @@ async function renderInicio(el) {
     chips.push(`<button class="chip" onclick="showSec('chat')">💬 Chat</button>`);
     chips.push(`<button class="chip" onclick="showSec('ranking')">🏆 Ranking</button>`);
     chips.push(`<button class="chip" onclick="showSec('eventos')">🗓️ Eventos</button>`);
+    chips.push(`<button class="chip" onclick="showSec('torneos')">🏆 Torneos</button>`);
     chips.push(`<button class="chip" onclick="showSec('encuestas')">📊 Encuestas</button>`);
     chips.push(`<button class="chip" onclick="showSec('historial')">📈 Historial</button>`);
     chips.push(`<button class="chip" onclick="showSec('galeria')">🖼️ Galería</button>`);
@@ -3932,9 +3935,225 @@ async function agregarMiembroFamilia(fid) {
   if (!uid) { toast('Elegí un alumno'); return; }
   try {
     await api('/api/familias/' + fid + '/miembros', { method: 'POST', body: { user_id: uid, relacion: $('#fmRel').value } });
-    toast('Miembro agregado ✓');
+    toast('Miembro agregado ✅');
     closeModal();
     renderFamilias($('#sec-familias'));
+  } catch (e) { toast(e.message); }
+}
+
+/* =====================================================================
+   TORNEOS: calendario + ranking de participaciones + medallero
+   ===================================================================== */
+const MEDALLAS_T = { oro: '🥇', plata: '🥈', bronce: '🥉', participacion: '🎽' };
+const MESES_T = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const ESTADO_T = { inscripcion: { txt: 'Inscripción abierta', cls: 'tag-al-dia' }, cerrado: { txt: 'Inscripción cerrada', cls: 'tag-por-vencer' }, terminado: { txt: 'Terminado', cls: '' } };
+var TORNEOS_CACHE = { torneos: [], ranking: [], medallero: {} };
+
+function fechaTorta(f) {
+  if (!f) return '';
+  const p = String(f).slice(0, 10).split('-');
+  if (p.length < 3) return f;
+  return `${Number(p[2])} ${MESES_T[Number(p[1]) - 1]?.slice(0, 3) || ''} ${p[0]}`;
+}
+function emojisMedalla(o, p, b) {
+  const parts = [];
+  if (o) parts.push('🥇'.repeat(Math.min(o, 5)));
+  if (p) parts.push('🥈'.repeat(Math.min(p, 5)));
+  if (b) parts.push('🥉'.repeat(Math.min(b, 5)));
+  return parts.join(' ');
+}
+async function renderTorneos(el) {
+  const R = USER.role;
+  const esStaff = R === 'admin' || R === 'profesor';
+  const d = await api('/api/torneos').catch(() => ({ torneos: [], ranking: [], medallero: {} }));
+  TORNEOS_CACHE = d;
+  const hoy = fechaHoyLocal();
+  const lista = d.torneos || [];
+  const futuros = lista.filter(t => t.fecha >= hoy).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const pasados = lista.filter(t => t.fecha < hoy);
+  const porMes = (arr) => {
+    const out = [];
+    arr.forEach(t => {
+      const clave = String(t.fecha).slice(0, 7);
+      if (!out.length || out[out.length - 1].clave !== clave) out.push({ clave, items: [] });
+      out[out.length - 1].items.push(t);
+    });
+    return out;
+  };
+  const etiquetaMes = (clave) => {
+    const p = clave.split('-');
+    return `${MESES_T[Number(p[1]) - 1] || ''} ${p[0]}`;
+  };
+  const tarjetaTorneo = (t) => {
+    const est = ESTADO_T[t.estado] || ESTADO_T.inscripcion;
+    return `<div class="card" style="margin-bottom:10px">
+      <div class="flex space-between" style="align-items:flex-start;gap:8px">
+        <div style="min-width:0">
+          <b style="font-size:15px">${esc(t.nombre)}</b>
+          <div class="small" style="color:var(--muted);margin-top:2px">
+            📆 ${esc(fechaTorta(t.fecha))}${t.ciudad ? ' · 📍 ' + esc(t.ciudad) : ''}
+          </div>
+          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+            <span class="tag">${esc(t.tipo || 'Gi')}</span>
+            <span class="tag ${est.cls}">${est.txt}</span>
+            ${t.participo ? '<span class="tag tag-al-dia">✅ Participaste</span>' : ''}
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          ${t.medallas ? `<div style="font-size:13px">${emojisMedalla(t.oro, t.plata, t.bronce)}</div>` : ''}
+          <div class="small" style="color:var(--muted)">${t.participantes} ${t.participantes === 1 ? 'competidor' : 'competidores'}</div>
+        </div>
+      </div>
+      ${t.descripcion ? `<p class="small" style="margin:8px 0 0;color:var(--muted)">${esc(t.descripcion)}</p>` : ''}
+      ${(t.participantes_detalle || []).length ? `<div style="margin-top:10px;border-top:1px dashed var(--line);padding-top:8px">
+        ${t.participantes_detalle.map(p => `<div class="flex space-between" style="font-size:13px;padding:2px 0">
+          <span>${avatarHTML(p.foto, p.nombre, 'sm')} ${esc(p.nombre)}${p.cinturon ? ' ' + beltHTML(p.cinturon) : ''}</span>
+          <span>${p.medalla ? MEDALLAS_T[p.medalla] : ''}${p.posicion ? ' <span style="color:var(--muted)">' + esc(p.posicion) + '°</span>' : ''}</span>
+        </div>`).join('')}
+      </div>` : ''}
+      ${esStaff ? `<div class="flex" style="gap:6px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn primary small" onclick="formTorneo(${t.id})">✏️ Editar</button>
+        <button class="btn ghost small" onclick="cargarParticipantes(${t.id})">🥋 Cargar resultados</button>
+        ${R === 'admin' ? `<button class="btn bad small" onclick="borrarTorneo(${t.id})">🗑</button>` : ''}
+      </div>` : ''}
+    </div>`;
+  };
+  const md = d.medallero || {};
+  const top = (d.ranking || []).slice(0, 15);
+  el.innerHTML = `
+    ${secHeader('🏆 Torneos', 'Calendario de competencias, ranking de quienes compiten más y el medallero de la academia')}
+    ${esStaff ? `<div class="card"><div class="flex space-between">
+      <span class="small">Cargá los torneos y después los resultados de cada alumno.</span>
+      <button class="btn primary small" onclick="formTorneo()">+ Cargar torneo</button>
+    </div></div>` : ''}
+    <div class="card" style="background:linear-gradient(135deg,rgba(224,46,46,.16),transparent);border-color:var(--accent)">
+      <h3>🎖️ Medallero de la academia</h3>
+      <div class="flex" style="gap:14px;flex-wrap:wrap;text-align:center">
+        <div style="flex:1;min-width:74px"><div style="font-size:26px">🥇</div><b style="font-size:19px">${num(md.oro || 0)}</b><div class="small" style="color:var(--muted)">oro</div></div>
+        <div style="flex:1;min-width:74px"><div style="font-size:26px">🥈</div><b style="font-size:19px">${num(md.plata || 0)}</b><div class="small" style="color:var(--muted)">plata</div></div>
+        <div style="flex:1;min-width:74px"><div style="font-size:26px">🥉</div><b style="font-size:19px">${num(md.bronce || 0)}</b><div class="small" style="color:var(--muted)">bronce</div></div>
+        <div style="flex:1;min-width:74px"><div style="font-size:26px">🎽</div><b style="font-size:19px">${num(md.participaciones || 0)}</b><div class="small" style="color:var(--muted)">sin medalla</div></div>
+      </div>
+      <p class="small" style="color:var(--muted);margin:10px 0 0;text-align:center">
+        ${md.torneos ? `En ${md.torneos} torneo${md.torneos === 1 ? '' : 's'} · ${md.total} medalla${md.total === 1 ? '' : 's'} en total` : 'Todavía no hay resultados cargados'}
+      </p>
+    </div>
+    <div class="card">
+      <h3>📅 Próximos torneos</h3>
+      ${futuros.length ? porMes(futuros).map(g => `
+        <div class="small" style="color:var(--muted);font-weight:700;margin:12px 0 6px;text-transform:uppercase;letter-spacing:.4px">${esc(etiquetaMes(g.clave))}</div>
+        ${g.items.map(tarjetaTorneo).join('')}`).join('')
+        : '<div class="empty">No hay torneos cargados para las próximas fechas.</div>'}
+    </div>
+    <div class="card">
+      <h3>🗂️ Torneos ya realizados</h3>
+      ${pasados.length ? pasados.map(tarjetaTorneo).join('') : '<div class="empty">Todavía no hay torneos pasados.</div>'}
+    </div>
+    <div class="card">
+      <h3>📊 Ranking de competidores</h3>
+      <p class="small" style="color:var(--muted)">Ordenado por cantidad de torneos en los que compitieron. A igual cantidad, cuenta la medalla de mayor valor.</p>
+      ${top.length ? `<div style="overflow:auto"><table>
+        <tr><th>#</th><th>Alumno</th><th>Torneos</th><th>🥇</th><th>🥈</th><th>🥉</th><th>Puntos</th></tr>
+        ${top.map(p => `<tr${p.id === USER.id ? ' style="background:rgba(224,46,46,.14)"' : ''}>
+          <td><b>${p.puesto}</b></td>
+          <td>${avatarHTML(p.foto, p.nombre, 'sm')} <b>${esc(p.nombre)}</b>${p.cinturon ? ' ' + beltHTML(p.cinturon) : ''}${p.id === USER.id ? ' <span class="small" style="color:var(--accent)">(vos)</span>' : ''}</td>
+          <td><b>${num(p.participaciones)}</b></td><td>${p.oro || 0}</td><td>${p.plata || 0}</td><td>${p.bronce || 0}</td>
+          <td><b>${num(p.puntos)}</b></td>
+        </tr>`).join('')}
+      </table></div>` : '<div class="empty">Cuando carguen los resultados vas a ver el ranking acá.</div>'}
+    </div>`;
+}
+function formTorneo(id) {
+  const t = id ? (TORNEOS_CACHE.torneos || []).find(x => x.id === id) : null;
+  const tipos = ['Gi', 'NoGi', 'Kids', 'Juveniles', 'Adulto', 'Open'];
+  const estados = [['inscripcion', 'Inscripción abierta'], ['cerrado', 'Inscripción cerrada'], ['terminado', 'Terminado']];
+  openModal(`
+    <h3>${t ? '✏️ Editar torneo' : '🏆 Cargar torneo'}</h3>
+    <form id="toForm" class="grid2">
+      <div class="field" style="grid-column:1/-1"><label>Nombre del torneo</label>
+        <input id="toNombre" required value="${t ? esc(t.nombre) : ''}" placeholder="Ej: Copa Ciudad de Viedma"></div>
+      <div class="field"><label>Fecha</label><input type="date" id="toFecha" required value="${t ? String(t.fecha).slice(0, 10) : ''}"></div>
+      <div class="field"><label>Ciudad</label><input id="toCiudad" value="${t ? esc(t.ciudad || '') : ''}" placeholder="Ej: Viedma"></div>
+      <div class="field"><label>Modalidad</label><select id="toTipo">
+        ${tipos.map(x => `<option ${t && t.tipo === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+      <div class="field"><label>Estado</label><select id="toEstado">
+        ${estados.map(([v, l]) => `<option value="${v}" ${t && t.estado === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field" style="grid-column:1/-1"><label>Nota (opcional)</label>
+        <input id="toNota" value="${t ? esc(t.descripcion || '') : ''}" placeholder="Ej: inscripción por WhatsApp, categorías..."></div>
+      <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar</button></div>
+    </form>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+  $('#toForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = { nombre: $('#toNombre').value, fecha: $('#toFecha').value, ciudad: $('#toCiudad').value,
+      tipo: $('#toTipo').value, estado: $('#toEstado').value, descripcion: $('#toNota').value };
+    try {
+      if (t) await api('/api/torneos/' + t.id, { method: 'PUT', body });
+      else await api('/api/torneos', { method: 'POST', body });
+      closeModal(); toast(t ? 'Torneo actualizado ✓' : 'Torneo cargado ✓');
+      renderTorneos($('#sec-torneos'));
+    } catch (err) { toast(err.message); }
+  });
+}
+async function borrarTorneo(id) {
+  if (!confirm('¿Eliminar este torneo y todos sus resultados?')) return;
+  try {
+    await api('/api/torneos/' + id, { method: 'DELETE' });
+    toast('Torneo eliminado'); renderTorneos($('#sec-torneos'));
+  } catch (e) { toast(e.message); }
+}
+async function cargarParticipantes(tid) {
+  const t = (TORNEOS_CACHE.torneos || []).find(x => x.id === tid);
+  if (!t) return;
+  const alumnos = (await api('/api/alumnos').catch(() => ({ alumnos: [] }))).alumnos || [];
+  const yaEstan = new Set((t.participantes_detalle || []).map(p => p.id));
+  const nuevos = alumnos.filter(a => !yaEstan.has(a.id));
+  const opcionAlumno = (a) => `<option value="${a.id}">${esc(a.nombre)}${a.cinturon ? ' · ' + esc(a.cinturon) : ''}</option>`;
+  openModal(`
+    <h3>🥋 Resultados · ${esc(t.nombre)}</h3>
+    <p class="small" style="color:var(--muted);margin:0">${esc(fechaTorta(t.fecha))}${t.ciudad ? ' · ' + esc(t.ciudad) : ''}</p>
+    ${(t.participantes_detalle || []).length ? `<div style="margin:10px 0">
+      ${t.participantes_detalle.map(p => `<div class="flex space-between" style="padding:4px 0;border-bottom:1px dashed var(--line);font-size:13px">
+        <span>${avatarHTML(p.foto, p.nombre, 'sm')} ${esc(p.nombre)}</span>
+        <span>${MEDALLAS_T[p.medalla] || '🎽'} ${p.medalla || 'participó'}
+          <button class="btn bad small" onclick="quitarParticipante(${t.id}, ${p.id})">🗑</button></span>
+      </div>`).join('')}</div>` : ''}
+    <div class="field"><label>Agregar competidor</label><select id="tpAlumno">
+      <option value="">— elegí un alumno —</option>
+      ${nuevos.map(opcionAlumno).join('')}
+    </select></div>
+    <div class="grid2">
+      <div class="field"><label>Medalla</label><select id="tpMedalla">
+        <option value="participacion">🎽 Solo participó</option>
+        <option value="oro">🥇 Oro</option>
+        <option value="plata">🥈 Plata</option>
+        <option value="bronce">🥉 Bronce</option>
+      </select></div>
+      <div class="field"><label>Puesto (opcional)</label><input type="number" id="tpPos" min="1" placeholder="1 = oro"></div>
+    </div>
+    <div class="field"><label>Nota (opcional)</label><input id="tpNota" placeholder="Ej: 3_matches ganados"></div>
+    <button class="btn primary btn-block" onclick="agregarParticipante(${t.id})">➕ Agregar resultado</button>
+    <p class="small" style="color:var(--muted);margin-top:8px">Si ponés el puesto y no la medalla, se deduce sola (1 oro, 2 plata, 3 bronce).</p>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+}
+async function agregarParticipante(tid) {
+  const alumno_id = +$('#tpAlumno').value;
+  if (!alumno_id) { toast('Elegí un alumno'); return; }
+  try {
+    await api('/api/torneos/' + tid + '/participantes', { method: 'POST', body: {
+      alumno_id, medalla: $('#tpMedalla').value,
+      posicion: $('#tpPos').value ? +$('#tpPos').value : null, notas: $('#tpNota').value } });
+    toast('Resultado guardado ✓');
+    await renderTorneos($('#sec-torneos'));
+    cargarParticipantes(tid);
+  } catch (e) { toast(e.message); }
+}
+async function quitarParticipante(tid, pid) {
+  try {
+    await api('/api/torneos/' + tid + '/participantes/' + pid, { method: 'DELETE' });
+    toast('Participante quitado');
+    await renderTorneos($('#sec-torneos'));
+    cargarParticipantes(tid);
   } catch (e) { toast(e.message); }
 }
 

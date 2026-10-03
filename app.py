@@ -512,6 +512,29 @@ CREATE TABLE IF NOT EXISTS plan_hecho (
     PRIMARY KEY (plan_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS torneos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT NOT NULL,
+    fecha TEXT NOT NULL,
+    ciudad TEXT,
+    tipo TEXT DEFAULT 'Gi',
+    estado TEXT DEFAULT 'inscripcion',
+    descripcion TEXT,
+    creado_por INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    creado TEXT
+);
+
+CREATE TABLE IF NOT EXISTS torneo_participantes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    torneo_id INTEGER NOT NULL REFERENCES torneos(id) ON DELETE CASCADE,
+    alumno_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    posicion INTEGER,
+    medalla TEXT,
+    notas TEXT,
+    creado TEXT,
+    UNIQUE (torneo_id, alumno_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_pagos_alumno ON pagos(alumno_id);
 CREATE INDEX IF NOT EXISTS idx_pagos_mes_anio ON pagos(mes, anio);
 CREATE INDEX IF NOT EXISTS idx_asistencia_alumno ON asistencia(alumno_id);
@@ -525,6 +548,9 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id, id);
 CREATE INDEX IF NOT EXISTS idx_muro_fotos_muro ON muro_fotos(muro_id);
 CREATE INDEX IF NOT EXISTS idx_muro_videos_muro ON muro_videos(muro_id);
 CREATE INDEX IF NOT EXISTS idx_grados_alumno ON grados(alumno_id);
+CREATE INDEX IF NOT EXISTS idx_torneos_fecha ON torneos(fecha);
+CREATE INDEX IF NOT EXISTS idx_tp_torneo ON torneo_participantes(torneo_id);
+CREATE INDEX IF NOT EXISTS idx_tp_alumno ON torneo_participantes(alumno_id);
 """
 
 
@@ -4889,6 +4915,201 @@ def api_planes_hecho(pid):
         hecho = True
     db.commit()
     return jsonify({'ok': True, 'hecho': hecho})
+
+
+# ---------------------------------------------------------------------------
+# Torneos: calendario + resultados + ranking de participaciones y medallas
+# ---------------------------------------------------------------------------
+
+TIPOS_TORNEO = ['Gi', 'NoGi', 'Kids', 'Juveniles', 'Adulto', 'Open']
+ESTADOS_TORNEO = ['inscripcion', 'cerrado', 'terminado']
+MEDALLAS_TORNEO = ('oro', 'plata', 'bronce', 'participacion')
+PUNTOS_TORNEO = {'oro': 3, 'plata': 2, 'bronce': 1, 'participacion': 1}
+MEDALLAS_EMOJI = {'oro': '🥇', 'plata': '🥈', 'bronce': '🥉', 'participacion': '🎽'}
+
+
+def _torneos_stats(db):
+    """Resumen de medallas de la academia y ranking de alumnos por torneo."""
+    filas = db.execute(
+        """SELECT u.id, u.nombre, u.foto, u.cinturon,
+                  COUNT(*) AS participaciones,
+                  SUM(CASE WHEN t.medalla='oro' THEN 1 ELSE 0 END) AS oro,
+                  SUM(CASE WHEN t.medalla='plata' THEN 1 ELSE 0 END) AS plata,
+                  SUM(CASE WHEN t.medalla='bronce' THEN 1 ELSE 0 END) AS bronce,
+                  SUM(CASE WHEN t.medalla='participacion' THEN 1 ELSE 0 END) AS solo_participo
+           FROM torneo_participantes t
+           JOIN users u ON u.id=t.alumno_id
+           GROUP BY u.id, u.nombre, u.foto, u.cinturon
+           ORDER BY participaciones DESC, oro DESC, plata DESC, bronce DESC, u.nombre""").fetchall()
+    ranking = []
+    oro_t = plata_t = bronce_t = part_t = 0
+    for r in filas:
+        oro, plata, bronce = r['oro'] or 0, r['plata'] or 0, r['bronce'] or 0
+        part = r['solo_participo'] or 0
+        oro_t += oro
+        plata_t += plata
+        bronce_t += bronce
+        part_t += part
+        item = {
+            'id': r['id'], 'nombre': r['nombre'], 'foto': r['foto'], 'cinturon': r['cinturon'],
+            'participaciones': r['participaciones'] or 0,
+            'oro': oro, 'plata': plata, 'bronce': bronce, 'participo': part,
+            'medallas': oro + plata + bronce,
+            'puntos': oro * 3 + plata * 2 + bronce + part,
+        }
+        ranking.append(item)
+    for i, item in enumerate(ranking):
+        item['puesto'] = i + 1
+    medallero = {'oro': oro_t, 'plata': plata_t, 'bronce': bronce_t,
+                 'participaciones': part_t,
+                 'total': oro_t + plata_t + bronce_t,
+                 'torneos': len({t['torneo_id'] for t in db.execute(
+                     'SELECT DISTINCT torneo_id FROM torneo_participantes').fetchall()})}
+    return ranking, medallero
+
+
+@app.route('/api/torneos')
+@login_required
+def api_torneos():
+    """Calendario de torneos + ranking y medallero. Todos los roles ven la
+    lista; el alumno además ve marcado si participo en cada uno."""
+    u = current_user()
+    db = get_db()
+    rows = db.execute('SELECT * FROM torneos ORDER BY fecha DESC, id DESC').fetchall()
+    # participantes y datos del alumno en dos consultas simples (evita alias
+    # raros con joins de 3 tablas y deja el 'id' de la fila participante)
+    partes = db.execute('SELECT * FROM torneo_participantes').fetchall()
+    fichas = {x['id']: x for x in db.execute('SELECT id, nombre, foto, cinturon FROM users').fetchall()}
+    por_torneo = {}
+    for p in partes:
+        d = dict(p)
+        f = fichas.get(d['alumno_id'])
+        d['nombre'] = f['nombre'] if f else 'Alumno'
+        d['foto'] = f['foto'] if f else None
+        d['cinturon'] = f['cinturon'] if f else None
+        por_torneo.setdefault(d['torneo_id'], []).append(d)
+    for lista in por_torneo.values():
+        lista.sort(key=lambda x: (x['posicion'] if x['posicion'] else 99, x['nombre'] or ''))
+    soy_alumno = u['role'] == 'alumno'
+    torneos = []
+    for r in rows:
+        lista = por_torneo.get(r['id'], [])
+        oro = sum(1 for p in lista if p['medalla'] == 'oro')
+        plata = sum(1 for p in lista if p['medalla'] == 'plata')
+        bronce = sum(1 for p in lista if p['medalla'] == 'bronce')
+        item = dict(r)
+        item.update({'participantes': len(lista), 'oro': oro, 'plata': plata, 'bronce': bronce,
+                     'medallas': oro + plata + bronce,
+                     'participo': (any(p['alumno_id'] == u['id'] for p in lista) if soy_alumno else None),
+                     'participantes_detalle': lista})
+        torneos.append(item)
+    ranking, medallero = _torneos_stats(db)
+    return jsonify({'torneos': torneos, 'ranking': ranking, 'medallero': medallero,
+                    'tipos': TIPOS_TORNEO, 'estados': ESTADOS_TORNEO, 'medallas': list(MEDALLAS_TORNEO)})
+
+
+@app.route('/api/torneos', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_torneos_crear():
+    data = parse_json()
+    nombre = txt_str(data.get('nombre'))
+    fecha = txt_str(data.get('fecha'))
+    if not nombre:
+        return jsonify({'error': 'Poné el nombre del torneo'}), 400
+    if not fecha or len(fecha) < 8 or not fecha[:4].isdigit():
+        return jsonify({'error': 'Poné la fecha del torneo'}), 400
+    tipo = data.get('tipo') if data.get('tipo') in TIPOS_TORNEO else 'Gi'
+    estado = data.get('estado') if data.get('estado') in ESTADOS_TORNEO else 'inscripcion'
+    db = get_db()
+    cur = db.execute(
+        'INSERT INTO torneos(nombre, fecha, ciudad, tipo, estado, descripcion, creado_por, creado)'
+        ' VALUES(?,?,?,?,?,?,?,?)',
+        (nombre, fecha[:10], txt_str(data.get('ciudad')), tipo, estado,
+         txt_str(data.get('descripcion')), current_user()['id'],
+         datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    db.commit()
+    return jsonify({'ok': True, 'id': cur.lastrowid})
+
+
+@app.route('/api/torneos/<int:tid>', methods=['PUT'])
+@role_required('admin', 'profesor')
+def api_torneos_update(tid):
+    db = get_db()
+    t = db.execute('SELECT * FROM torneos WHERE id=?', (tid,)).fetchone()
+    if not t:
+        return jsonify({'error': 'Torneo no encontrado'}), 404
+    data = parse_json()
+    nombre = txt_str(data.get('nombre')) or t['nombre']
+    fecha = (txt_str(data.get('fecha')) or t['fecha'])[:10]
+    tipo = data.get('tipo') if data.get('tipo') in TIPOS_TORNEO else t['tipo']
+    estado = data.get('estado') if data.get('estado') in ESTADOS_TORNEO else t['estado']
+    db.execute(
+        'UPDATE torneos SET nombre=?, fecha=?, ciudad=?, tipo=?, estado=?, descripcion=? WHERE id=?',
+        (nombre, fecha, txt_str(data.get('ciudad')) or t['ciudad'], tipo, estado,
+         data.get('descripcion', t['descripcion']), tid))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/torneos/<int:tid>', methods=['DELETE'])
+@role_required('admin')
+def api_torneos_delete(tid):
+    db = get_db()
+    if not db.execute('SELECT 1 FROM torneos WHERE id=?', (tid,)).fetchone():
+        return jsonify({'error': 'Torneo no encontrado'}), 404
+    db.execute('DELETE FROM torneo_participantes WHERE torneo_id=?', (tid,))
+    db.execute('DELETE FROM torneos WHERE id=?', (tid,))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/torneos/<int:tid>/participantes', methods=['POST'])
+@role_required('admin', 'profesor')
+def api_torneos_agregar(tid):
+    """Carga un participante con su resultado. Si no hay medalla pero sí
+    posicion, se deduce la medalla (1 oro, 2 plata, 3 bronce)."""
+    db = get_db()
+    if not db.execute('SELECT 1 FROM torneos WHERE id=?', (tid,)).fetchone():
+        return jsonify({'error': 'Torneo no encontrado'}), 404
+    data = parse_json()
+    alumno_id = to_int(data.get('alumno_id'))
+    if not alumno_id:
+        return jsonify({'error': 'Elegí el alumno'}), 400
+    alum = db.execute('SELECT id, role FROM users WHERE id=?', (alumno_id,)).fetchone()
+    if not alum:
+        return jsonify({'error': 'Ese alumno no existe'}), 404
+    medalla = data.get('medalla') if data.get('medalla') in MEDALLAS_TORNEO else None
+    posicion = to_int(data.get('posicion'))
+    if not medalla and posicion:
+        medalla = {1: 'oro', 2: 'plata', 3: 'bronce'}.get(posicion)
+    if not medalla:
+        medalla = 'participacion'
+    ya = db.execute('SELECT id FROM torneo_participantes WHERE torneo_id=? AND alumno_id=?',
+                    (tid, alumno_id)).fetchone()
+    if ya:
+        db.execute('UPDATE torneo_participantes SET posicion=?, medalla=?, notas=? WHERE id=?',
+                   (posicion, medalla, txt_str(data.get('notas')), ya['id']))
+        pid = ya['id']
+        nuevo = False
+    else:
+        cur = db.execute(
+            'INSERT INTO torneo_participantes(torneo_id, alumno_id, posicion, medalla, notas, creado)'
+            ' VALUES(?,?,?,?,?,?)',
+            (tid, alumno_id, posicion, medalla, txt_str(data.get('notas')),
+             datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        pid = cur.lastrowid
+        nuevo = True
+    db.commit()
+    return jsonify({'ok': True, 'id': pid, 'nuevo': nuevo, 'medalla': medalla})
+
+
+@app.route('/api/torneos/<int:tid>/participantes/<int:pid>', methods=['DELETE'])
+@role_required('admin', 'profesor')
+def api_torneos_quitar(tid, pid):
+    db = get_db()
+    db.execute('DELETE FROM torneo_participantes WHERE id=? AND torneo_id=?', (pid, tid))
+    db.commit()
+    return jsonify({'ok': True})
 
 
 # ---------------------------------------------------------------------------

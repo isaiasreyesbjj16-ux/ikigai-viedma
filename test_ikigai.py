@@ -241,6 +241,74 @@ c2anon = A.app.test_client()
 check('presentacion se ve sin loguearse', c2anon.get('/presentacion').status_code == 200, 'r=%s' % c2anon.get('/presentacion').status_code)
 
 # ===========================================================================
+print('== TORNEOS (calendario + ranking + medallero) ==')
+hoy = hoy_academy()
+f_pasado = (hoy - timedelta(days=40)).strftime('%Y-%m-%d')
+f_futuro = (hoy + timedelta(days=40)).strftime('%Y-%m-%d')
+COMP = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+r = c.post('/api/torneos', json={'nombre': 'Copa Ciudad', 'fecha': f_pasado,
+                                 'ciudad': 'Viedma', 'tipo': 'Gi'})
+check('admin carga un torneo', r.status_code == 200 and r.get_json().get('id'),
+      'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:120]))
+tid1 = r.get_json().get('id')
+r = c.post('/api/torneos', json={'nombre': 'Open de Patagonia', 'fecha': f_futuro, 'tipo': 'NoGi'})
+tid2 = r.get_json().get('id')
+r = c.post('/api/torneos', json={'nombre': ''})
+check('torneo sin nombre se rechaza -> 400', r.status_code == 400, 'r=%s' % r.status_code)
+r = c.post('/api/torneos', json={'nombre': 'X', 'fecha': f_futuro})
+tid3 = r.get_json().get('id')
+# resultados: alu[0] oro, alu[1] plata; alu[0] repite en el segundo torneo
+r = c.post('/api/torneos/%d/participantes' % tid1, json={'alumno_id': alu[0], 'posicion': 1})
+check('cargar participant con puesto 1 = oro', r.status_code == 200 and r.get_json().get('medalla') == 'oro',
+      'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:120]))
+c.post('/api/torneos/%d/participantes' % tid1, json={'alumno_id': alu[1], 'medalla': 'plata'})
+c.post('/api/torneos/%d/participantes' % tid1, json={'alumno_id': alu[2]})
+r = c.post('/api/torneos/%d/participantes' % tid1, json={'alumno_id': alu[0], 'medalla': 'oro'})
+check('no duplica el mismo alumno en un torneo', r.status_code == 200 and r.get_json().get('nuevo') is False,
+      'r=%s' % r.get_data(as_text=True)[:120])
+c.post('/api/torneos/%d/participantes' % tid3, json={'alumno_id': alu[0], 'medalla': 'bronce'})
+c.post('/api/torneos/%d/participantes' % tid2, json={'alumno_id': alu[0]})
+tj = c.get('/api/torneos').get_json()
+check('el calendario lista los 3 torneos', len(tj['torneos']) == 3, 'n=%s' % len(tj['torneos']))
+prox = [t for t in tj['torneos'] if t['fecha'] >= hoy.strftime('%Y-%m-%d')]
+check('los futuros van primero para el calendario', len(prox) == 2, 'n=%s' % len(prox))
+rk = {x['id']: x for x in tj['ranking']}
+check('el titular de mas torneos queda 1º en el ranking',
+      rk.get(alu[0], {}).get('puesto') == 1 and rk[alu[0]]['participaciones'] == 3,
+      'rk=%s' % rk.get(alu[0]))
+check('el ranking cuenta oro, plata y bronce del 1º',
+      rk[alu[0]]['oro'] == 1 and rk[alu[0]]['bronce'] == 1 and rk[alu[0]]['participo'] == 1,
+      json.dumps(rk.get(alu[0], {})))
+check('medallero de la academia cuenta todo',
+      tj['medallero']['oro'] == 1 and tj['medallero']['plata'] == 1 and tj['medallero']['bronce'] == 1
+      and tj['medallero']['total'] == 3, json.dumps(tj['medallero']))
+check('el detalle del torneo trae los 3 competidores',
+      len([t for t in tj['torneos'] if t['id'] == tid1][0]['participantes_detalle']) == 3)
+# el alumno ve el calendario y puede saber si compitio
+r = cf.get('/api/torneos')
+tj2 = r.get_json()
+check('el alumno tambien ve los torneos', r.status_code == 200 and len(tj2['torneos']) == 3, 'r=%s' % r.status_code)
+check('al alumno le aparece marcado en que torneo compitio',
+      all(t['participo'] is True for t in tj2['torneos'] if t['id'] == tid1))
+check('alumno NO puede cargar un torneo -> 403',
+      cf.post('/api/torneos', json={'nombre': 'Malo', 'fecha': f_futuro}).status_code == 403)
+r = cf.post('/api/torneos/%d/participantes' % tid2, json={'alumno_id': alu[1], 'medalla': 'oro'})
+check('alumno NO puede cargar resultados -> 403', r.status_code == 403, 'r=%s' % r.status_code)
+# editar y borrar
+c.put('/api/torneos/%d' % tid2, json={'nombre': 'Open Patagonia', 'estado': 'cerrado'})
+t2 = [t for t in c.get('/api/torneos').get_json()['torneos'] if t['id'] == tid2][0]
+check('editar torneo (nombre y estado)', t2['nombre'] == 'Open Patagonia' and t2['estado'] == 'cerrado',
+      json.dumps(t2)[:150])
+antes = sum(len(t['participantes_detalle']) for t in c.get('/api/torneos').get_json()['torneos'])
+check('antes de borrar habia 5 participaciones cargadas', antes == 5, 'n=%s' % antes)
+r = c.delete('/api/torneos/%d' % tid2)
+check('admin borra un torneo', r.status_code == 200, 'r=%s' % r.status_code)
+check('el torneo borrado ya no esta', len(c.get('/api/torneos').get_json()['torneos']) == 2)
+despues = sum(len(t['participantes_detalle']) for t in c.get('/api/torneos').get_json()['torneos'])
+check('al borrar el torneo se van sus participantes', despues == antes - 1,
+      'antes=%s despues=%s' % (antes, despues))
+
+# ===========================================================================
 print('== SITIO WEB (/web) ==')
 PAGINAS = ['/web', '/web/profesores', '/web/horarios', '/web/contacto']
 h_ini = h_pro = h_hor = h_con = ''
