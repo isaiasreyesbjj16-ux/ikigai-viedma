@@ -535,6 +535,17 @@ CREATE TABLE IF NOT EXISTS torneo_participantes (
     UNIQUE (torneo_id, alumno_id)
 );
 
+CREATE TABLE IF NOT EXISTS torneo_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    torneo_id INTEGER NOT NULL REFERENCES torneos(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    texto TEXT,
+    medalla TEXT,
+    estrellas INTEGER DEFAULT 0,
+    foto TEXT,
+    fecha TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_pagos_alumno ON pagos(alumno_id);
 CREATE INDEX IF NOT EXISTS idx_pagos_mes_anio ON pagos(mes, anio);
 CREATE INDEX IF NOT EXISTS idx_asistencia_alumno ON asistencia(alumno_id);
@@ -551,6 +562,7 @@ CREATE INDEX IF NOT EXISTS idx_grados_alumno ON grados(alumno_id);
 CREATE INDEX IF NOT EXISTS idx_torneos_fecha ON torneos(fecha);
 CREATE INDEX IF NOT EXISTS idx_tp_torneo ON torneo_participantes(torneo_id);
 CREATE INDEX IF NOT EXISTS idx_tp_alumno ON torneo_participantes(alumno_id);
+CREATE INDEX IF NOT EXISTS idx_tposts_torneo ON torneo_posts(torneo_id);
 """
 
 
@@ -4979,7 +4991,7 @@ def api_torneos():
     # participantes y datos del alumno en dos consultas simples (evita alias
     # raros con joins de 3 tablas y deja el 'id' de la fila participante)
     partes = db.execute('SELECT * FROM torneo_participantes').fetchall()
-    fichas = {x['id']: x for x in db.execute('SELECT id, nombre, foto, cinturon FROM users').fetchall()}
+    fichas = {x['id']: x for x in db.execute('SELECT id, nombre, foto, cinturon, role FROM users').fetchall()}
     por_torneo = {}
     for p in partes:
         d = dict(p)
@@ -4990,6 +5002,21 @@ def api_torneos():
         por_torneo.setdefault(d['torneo_id'], []).append(d)
     for lista in por_torneo.values():
         lista.sort(key=lambda x: (x['posicion'] if x['posicion'] else 99, x['nombre'] or ''))
+    # "como les fue": lo que conto cada uno en cada torneo (lo puede escribir cualquiera)
+    post_bruto = db.execute('SELECT * FROM torneo_posts ORDER BY id DESC').fetchall()
+    posts = {}
+    for p in post_bruto:
+        if len(posts.get(p['torneo_id'], [])) >= 40:
+            continue
+        d = dict(p)
+        # 'foto' del post choca con el avatar del usuario: la imagen del post
+        # viaja como 'imagen'
+        d['imagen'] = d.pop('foto') or None
+        f = fichas.get(d['user_id'])
+        d['nombre'] = f['nombre'] if f else 'Socio'
+        d['foto'] = f['foto'] if f else None
+        d['soy_yo'] = (d['user_id'] == u['id'])
+        posts.setdefault(d['torneo_id'], []).append(d)
     soy_alumno = u['role'] == 'alumno'
     torneos = []
     for r in rows:
@@ -5001,7 +5028,9 @@ def api_torneos():
         item.update({'participantes': len(lista), 'oro': oro, 'plata': plata, 'bronce': bronce,
                      'medallas': oro + plata + bronce,
                      'participo': (any(p['alumno_id'] == u['id'] for p in lista) if soy_alumno else None),
-                     'participantes_detalle': lista})
+                     'creado_nombre': (fichas[r['creado_por']]['nombre'] if r['creado_por'] in fichas else None),
+                     'participantes_detalle': lista,
+                     'posts': posts.get(r['id'], [])})
         torneos.append(item)
     ranking, medallero = _torneos_stats(db)
     return jsonify({'torneos': torneos, 'ranking': ranking, 'medallero': medallero,
@@ -5009,8 +5038,10 @@ def api_torneos():
 
 
 @app.route('/api/torneos', methods=['POST'])
-@role_required('admin', 'profesor')
+@login_required
 def api_torneos_crear():
+    """Cualquier socio (alumno, profesor o admin) puede cargar un torneo al
+    calendario. Editar y borrar siguen siendo solo del staff."""
     data = parse_json()
     nombre = txt_str(data.get('nombre'))
     fecha = txt_str(data.get('fecha'))
@@ -5108,6 +5139,72 @@ def api_torneos_agregar(tid):
 def api_torneos_quitar(tid, pid):
     db = get_db()
     db.execute('DELETE FROM torneo_participantes WHERE id=? AND torneo_id=?', (pid, tid))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/torneos/<int:tid>/posts', methods=['POST'])
+@login_required
+def api_torneo_post_crear(tid):
+    """Cada socio cuenta cómo le fue en un torneo (lo puede escribir cualquiera).
+    Si además marca una medalla, se lo anot como participante para que entre en
+    el ranking y en el medallero."""
+    u = current_user()
+    db = get_db()
+    if not db.execute('SELECT 1 FROM torneos WHERE id=?', (tid,)).fetchone():
+        return jsonify({'error': 'Torneo no encontrado'}), 404
+    data = parse_json()
+    texto = txt_str(data.get('texto'))
+    if not texto:
+        return jsonify({'error': 'Contá un poco cómo te fue'}), 400
+    texto = texto[:1000]
+    medalla = data.get('medalla') if data.get('medalla') in MEDALLAS_TORNEO else None
+    estrellas = to_int(data.get('estrellas')) or 0
+    if estrellas < 0 or estrellas > 5:
+        estrellas = 0
+    foto = data.get('foto') or ''
+    if foto and not imagen_valida(foto):
+        return jsonify({'error': 'La foto no es válida (usá JPG, PNG o WebP)'}), 400
+    ahora = datetime.now().strftime('%Y-%m-%d %H:%M')
+    anotado = False
+    if medalla and u['role'] == 'alumno':
+        fam_id, _, _ = familia_de(u['id'])
+        n = 1
+        if fam_id:
+            n = db.execute('SELECT COUNT(*) AS n FROM familia_miembros WHERE familia_id=?',
+                           (fam_id,)).fetchone()['n'] or 1
+        _base, _desc, _final = familia_cuota(dict(u), n)
+        ya = db.execute('SELECT id FROM torneo_participantes WHERE torneo_id=? AND alumno_id=?',
+                        (tid, u['id'])).fetchone()
+        if ya:
+            db.execute('UPDATE torneo_participantes SET medalla=?, posicion=? WHERE id=?',
+                       (medalla, {'oro': 1, 'plata': 2, 'bronce': 3}.get(medalla), ya['id']))
+        else:
+            db.execute(
+                'INSERT INTO torneo_participantes(torneo_id, alumno_id, posicion, medalla, creado)'
+                ' VALUES(?,?,?,?,?)',
+                (tid, u['id'], {'oro': 1, 'plata': 2, 'bronce': 3}.get(medalla), medalla, ahora))
+        anotado = True
+    cur = db.execute(
+        'INSERT INTO torneo_posts(torneo_id, user_id, texto, medalla, estrellas, foto, fecha)'
+        ' VALUES(?,?,?,?,?,?,?)',
+        (tid, u['id'], texto, medalla, estrellas, foto, ahora))
+    db.commit()
+    return jsonify({'ok': True, 'id': cur.lastrowid, 'medalla': medalla, 'anotado': anotado})
+
+
+@app.route('/api/torneos/posts/<int:pid>', methods=['DELETE'])
+@login_required
+def api_torneo_post_borrar(pid):
+    """Borra su propio comentario; el admin puede borrar cualquiera."""
+    u = current_user()
+    db = get_db()
+    p = db.execute('SELECT * FROM torneo_posts WHERE id=?', (pid,)).fetchone()
+    if not p:
+        return jsonify({'error': 'Comentario no encontrado'}), 404
+    if p['user_id'] != u['id'] and u['role'] != 'admin':
+        return jsonify({'error': 'Solo podés borrar tu comentario'}), 403
+    db.execute('DELETE FROM torneo_posts WHERE id=?', (pid,))
     db.commit()
     return jsonify({'ok': True})
 

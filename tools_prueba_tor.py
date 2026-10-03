@@ -59,6 +59,13 @@ for _t, tid, partes in [(0, ids[3], [(0, 'oro'), (1, 'plata'), (3, 'bronce'), (4
             c.post('/api/torneos/%d/participantes' % tid,
                    json={'alumno_id': alumnos[ai], 'medalla': med})
 
+
+c.post('/api/torneos/%d/posts' % ids[3], json={'texto': 'Mi primer torneo en la academia, me re bien, gane la primera por puntos', 'estrellas': 5, 'medalla': 'oro'})
+cf3 = A.app.test_client()
+cf3.post('/api/login', json={'username': 'al_tor1', 'password': '1234'})
+cf3.post('/api/torneos/%d/posts' % ids[3], json={'texto': 'Venia re nervioso pero me diverti, el tercer round fue el mejor', 'estrellas': 4})
+cf3.post('/api/torneos/%d/posts' % ids[3], json={'texto': 'Perdi de ultimo pero zafe, ya va a ser'})
+
 datos = c.get('/api/torneos').get_json()
 print('torneos:', len(datos['torneos']), '| ranking:', len(datos['ranking']),
       '| medallero:', json.dumps(datos['medallero']))

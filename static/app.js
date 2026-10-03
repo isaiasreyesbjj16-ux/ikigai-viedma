@@ -4011,7 +4011,22 @@ async function renderTorneos(el) {
           <span>${p.medalla ? MEDALLAS_T[p.medalla] : ''}${p.posicion ? ' <span style="color:var(--muted)">' + esc(p.posicion) + '°</span>' : ''}</span>
         </div>`).join('')}
       </div>` : ''}
-      ${esStaff ? `<div class="flex" style="gap:6px;margin-top:10px;flex-wrap:wrap">
+      ${(t.posts || []).length ? `<div style="margin-top:10px;border-top:1px dashed var(--line);padding-top:8px">
+        <div class="small" style="color:var(--muted);font-weight:700;margin-bottom:6px">💬 Cómo les fue</div>
+        ${t.posts.map(p => `<div class="post-card" style="margin:6px 0;padding:10px">
+          <div class="post-head">
+            ${avatarHTML(p.foto, p.nombre, 'sm')} <b>${esc(p.nombre)}</b>
+            ${p.medalla ? MEDALLAS_T[p.medalla] : ''}
+            <span class="small" style="color:var(--muted)">· ${esc(p.fecha || '')}</span>
+            ${(p.soy_yo || R === 'admin') ? `<button class="btn ghost small" style="margin-left:auto" onclick="borrarPostTorneo(${t.id}, ${p.id})">🗑</button>` : ''}
+          </div>
+          ${p.estrellas ? `<div style="margin:6px 0;color:var(--warn);font-size:13px">${'⭐'.repeat(p.estrellas)}</div>` : ''}
+          ${p.texto ? `<p style="margin:6px 0 0;font-size:14px">${esc(p.texto)}</p>` : ''}
+          ${p.imagen ? `<img src="${esc(p.imagen)}" onclick="verFoto(this.src)" style="max-width:100%;max-height:220px;border-radius:10px;margin-top:8px;object-fit:cover;cursor:pointer">` : ''}
+        </div>`).join('')}
+      </div>` : ''}
+      <button class="btn ghost btn-block" style="margin-top:8px" onclick="formPostTorneo(${t.id})">💬 Contar cómo me fue</button>
+      ${esStaff ? `<div class="flex" style="gap:6px;margin-top:8px;flex-wrap:wrap">
         <button class="btn primary small" onclick="formTorneo(${t.id})">✏️ Editar</button>
         <button class="btn ghost small" onclick="cargarParticipantes(${t.id})">🥋 Cargar resultados</button>
         ${R === 'admin' ? `<button class="btn bad small" onclick="borrarTorneo(${t.id})">🗑</button>` : ''}
@@ -4022,10 +4037,10 @@ async function renderTorneos(el) {
   const top = (d.ranking || []).slice(0, 15);
   el.innerHTML = `
     ${secHeader('🏆 Torneos', 'Calendario de competencias, ranking de quienes compiten más y el medallero de la academia')}
-    ${esStaff ? `<div class="card"><div class="flex space-between">
-      <span class="small">Cargá los torneos y después los resultados de cada alumno.</span>
+    <div class="card"><div class="flex space-between">
+      <span class="small">${esStaff ? 'Cargá los torneos y después los resultados de cada alumno.' : '¿Viste una competition? Sumala al calendario para que la vea todo el grupo.'}</span>
       <button class="btn primary small" onclick="formTorneo()">+ Cargar torneo</button>
-    </div></div>` : ''}
+    </div></div>
     <div class="card" style="background:linear-gradient(135deg,rgba(224,46,46,.16),transparent);border-color:var(--accent)">
       <h3>🎖️ Medallero de la academia</h3>
       <div class="flex" style="gap:14px;flex-wrap:wrap;text-align:center">
@@ -4154,6 +4169,88 @@ async function quitarParticipante(tid, pid) {
     toast('Participante quitado');
     await renderTorneos($('#sec-torneos'));
     cargarParticipantes(tid);
+  } catch (e) { toast(e.message); }
+}
+function formPostTorneo(tid) {
+  const t = (TORNEOS_CACHE.torneos || []).find(x => x.id === tid);
+  if (!t) return;
+  openModal(`
+    <h3>💬 ¿Cómo te fue en ${esc(t.nombre)}?</h3>
+    <p class="small" style="color:var(--muted);margin:0">${esc(fechaTorta(t.fecha))}${t.ciudad ? ' · ' + esc(t.ciudad) : ''}</p>
+    <div class="field mt"><label>¿Cómo te fue?</label>
+      <div class="flex" style="gap:6px;flex-wrap:wrap" id="tfEstrellas">
+        ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="btn ghost small" data-n="${n}" onclick="elegirEstrella(${n})">${'⭐'.repeat(n)}</button>`).join('')}
+      </div>
+      <input type="hidden" id="tfEstrellasVal" value="0">
+      <div class="small" style="color:var(--muted);margin-top:4px">Tocá las estrellas (opcional).</div>
+    </div>
+    <div class="field"><label>Contá cómo te fue</label>
+      <textarea id="tfTexto" rows="3" maxlength="1000" placeholder="Ej: primer torneo, me went re bien, 2enthalas de las 3"></textarea></div>
+    ${USER.role === 'alumno' ? `<div class="field"><label>¿Sacaste medalla? (opcional)</label>
+      <select id="tfMedalla">
+        <option value="">prefiero no decir</option>
+        <option value="oro">🥇 Oro</option>
+        <option value="plata">🥈 Plata</option>
+        <option value="bronce">🥉 Bronce</option>
+        <option value="participacion">🎽 Solo participé</option>
+      </select>
+      <div class="small" style="color:var(--muted);margin-top:4px">Si marcás una medalla, aparecés en el ranking y el medallero.</div>
+    </div>` : ''}
+    <div class="field"><label>📷 Foto (opcional)</label><input type="file" id="tfFoto" accept="image/*">
+      <div id="tfPreview" class="mt" style="display:none"><img id="tfPreviewImg" style="max-width:100%;border-radius:10px;background:#fff"></div>
+    </div>
+    <button class="btn primary btn-block" onclick="publicarPostTorneo(${t.id})">📤 Publicar</button>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+  $('#tfEstrellas').querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => {
+      const n = +b.dataset.n;
+      $('#tfEstrellasVal').value = (String($('#tfEstrellasVal').value) === String(n)) ? 0 : n;
+      pintarEstrellas();
+    });
+  });
+  const inp = $('#tfFoto');
+  inp.addEventListener('change', () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    if (!/^image\/(png|jpe?g|webp|gif)$/.test(f.type)) { toast('Elegí una foto JPG, PNG o WebP'); inp.value = ''; return; }
+    const r = new FileReader();
+    r.onload = () => { $('#tfPreview').style.display = ''; $('#tfPreviewImg').src = r.result; };
+    r.readAsDataURL(f);
+  });
+  pintarEstrellas();
+}
+function pintarEstrellas() {
+  const n = +($('#tfEstrellasVal') ? $('#tfEstrellasVal').value : 0) || 0;
+  $('#tfEstrellas').querySelectorAll('button').forEach(b => {
+    const on = +b.dataset.n <= n;
+    b.style.background = on ? 'var(--warn)' : '';
+    b.style.borderColor = on ? 'var(--warn)' : '';
+    b.style.color = on ? '#3a2a00' : '';
+  });
+}
+async function publicarPostTorneo(tid) {
+  const texto = $('#tfTexto').value.trim();
+  if (!texto) { toast('Contá un poco cómo te fue'); return; }
+  try {
+    let foto = null;
+    const f = $('#tfFoto').files && $('#tfFoto').files[0];
+    if (f) foto = await comprimirImagen(f, 1200);
+    const res = await api('/api/torneos/' + tid + '/posts', { method: 'POST', body: {
+      texto: texto,
+      estrellas: +($('#tfEstrellasVal') ? $('#tfEstrellasVal').value : 0) || 0,
+      medalla: ($('#tfMedalla') ? $('#tfMedalla').value : '') || null,
+      foto: foto } });
+    closeModal();
+    toast(res.anotado ? `¡Publicado! Sumamos tu ${MEDALLAS_T[res.medalla]} al medallero 🥳` : '¡Publicado! Gracias por contar 🎽');
+    renderTorneos($('#sec-torneos'));
+  } catch (e) { toast(e.message); }
+}
+async function borrarPostTorneo(tid, pid) {
+  if (!confirm('¿Borrar este comentario?')) return;
+  try {
+    await api('/api/torneos/posts/' + pid, { method: 'DELETE' });
+    toast('Comentario borrado');
+    renderTorneos($('#sec-torneos'));
   } catch (e) { toast(e.message); }
 }
 

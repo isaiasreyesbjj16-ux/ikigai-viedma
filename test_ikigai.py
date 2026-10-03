@@ -290,10 +290,16 @@ tj2 = r.get_json()
 check('el alumno tambien ve los torneos', r.status_code == 200 and len(tj2['torneos']) == 3, 'r=%s' % r.status_code)
 check('al alumno le aparece marcado en que torneo compitio',
       all(t['participo'] is True for t in tj2['torneos'] if t['id'] == tid1))
-check('alumno NO puede cargar un torneo -> 403',
-      cf.post('/api/torneos', json={'nombre': 'Malo', 'fecha': f_futuro}).status_code == 403)
 r = cf.post('/api/torneos/%d/participantes' % tid2, json={'alumno_id': alu[1], 'medalla': 'oro'})
-check('alumno NO puede cargar resultados -> 403', r.status_code == 403, 'r=%s' % r.status_code)
+check('alumno NO puede cargar resultados de otro -> 403', r.status_code == 403, 'r=%s' % r.status_code)
+r = cf.post('/api/torneos', json={'nombre': 'Torneo del alumno', 'fecha': f_futuro})
+check('el alumno puede sumar un torneo al calendario',
+      r.status_code == 200 and r.get_json().get('id'), 'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:100]))
+tid4 = r.get_json().get('id')
+r = cf.put('/api/torneos/%d' % tid4, json={'nombre': 'NoAllowed'})
+check('pero NO puede editar ni borrar -> 403/404',
+      cf.put('/api/torneos/%d' % tid4, json={'nombre': 'NoAllowed'}).status_code == 403
+      and cf.delete('/api/torneos/%d' % tid4).status_code == 403, 'r=%s' % r.status_code)
 # editar y borrar
 c.put('/api/torneos/%d' % tid2, json={'nombre': 'Open Patagonia', 'estado': 'cerrado'})
 t2 = [t for t in c.get('/api/torneos').get_json()['torneos'] if t['id'] == tid2][0]
@@ -303,10 +309,52 @@ antes = sum(len(t['participantes_detalle']) for t in c.get('/api/torneos').get_j
 check('antes de borrar habia 5 participaciones cargadas', antes == 5, 'n=%s' % antes)
 r = c.delete('/api/torneos/%d' % tid2)
 check('admin borra un torneo', r.status_code == 200, 'r=%s' % r.status_code)
-check('el torneo borrado ya no esta', len(c.get('/api/torneos').get_json()['torneos']) == 2)
+check('el torneo borrado ya no esta', len(c.get('/api/torneos').get_json()['torneos']) == 3,
+      'n=%s' % len(c.get('/api/torneos').get_json()['torneos']))
 despues = sum(len(t['participantes_detalle']) for t in c.get('/api/torneos').get_json()['torneos'])
 check('al borrar el torneo se van sus participantes', despues == antes - 1,
       'antes=%s despues=%s' % (antes, despues))
+
+# ===========================================================================
+print('== TORNEOS: COMO LES FUE (posts de cualquiera) ==')
+FOTO = ('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
+r = cf.post('/api/torneos/%d/posts' % tid1,
+            json={'texto': 'Mi primer torneo, me re bien', 'estrellas': 5, 'medalla': 'oro'})
+jp = r.get_json(silent=True) or {}
+check('el alumno cuenta como le fue', r.status_code == 200 and jp.get('ok'), 'r=%s' % r.status_code)
+check('si marco medalla queda anotado como participante', jp.get('anotado') is True, json.dumps(jp))
+r = A.app.test_client()
+c.post('/api/profesores', json={'nombre': 'Profe Post', 'username': 'profepost', 'password': '1234'})
+login(r, 'profepost', '1234')
+prof = r
+r = r.post('/api/torneos/%d/posts' % tid1, json={'texto': 'Gran labor del grupo', 'estrellas': 4})
+check('el profesor tambien puede contar como le fue', r.status_code == 200, 'r=%s' % r.status_code)
+r = prof.post('/api/torneos/%d/posts' % tid1, json={'texto': ''})
+check('post vacio se rechaza -> 400', r.status_code == 400, 'r=%s' % r.status_code)
+r = prof.post('/api/torneos/999999/posts', json={'texto': 'hola'})
+check('post en torneo inexistente -> 404', r.status_code == 404, 'r=%s' % r.status_code)
+r = prof.post('/api/torneos/%d/posts' % tid1, json={'texto': 'foto mala', 'foto': 'data:text/html,<script>x</script>'})
+check('foto que no es imagen se rechaza -> 400', r.status_code == 400, 'r=%s' % r.status_code)
+post_ok = c.post('/api/torneos/%d/posts' % tid1,
+                 json={'texto': 'con foto', 'foto': FOTO}).get_json()
+tposts = [t for t in c.get('/api/torneos').get_json()['torneos'] if t['id'] == tid1][0]['posts']
+check('los posts quedan listados en el torneo', len(tposts) == 3, 'n=%s' % len(tposts))
+check('el post guarda la foto y las estrellas',
+      any(p['imagen'] == FOTO for p in tposts) and any(p['estrellas'] == 5 for p in tposts),
+      json.dumps([(p['id'], bool(p['imagen']), p['estrellas']) for p in tposts]))
+r = prof.delete('/api/torneos/posts/%d' % post_ok['id'])
+check('el profesor NO puede borrar el post de otro -> 403', r.status_code == 403, 'r=%s' % r.status_code)
+r = c.delete('/api/torneos/posts/%d' % post_ok['id'])
+check('el admin puede borrar cualquier post', r.status_code == 200, 'r=%s' % r.status_code)
+r = cf.delete('/api/torneos/posts/%d' % jp['id'])
+check('cada uno borra el suyo', r.status_code == 200, 'r=%s' % r.status_code)
+# la medalla del post cuenta en el medallero
+cf2.post('/api/torneos/%d/posts' % tid3, json={'texto': 'saque plata', 'medalla': 'plata'})
+md = c.get('/api/torneos').get_json()['medallero']
+check('el medallero suma la medalla del post del alumno', md['plata'] == 2, json.dumps(md))
+check('y el alumno queda en el ranking con esa medalla',
+      [x for x in c.get('/api/torneos').get_json()['ranking'] if x['id'] == alu[1]][0]['plata'] == 2,
+      'el alumno ya tenia 1 plata de antes')
 
 # ===========================================================================
 print('== SITIO WEB (/web) ==')
