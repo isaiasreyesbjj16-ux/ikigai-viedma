@@ -497,16 +497,16 @@ body.acc .firma-acc { display: block; }
 
 /* ===================================================================
    MARCA DE AGUA CON EL LOGO
-   El logo queda de fondo, bien clarito (el PNG ya trae ~14% de alfa),
-   fijo al scrollear y centrado. Las tarjetas se vuelven semitransparentes
-   para que el logo se vea por detras sin tapar el texto: el contraste
-   Practicamente no cambia.
+   El logo queda de fondo, bien clarito (el PNG ya trae ~20% de alfa),
+   fijo al scrollear y SIEMPRE CENTRADO en la pantalla. Las tarjetas se
+   vuelven semitransparentes para que el logo se vea por detras sin tapar
+   el texto: el contraste Practicamente no cambia.
    =================================================================== */
 .dash-body {
   background-color: var(--bg);
   background-image: url('/static/icons/logo-fondo-oscuro.png');
   background-repeat: no-repeat;
-  background-position: center 30px;
+  background-position: center center;
   background-size: min(84vh, 540px);
   background-attachment: fixed;
   /* las tarjetas dejan pasar el logo */
@@ -525,13 +525,13 @@ body.acc .firma-acc { display: block; }
     radial-gradient(1100px 520px at 50% -12%, rgba(224,46,46,.5), transparent 60%),
     radial-gradient(ellipse at 50% 115%, rgba(60,8,12,.8), transparent 60%);
   background-repeat: no-repeat;
-  background-position: center 24px, center, center;
+  background-position: center center, center, center;
   background-size: min(70vh, 440px), auto, auto;
   background-attachment: fixed, fixed, fixed;
 }
-/* en celulas el logo va mas chico y mas arriba para no quedar tapado */
+/* en celulas el logo va mas chico, pero siempre en el centro */
 @media (max-width: 620px) {
-  .dash-body { background-position: center 8px; background-size: min(52vh, 300px); }
+  .dash-body { background-size: min(52vh, 300px); }
   .login-body { background-size: min(46vh, 260px), auto, auto; }
 }
 @media (max-width: 380px) {
