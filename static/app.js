@@ -3517,7 +3517,7 @@ async function renderEncuestas(el) {
             return `<div style="margin-top:6px">
               <div class="flex space-between"><span class="small">${esMi ? '✓ ' : ''}${esc(o)}</span><span class="small">${e.conteo[i]} · ${pct}%</span></div>
               <button class="btn ghost small" style="width:100%;margin-top:2px" onclick="votarEncuesta(${e.id},${i})">${esMi ? 'Cambiar voto' : 'Votar'}</button>
-              <div style="height:6px;background:var(--bg);border-radius:4px;margin-top:2px"><div style="height:100%;width:${pct}%;background:var(--red);border-radius:4px"></div></div>
+              <div style="height:6px;background:var(--bg);border-radius:4px;margin-top:2px"><div style="height:100%;width:${pct}%;background:var(--accent);border-radius:4px"></div></div>
             </div>`;
           }).join('')}
         </div>`;
