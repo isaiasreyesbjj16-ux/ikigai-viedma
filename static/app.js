@@ -3630,35 +3630,56 @@ async function borrarEvento(id) {
    ===================================================================== */
 async function renderHistorial(el) {
   const d = await api('/api/historial').catch(() => ({ pagos: [], asistencia: [] }));
-  const pagos = d.pagos || [];
-  const asis = d.asistencia || [];
   const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const todos = (d.pagos || []).slice().sort((a, b) => (a.anio - b.anio) || (a.mes - b.mes));
+  const pagos = todos.slice(-12);
+  const asis = d.asistencia || [];
   const maxPagos = Math.max(1, ...pagos.map(p => p.monto));
   const maxAsis = Math.max(1, ...asis.map(a => a.alumnos));
+  const totalIng = todos.reduce((s, p) => s + (p.monto || 0), 0);
+  const totalPagos = todos.reduce((s, p) => s + (p.n || 0), 0);
+  const promMes = todos.length ? Math.round(totalIng / todos.length) : 0;
   el.innerHTML = `
     ${secHeader('📈 Historial financiero y asistencia')}
     <div class="card">
-      <h3>💵 Ingresos por mes</h3>
-      ${pagos.length ? `<div style="display:flex;align-items:flex-end;gap:8px;height:180px;padding-top:10px">
-        ${pagos.map(p => `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end">
-          <span class="small" style="color:var(--accent2)">$${num(p.monto)}</span>
-          <div style="width:100%;background:var(--red);border-radius:6px 6px 0 0;height:${Math.max(4, Math.round(p.monto * 160 / maxPagos))}px"></div>
-          <span class="small" style="color:var(--muted)">${MESES[p.mes - 1]}</span>
-        </div>`).join('')}
-      </div>` : '<div class="empty">Sin pagos registrados.</div>'}
+      <h3>💰 Resumen</h3>
+      <div class="flex" style="gap:10px;text-align:center">
+        <div style="flex:1"><b style="font-size:19px;color:var(--accent2)">$${num(totalIng)}</b>
+          <div class="small" style="color:var(--muted)">ingresos totales</div></div>
+        <div style="flex:1"><b style="font-size:19px">${num(totalPagos)}</b>
+          <div class="small" style="color:var(--muted)">pagos</div></div>
+        <div style="flex:1"><b style="font-size:19px">$${num(promMes)}</b>
+          <div class="small" style="color:var(--muted)">promedio por mes</div></div>
+      </div>
+      ${todos.length > 12 ? `<p class="small" style="color:var(--muted);margin:10px 0 0;text-align:center">El gráfico muestra los últimos 12 meses (hay ${todos.length} meses cargados).</p>` : ''}
     </div>
     <div class="card">
-      <h3>🥋 Asistencia diaria (este mes)</h3>
+      <h3>📊 Ingresos por mes</h3>
+      ${pagos.length ? `<div style="display:flex;align-items:flex-end;gap:8px;height:190px;padding-top:10px;overflow-x:auto">
+        ${pagos.map(p => `<div style="flex:1;min-width:58px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end">
+          <span class="small" style="color:var(--accent2);white-space:nowrap">$${num(p.monto)}</span>
+          <div style="width:100%;background:var(--accent);border-radius:6px 6px 0 0;height:${Math.max(4, Math.round(p.monto * 150 / maxPagos))}px"></div>
+          <span class="small" style="color:var(--muted);white-space:nowrap">${MESES[p.mes - 1]}${p.anio ? ' ' + String(p.anio).slice(2) : ''}</span>
+          <span class="small" style="color:var(--muted)">${p.n} ${p.n === 1 ? 'pago' : 'pagos'}</span>
+        </div>`).join('')}
+      </div>` : '<div class="empty">Sin pagos registrados. Cuando cargues un pago en Cobros va a aparecer acá.</div>'}
+    </div>
+    <div class="card">
+      <h3>👥 Asistencia diaria (este mes)</h3>
       ${asis.length ? `<div style="display:flex;align-items:flex-end;gap:4px;height:160px;padding-top:10px;overflow-x:auto">
         ${asis.map(a => `<div style="flex:1;min-width:20px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end">
-          <div style="width:100%;background:var(--blue);border-radius:4px 4px 0 0;height:${Math.max(4, Math.round(a.alumnos * 140 / maxAsis))}px"></div>
+          <span class="small" style="color:var(--blue)">${a.alumnos}</span>
+          <div style="width:100%;background:var(--blue);border-radius:4px 4px 0 0;height:${Math.max(4, Math.round(a.alumnos * 130 / maxAsis))}px"></div>
           <span class="small" style="color:var(--muted)">${a.fecha.slice(8)}</span>
         </div>`).join('')}
-      </div>` : '<div class="empty">Sin asistencias este mes.</div>'}
+      </div>
+      <p class="small" style="color:var(--muted);margin:8px 0 0;text-align:center">
+        ${asis.reduce((s, a) => s + a.alumnos, 0)} asistencias en ${asis.length} días con movimientos
+      </p>` : '<div class="empty">Sin asistencias este mes.</div>'}
     </div>
     <div class="card">
       <h3>Exportar</h3>
-      <button class="btn primary" onclick="exportarExcel()">⬇️ Exportar historial a Excel</button>
+      <button class="btn primary" onclick="exportarExcel()">📊 Exportar historial a Excel</button>
     </div>`;
 }
 
