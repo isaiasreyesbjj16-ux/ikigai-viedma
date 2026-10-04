@@ -216,6 +216,34 @@ cum = c.get('/api/cumpleanios').get_json()
 nombres = [x['nombre'] for x in cum['cumpleanios']]
 check('cumpleanios: muestra todos los del mes (formatos variados)',
       alu[0] and 'Alumno Prueba 0' in nombres and 'Alumno Prueba 1' in nombres, json.dumps(nombres))
+cum_alu = cf.get('/api/cumpleanios').get_json()
+check('cumpleanios: el alumno tambien los ve',
+      cf.get('/api/cumpleanios').status_code == 200
+      and {x['nombre'] for x in cum_alu['cumpleanios']} >= {'Alumno Prueba 0', 'Alumno Prueba 1'},
+      json.dumps([x['nombre'] for x in cum_alu.get('cumpleanios', [])]))
+# aviso automatico de cumpleaños: uno de los alumnos cumple hoy
+hoy_academy_d = hoy_academy()
+with A.app.app_context():
+    db = A.get_db()
+    db.execute('UPDATE users SET nacimiento=? WHERE id=?',
+               (hoy_academy_d.strftime('%Y-%m-%d'), alu[0]))
+    db.commit()
+with A.app.app_context():
+    enviados = A.aviso_cumpleanos_automatico()
+check('aviso de cumpleaños: notifica a todos los alumnos', enviados >= 3, 'enviados=%s' % enviados)
+notifs = cf.get('/api/notificaciones').get_json().get('notificaciones', [])
+cum_notif = [n for n in notifs if n.get('tipo') == 'cumple']
+check('aviso de cumpleaños: al alumno le llega la notificacion',
+      len(cum_notif) == 1 and 'Alumno Prueba 0' in cum_notif[0]['mensaje'],
+      json.dumps([(n.get('tipo'), n.get('titulo')) for n in notifs[:4]]))
+with A.app.app_context():
+    again = A.aviso_cumpleanos_automatico()
+check('aviso de cumpleaños: no se repite el mismo dia', again == 0, 'repetidos=%s' % again)
+with A.app.app_context():
+    db = A.get_db()
+    db.execute('UPDATE users SET nacimiento=? WHERE id=?',
+               ('%04d-%02d-10' % (2001, mes_hoy), alu[0]))
+    db.commit()
 
 # ===========================================================================
 print('== MURO CON FOTOS ==')

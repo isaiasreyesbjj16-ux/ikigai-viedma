@@ -955,6 +955,40 @@ def aviso_cuotas_automatico():
         return 0
 
 
+def aviso_cumpleanos_automatico():
+    """Manda aviso a los ALUMNOS con los cumpleaños del dia. Una vez por dia
+    gracias al flag en settings."""
+    try:
+        hoy = _hoy_academy()
+        flag = get_setting('aviso_cumple_%d_%d_%d' % (hoy.year, hoy.month, hoy.day), '0')
+        if flag == '1':
+            return 0
+        cums, _mes = _cumpleanios_del_mes()
+        hoy_cums = [c for c in cums if c.get('hoy')]
+        if not hoy_cums:
+            set_setting('aviso_cumple_%d_%d_%d' % (hoy.year, hoy.month, hoy.day), '1')
+            return 0
+        nombres = ', '.join(c['nombre'] for c in hoy_cums)
+        cuantos = len(hoy_cums)
+        if cuantos == 1:
+            mensaje = 'Hoy cumple %s. ¡Dale un saludo! 🎉' % nombres
+        else:
+            mensaje = 'Hoy cumplen (%d): %s. ¡Daleles un saludo! 🎉' % (cuantos, nombres)
+        alumni = get_db().execute(
+            "SELECT id FROM users WHERE role='alumno' AND activo=1").fetchall()
+        enviados = 0
+        for a in alumni:
+            try:
+                notify(a['id'], '🎂 ¡Feliz cumpleaños!', mensaje, 'cumple', push=True)
+                enviados += 1
+            except Exception:
+                pass
+        set_setting('aviso_cumple_%d_%d_%d' % (hoy.year, hoy.month, hoy.day), '1')
+        return enviados
+    except Exception:
+        return 0
+
+
 def aviso_eventos_hoy():
     """Manda push recordando eventos que son mañana (a los que confirmaron asistencia).
     Se llama en cada request; evita repetir con la columna recordado."""
@@ -1258,6 +1292,7 @@ def _correr_avisos_periodicos():
     try:
         with app.app_context():
             aviso_cuotas_automatico()
+            aviso_cumpleanos_automatico()
             aviso_eventos_hoy()
             aviso_renovacion()
             # Si algun aviso fallo a mitad, su transaccion quedo abortada
@@ -3543,10 +3578,10 @@ def api_reporte():
                     'alumnos_que_no_asistieron': [{'nombre': a['nombre'], 'cinturon': a['cinturon']} for a in no_asistieron]})
 
 
-@app.route('/api/cumpleanios')
-@login_required
-def api_cumpleanios():
-    hoy = _hoy_academy()
+def _cumpleanios_del_mes(hoy=None):
+    """Cumpleaños del mes de toda la academia (alumnos y profesores).
+    Función suelta para que la usen tanto la API como los avisos automáticos."""
+    hoy = hoy or _hoy_academy()
     rows = get_db().execute(
         "SELECT id, nombre, nacimiento FROM users "
         "WHERE role IN ('alumno','profesor') AND activo=1 AND nacimiento IS NOT NULL AND nacimiento != ''"
@@ -3573,7 +3608,14 @@ def api_cumpleanios():
         except Exception:
             pass
     res.sort(key=lambda x: (0 if x['hoy'] else 1, x['dia'], x['nombre']))
-    return jsonify({'cumpleanios': res, 'mes': hoy.month})
+    return res, hoy.month
+
+
+@app.route('/api/cumpleanios')
+@login_required
+def api_cumpleanios():
+    res, mes = _cumpleanios_del_mes()
+    return jsonify({'cumpleanios': res, 'mes': mes})
 
 
 @app.route('/api/perfil', methods=['PUT'])

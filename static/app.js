@@ -1214,11 +1214,24 @@ async function verVideo(vid) {
 /* =====================================================================
    INICIO
    ===================================================================== */
+const MESES_LARGO = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+function cardCumpleanios(cums) {
+  const lista = (cums && cums.cumpleanios) || [];
+  if (!lista.length) return '';
+  return `<div class="feed-card">
+    <div class="small mb">🎂 Cumpleaños de ${MESES_LARGO[cums.mes - 1]} <span class="small" style="color:var(--muted)">(${lista.length})</span></div>
+    ${lista.map(x => `<div class="flex space-between" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <span>${avatarHTML('', x.nombre, 'sm')} ${esc(x.nombre)}</span>
+      <b>${x.hoy ? '🎉 Hoy! · ' : ''}${x.dia}/${cums.mes}${x.edad ? ' · ' + x.edad + ' años' : ''}</b>
+    </div>`).join('')}
+  </div>`;
+}
 async function renderInicio(el) {
   const R = USER.role;
   if (R === 'alumno') {
-    const [me, asis, horarios, vids] = await Promise.all([
-      api('/api/me'), api('/api/mi_asistencia'), api('/api/horarios'), api('/api/videos')]);
+    const [me, asis, horarios, vids, cums] = await Promise.all([
+      api('/api/me'), api('/api/mi_asistencia'), api('/api/horarios'), api('/api/videos'),
+      api('/api/cumpleanios').catch(() => ({ cumpleanios: [], mes: 0 }))]);
     const c = me.cuota || {};
     const estado = c.estado;
     const tagMap = { al_dia: ['tag-al-dia', 'Al día'], deuda: ['tag-deuda', 'Debe la cuota'], por_vencer: ['tag-por-vencer', 'Por vencer'] };
@@ -1262,6 +1275,8 @@ async function renderInicio(el) {
               <div style="margin-top:6px">${(asis.hoy || []).includes(h.id) ? '<span class="tag tag-al-dia">✓ Asistencia marcada</span>' : `<button class="btn primary small" onclick="abrirScannerQR()">📷 Marcar con QR</button>`}</div>
             </div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas. Mirá la sección Horarios.</div>'}
         </div>
+
+        ${cardCumpleanios(cums)}
 
         ${videos.length ? `<div class="post-card" style="padding:0;overflow:hidden">
           <div class="post-head" style="padding:10px 14px 0"><b style="color:var(--accent2)">🎥 Técnicas para vos (${esc(me.cinturon)})</b></div>
@@ -1332,10 +1347,7 @@ async function renderInicio(el) {
           <div class="small mb">📅 Clases de hoy</div>
           ${hoyClases.length ? hoyClases.map(h => `<div class="clase-item ${h.tipo.toLowerCase()}"><span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span> · ${esc(h.nivel)} · <span class="profe">${esc(h.profesor_nombre || 'Sin profesor')}</span>${R === 'profesor' ? `<div style="margin-top:6px">${(asis.hoy || []).includes(h.id) ? '<span class="tag tag-al-dia">✓ Asistencia marcada</span>' : `<button class="btn primary small" onclick="abrirScannerQR()">📷 Marcar con QR</button>`}</div>` : ''}</div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas.</div>'}
         </div>
-        ${cums.cumpleanios.length ? `<div class="feed-card">
-          <div class="small mb">🎂 Cumpleaños de ${['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][cums.mes - 1]} <span class="small" style="color:var(--muted)">(${cums.cumpleanios.length})</span></div>
-          ${cums.cumpleanios.map(x => `<div class="flex space-between" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${avatarHTML('', x.nombre, 'sm')} ${esc(x.nombre)}</span><b>${x.hoy ? '🎉 Hoy! · ' : ''}${x.dia}/${cums.mes}${x.edad ? ' · ' + x.edad + ' años' : ''}</b></div>`).join('')}
-        </div>` : ''}
+        ${cardCumpleanios(cums)}
         ${videos.length ? `<div class="post-card" style="padding:0;overflow:hidden">
           <div class="post-head" style="padding:10px 14px 0"><b style="color:var(--accent2)">🎥 Últimos videos subidos</b> <button class="btn primary small" onclick="showSec('videos')">Subir video</button></div>
           <div class="feed" style="margin:0;padding:10px 14px 14px">${videos.map(v => videoCardHTML(v, true)).join('')}</div>
