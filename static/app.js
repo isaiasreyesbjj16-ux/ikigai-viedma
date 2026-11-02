@@ -468,7 +468,7 @@ function initDashboard() {
   const secParam = new URLSearchParams(location.search).get('sec');
   const seccionesValidas = ['inicio', 'perfil', 'horarios', 'pagos', 'mispagos', 'alumnos',
     'asistencia', 'deudores', 'profesores', 'config', 'mi_asistencia', 'videos', 'chat',
-    'muro', 'galeria', 'ranking', 'metas', 'encuestas', 'eventos', 'historial', 'familias', 'diario',
+    'galeria', 'ranking', 'metas', 'encuestas', 'eventos', 'historial', 'familias', 'diario',
     'planes', 'estadisticas', 'torneos'];
   if (secParam && seccionesValidas.includes(secParam)) showSec(secParam);
   history.replaceState(null, '', location.pathname);
@@ -514,7 +514,7 @@ function showSec(name) {
     asistencia: renderAsistencia, deudores: renderDeudores,
     profesores: renderProfesores, config: renderConfig,
     mi_asistencia: renderMiAsistencia, videos: renderVideos,
-    chat: renderChat, muro: renderMuro, galeria: renderGaleria,
+    chat: renderChat, galeria: renderGaleria,
     ranking: renderRanking, metas: renderMetas, encuestas: renderEncuestas,
     eventos: renderEventos, historial: renderHistorial,
     familias: renderFamilias, diario: renderDiario,
@@ -1226,12 +1226,47 @@ function cardCumpleanios(cums) {
     </div>`).join('')}
   </div>`;
 }
+function muroPostHTML(p) {
+  return `<div class="post-card">
+    <div class="post-head">
+      ${avatarHTML(p.foto, p.nombre, 'sm')} <b>${esc(p.nombre)}</b> ${p.cinturon ? beltHTML(p.cinturon) : ''}
+      <span class="small" style="color:var(--muted)">· ${esc(p.fecha)}</span>
+      ${p.user_id === USER.id ? `<button class="btn ghost small" style="margin-left:auto" onclick="borrarMuro(${p.id})">🗑</button>` : ''}
+    </div>
+    ${p.texto ? `<p style="margin:8px 0">${esc(p.texto)}</p>` : ''}
+    ${p.video ? muroVideoHTML(p.video) : ''}
+    ${(p.fotos || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${p.fotos.slice(0,4).map(f => `<img loading="lazy" decoding="async" src="${esc(f)}" style="max-width:150px;max-height:150px;border-radius:8px;object-fit:cover;cursor:pointer" onclick="verFoto(this.src)">`).join('')}</div>` : ''}
+  </div>`;
+}
+
+function muroFeedHTML(posts) {
+  return `<div id="muroFeed">
+    ${(posts || []).length ? posts.map(muroPostHTML).join('') : '<div class="empty">Todavía no hay publicaciones. ¡Subí la primera foto! 📸</div>'}
+  </div>`;
+}
+
+function muroComposerHTML() {
+  return `<div class="feed-card" id="muroComposer">
+    <div class="small mb">📢 Muro de la academia</div>
+    <textarea id="muroTexto" placeholder="¿Qué está pasando? Contá algo del entrenamiento..." style="width:100%;min-height:60px"></textarea>
+    <label class="small" style="display:block;color:var(--muted);margin:8px 0 2px">📷 Fotos (hasta 5)</label>
+    <input type="file" id="muroFoto" accept="image/*" multiple style="margin-bottom:6px">
+    <details style="margin-bottom:6px">
+      <summary class="small" style="color:var(--muted);cursor:pointer">🎥 Subir una lucha (opcional)</summary>
+      <input type="text" id="muroLink" placeholder="Link de YouTube de la lucha" style="width:100%;margin:6px 0">
+      <input type="file" id="muroVideo" accept="video/mp4,video/webm,video/ogg,video/quicktime" style="width:100%">
+    </details>
+    <button class="btn primary btn-block mt" onclick="publicarMuro()">Publicar</button>
+  </div>`;
+}
+
 async function renderInicio(el) {
   const R = USER.role;
   if (R === 'alumno') {
-    const [me, asis, horarios, vids, cums] = await Promise.all([
+    const [me, asis, horarios, vids, cums, muro] = await Promise.all([
       api('/api/me'), api('/api/mi_asistencia'), api('/api/horarios'), api('/api/videos'),
-      api('/api/cumpleanios').catch(() => ({ cumpleanios: [], mes: 0 }))]);
+      api('/api/cumpleanios').catch(() => ({ cumpleanios: [], mes: 0 })),
+      api('/api/muro').catch(() => ({ muro: [] }))]);
     const c = me.cuota || {};
     const estado = c.estado;
     const tagMap = { al_dia: ['tag-al-dia', 'Al día'], deuda: ['tag-deuda', 'Debe la cuota'], por_vencer: ['tag-por-vencer', 'Por vencer'] };
@@ -1264,7 +1299,7 @@ async function renderInicio(el) {
             </div>
             <button class="btn ghost small" onclick="showSec('mispagos')">Ver mi cuenta</button>
           </div>
-          ${estado !== 'al_dia' ? `<p class="small" style="color:#ff9b8f;margin-bottom:0">⚠️ Aboná tu cuota y <b>mandá el comprobante de pago</b>${me.pago_alias ? ' (por transferencia al alias/CVU de la academia)' : ''}. El pago se confirma solo cuando el profe/admin lo revisa.</p><button class="btn primary btn-block mt" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>${me.pago_link ? `<a class="btn primary btn-block mt" href="${esc(me.pago_link)}" target="_blank" rel="noopener noreferrer" onclick="marcarLinkPago(this)">🔗 Pagar online</a>` : ''}` : ''}
+          ${estado !== 'al_dia' ? `<p class="small" style="color:#ff9b8f;margin-bottom:0">⚠️ Aboná tu cuota y <b>mandá el comprobante de pago</b>${me.pago_alias ? ' (por transferencia al alias/CVU de la academia)' : ''}. El pago se confirma solo cuando el profe/admin lo revisa.</p><button class="btn primary btn-block mt" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
         </div>
 
         <div class="feed-card">
@@ -1290,7 +1325,6 @@ async function renderInicio(el) {
           <button class="chip" onclick="showSec('mi_asistencia')">✅ Mi asistencia</button>
           <button class="chip" onclick="showSec('planes')">📋 Planes</button>
           <button class="chip" onclick="showSec('metas')">🎯 Mis metas</button>
-          <button class="chip" onclick="showSec('muro')">📢 Muro</button>
           <button class="chip" onclick="showSec('chat')">💬 Chat</button>
 <button class="chip" onclick="showSec('eventos')">🗓️ Eventos</button>
           <button class="chip" onclick="showSec('torneos')">🏆 Torneos</button>
@@ -1298,14 +1332,17 @@ async function renderInicio(el) {
           <button class="chip" onclick="showSec('diario')">📓 Diario</button>
           <button class="chip" onclick="abrirScannerQR()">📷 Escanear QR</button>
         </div>
+        ${muroComposerHTML()}
+        ${muroFeedHTML(muro.muro)}
       </div>`;
   } else {
     const promesas = [
       api('/api/estadisticas'), api('/api/horarios'), api('/api/videos'), api('/api/cumpleanios'),
+      api('/api/muro').catch(() => ({ muro: [] })),
       ...(R === 'profesor' ? [api('/api/mi_asistencia')] : [])];
     const r = await Promise.all(promesas);
-    const stats = r[0], horarios = r[1], vids = r[2], cums = r[3];
-    const asis = R === 'profesor' ? r[4] : null;
+    const stats = r[0], horarios = r[1], vids = r[2], cums = r[3], muro = r[4];
+    const asis = R === 'profesor' ? r[5] : null;
     const hoyIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
     const hoyClases = horarios.horarios.filter(h => h.dia === hoyIdx);
     const videos = vids.videos.slice(0, 3);
@@ -1321,7 +1358,6 @@ async function renderInicio(el) {
     if (R === 'admin') chips.push(`<button class="chip" onclick="showSec('profesores')">🧑‍🏫 Profesores</button>`, `<button class="chip" onclick="showSec('config')">⚙️ Configuración</button>`);
     chips.push(`<button class="chip" onclick="showSec('familias')">👨‍👩‍👧 Familias</button>`);
     chips.push(`<button class="chip" onclick="showSec('diario')">📓 Diario</button>`);
-    chips.push(`<button class="chip" onclick="showSec('muro')">📢 Muro</button>`);
     chips.push(`<button class="chip" onclick="showSec('chat')">💬 Chat</button>`);
     chips.push(`<button class="chip" onclick="showSec('ranking')">🏆 Ranking</button>`);
     chips.push(`<button class="chip" onclick="showSec('eventos')">🗓️ Eventos</button>`);
@@ -1343,6 +1379,8 @@ async function renderInicio(el) {
           <div class="stat-card"><div class="num" style="color:var(--good)">$${num(stats.mi_ingreso_total)}</div><div class="lbl">Tu dinero total</div></div>` : ''}
         </div>
         <div class="chips">${chips.join('')}</div>
+        ${muroComposerHTML()}
+        ${muroFeedHTML(muro.muro)}
         <div class="feed-card">
           <div class="small mb">📅 Clases de hoy</div>
           ${hoyClases.length ? hoyClases.map(h => `<div class="clase-item ${h.tipo.toLowerCase()}"><span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span> · ${esc(h.nivel)} · <span class="profe">${esc(h.profesor_nombre || 'Sin profesor')}</span>${R === 'profesor' ? `<div style="margin-top:6px">${(asis.hoy || []).includes(h.id) ? '<span class="tag tag-al-dia">✓ Asistencia marcada</span>' : `<button class="btn primary small" onclick="abrirScannerQR()">📷 Marcar con QR</button>`}</div>` : ''}</div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas.</div>'}
@@ -1985,7 +2023,6 @@ async function avisarPagoFamilia() {
         <span><b>Total a pagar</b></span><b>$${num(total)}</b>
       </div>
     </div>
-    ${me.pago_link ? `<a class="btn primary btn-block" href="${esc(me.pago_link)}" target="_blank" rel="noopener" onclick="marcarLinkPago(this)">💳 Pagar $${num(total)} online</a>` : ''}
     ${me.pago_alias ? `<div class="alias-box mt" id="aliasBoxFam">${esc(me.pago_alias)}</div>` : ''}
     <div class="field mt"><label>Comprobante del pago (JPG, PNG o PDF)</label>
       <input type="file" id="avfComprobante" accept="image/*,application/pdf">
@@ -2231,7 +2268,6 @@ async function renderMisPagos(el) {
       ${exento ? '' : `<p class="small mt">💰 Aboná ${c.cuota ? '$' + num(c.cuota) : 'tu cuota'}${me.pago_alias ? ' por transferencia al alias/CVU de la academia' : ''} y <b>sí o sí mandá el comprobante de pago</b>: sin comprobante, el pago no se confirma.</p>`}
       ${aviso && !exento ? `<p class="small mt" style="color:var(--warn)">⏳ Comprobante de ${aviso.mes}/${aviso.anio} enviado. Esperá la confirmación.</p>` : ''}
       ${!exento && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" onclick="avisarPago()">🧾 Mandar comprobante de pago</button>` : ''}
-      ${!exento && me.mp_habilitado && estado !== 'al_dia' && !aviso ? `<button class="btn primary btn-block" style="background:linear-gradient(90deg,#00c3ff,#0aa2e0);border:none" onclick="pagarMercadoPago()">💳 Pagar con MercadoPago</button>` : ''}
     </div>
     ${fam.familia && fam.familia.titular_id === USER.id && (fam.familia.miembros || []).some(m => (m.cuota_final || 0) > 0) ? `
     <div class="card">
@@ -2263,13 +2299,6 @@ async function renderMisPagos(el) {
       <div class="alias-box" id="aliasBox">${esc(me.pago_alias)}</div>
       <button class="btn ghost btn-block" onclick="copiarAlias()">📋 Copiar alias / CVU</button>
     </div>` : ''}
-    ${me.pago_link ? `
-    <div class="card">
-      <h3>🔗 Pagar online</h3>
-      <p class="small">Te llevamos al link de pago de la academia. Después <b>mandá el comprobante</b> (foto o captura) para que el profe/admin confirme tu cuota.</p>
-      <a class="btn primary btn-block" href="${esc(me.pago_link)}" target="_blank" rel="noopener noreferrer" onclick="marcarLinkPago(this)">💳 Pagar con MercadoPago</a>
-      <div class="small" style="color:var(--muted);margin-top:8px;word-break:break-all">${esc(me.pago_link)}</div>
-    </div>` : ''}
     <div class="card"><h3>Mis pagos</h3>
       <div style="overflow:auto"><table>
         <tr><th>Fecha</th><th>Profesor que recibió</th><th>Mes</th><th>Método</th><th>Monto</th><th>Recibo</th></tr>
@@ -2280,23 +2309,6 @@ async function renderMisPagos(el) {
           : '<tr><td colspan="6" class="empty">Aún no registraste pagos</td></tr>'}
       </table></div>
     </div>`;
-}
-async function pagarMercadoPago() {
-  const btn = event && event.currentTarget;
-  if (btn) { btn.disabled = true; btn.textContent = 'Abriendo MercadoPago…'; }
-  try {
-    const r = await api('/api/checkout', { method: 'POST' });
-    if (r.init_point) {
-      const w = window.open(r.init_point, '_blank', 'noopener');
-      if (!w) location.href = r.init_point;
-      else toast('Abrimos MercadoPago en una pestaña nueva 🛒');
-    } else toast(r.error || 'No se pudo generar el pago');
-  } catch (e) { toast(e.message); }
-  finally { if (btn) { btn.disabled = false; btn.innerHTML = '💳 Pagar con MercadoPago'; } }
-}
-function marcarLinkPago(a) {
-  try { a.dataset.clic = '1'; a.style.opacity = '.75'; } catch (e) {}
-  toast('Abriendo el link de pago 🛒 Después mandá el comprobante.');
 }
 async function avisarPago() {
   openModal(`
@@ -3032,10 +3044,8 @@ async function renderConfig(el) {
         <div class="field"><label>Descuento familiar: 2 integrantes (%)</label><input type="number" id="cDescFam2" value="${esc(s.desc_familiar2 ?? s.desc_familiar ?? '10')}" placeholder="10"></div>
         <div class="field"><label>Descuento familiar: 3 integrantes (%)</label><input type="number" id="cDescFam3" value="${esc(s.desc_familiar3 ?? '15')}" placeholder="15"></div>
         <div class="field"><label>Descuento familiar: 4 o más integrantes (%)</label><input type="number" id="cDescFam4" value="${esc(s.desc_familiar4 ?? '20')}" placeholder="20"><small class="hint">Con 2 o más integrantes, TODOS pagan con descuento. Cada cantidad de integrantes puede tener un % distinto y autónomamente puede quedar en 0 para no descontar.</small></div>
-        <div class="field" style="grid-column:1/-1"><label>Link de pago en línea (ej: link de MercadoPago)</label><input id="cLink" value="${esc(s.pago_link || '')}" placeholder="https://link.mercadopago.com.ar/... (dejalo vacío para ocultar el botón de pago)"></div>
         <div class="field" style="grid-column:1/-1"><label>Alias o CVU para transferencia</label><input id="cAlias" value="${esc(s.pago_alias || '')}" placeholder="ej: academia.bjj.viedma (dejalo vacío para ocultarlo)"></div>
         <div class="field" style="grid-column:1/-1"><label>Desplazamiento desde UTC (zona horaria de la academia)</label><input type="number" step="0.5" id="cTz" value="${esc(s.tz_offset ?? '-3')}" placeholder="-3"><small class="hint">Argentina: -3. Sirve para que el "hoy" no se cambie a la madrugada del día siguiente por la diferencia con UTC.</small></div>
-        <div class="field" style="grid-column:1/-1"><label>Access Token de MercadoPago (APP_USR-...) para el botón de pago en línea</label><input id="cMpTk" value="${esc(s.mp_access_token || '')}" placeholder="APP_USR-... (dejalo vacío para ocultar el botón de pago online)"></div>
         <div class="field"><label>Número WhatsApp de la academia (con código país)</label><input id="cWp" value="${esc(s.wp_numero || '')}" placeholder="549299..."></div>
         <div class="field"><label>Logro de asistencias (cada cuántas avisar)</label><input type="number" id="cLogroAsist" value="${esc(s.logro_asist ?? '50')}"></div>
         <div class="field"><label>Logro de videos vistos (cada cuántos avisar)</label><input type="number" id="cLogroVids" value="${esc(s.logro_videos ?? '25')}"></div>
@@ -3075,8 +3085,8 @@ async function renderConfig(el) {
       await api('/api/settings', { method: 'PUT', body: {
         academy_name: $('#cNombre').value, academy_color: $('#cColor').value,
         academy_code: $('#cCodigo').value, default_cuota: $('#cCuota').value,
-        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, desc_familiar2: $('#cDescFam2').value, desc_familiar3: $('#cDescFam3').value, desc_familiar4: $('#cDescFam4').value, pago_link: $('#cLink').value, pago_alias: $('#cAlias').value, tz_offset: $('#cTz').value,
-        mp_access_token: $('#cMpTk').value, wp_numero: $('#cWp').value, logro_asist: $('#cLogroAsist').value, logro_videos: $('#cLogroVids').value, asis_min_examen: $('#cMinExamen').value } });
+        due_day: $('#cDue').value, cargo_demora_pct: $('#cDemora').value, desc_familiar2: $('#cDescFam2').value, desc_familiar3: $('#cDescFam3').value, desc_familiar4: $('#cDescFam4').value, pago_alias: $('#cAlias').value, tz_offset: $('#cTz').value,
+        wp_numero: $('#cWp').value, logro_asist: $('#cLogroAsist').value, logro_videos: $('#cLogroVids').value, asis_min_examen: $('#cMinExamen').value } });
       toast('Configuración guardada ✓');
       if (location.reload) { /* color aplicado al recargar */ }
       window.ACADEMY_NAME = $('#cNombre').value;
@@ -3317,28 +3327,8 @@ async function renderMuro(el) {
   const d = await api('/api/muro').catch(() => ({ muro: [] }));
   el.innerHTML = `
     ${secHeader('📢 Muro de la academia')}
-    <div class="card">
-      <textarea id="muroTexto" placeholder="¿Qué está pasando? Si subís una lucha, contá de quién es: nombres, categoría, premios..." style="width:100%;min-height:70px"></textarea>
-      <div class="small" style="color:var(--muted);margin:6px 0">🎥 ¿Subís una lucha? Pegá el link de YouTube o elegí un archivo, y escribí de quién es la lucha arriba.</div>
-      <input type="text" id="muroLink" placeholder="Link de YouTube de la lucha (ej: https://youtube.com/watch?v=...)" style="width:100%;margin-bottom:6px">
-      <input type="file" id="muroVideo" accept="video/mp4,video/webm,video/ogg,video/quicktime" style="margin-bottom:6px">
-      <label class="small" style="display:block;color:var(--muted);margin:6px 0 2px">📷 Subir fotos (hasta 5)</label>
-      <input type="file" id="muroFoto" accept="image/*" style="margin-bottom:6px">
-      <button class="btn primary btn-block mt" onclick="publicarMuro()">Publicar</button>
-    </div>
-    <div id="muroFeed">
-      ${d.muro.length ? d.muro.map(p => `
-        <div class="post-card">
-          <div class="post-head">
-            ${avatarHTML(p.foto, p.nombre, 'sm')} <b>${esc(p.nombre)}</b> ${p.cinturon ? beltHTML(p.cinturon) : ''}
-            <span class="small" style="color:var(--muted)">· ${esc(p.fecha)}</span>
-            ${p.user_id === USER.id ? `<button class="btn ghost small" style="margin-left:auto" onclick="borrarMuro(${p.id})">🗑</button>` : ''}
-          </div>
-          ${p.texto ? `<p style="margin:8px 0">${esc(p.texto)}</p>` : ''}
-          ${p.video ? muroVideoHTML(p.video) : ''}
-          ${(p.fotos || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${p.fotos.slice(0,4).map(f => `<img loading="lazy" decoding="async" src="${esc(f)}" style="max-width:150px;max-height:150px;border-radius:8px;object-fit:cover;cursor:pointer" onclick="verFoto(this.src)">`).join('')}</div>` : ''}
-        </div>`).join('') : '<div class="empty">Todavía no hay publicaciones.</div>'}
-    </div>`;
+    ${muroComposerHTML()}
+    ${muroFeedHTML(d.muro)}`;
 }
 
 function muroVideoHTML(v) {
@@ -3351,14 +3341,20 @@ function muroVideoHTML(v) {
 }
 
 async function publicarMuro() {
-  const texto = $('#muroTexto').value.trim();
-  const file = $('#muroFoto').files && $('#muroFoto').files[0];
-  let foto = null;
-  if (file) {
-    try { foto = file.size > 400 * 1024 ? await comprimirImagen(file, 900) : await leerArchivoBase64(file); } catch (e) {}
+  const elTexto = $('#muroTexto');
+  const elFotos = $('#muroFoto');
+  const elLink = $('#muroLink');
+  const elVideo = $('#muroVideo');
+  const texto = elTexto ? elTexto.value.trim() : '';
+  const files = elFotos && elFotos.files ? Array.from(elFotos.files).slice(0, 5) : [];
+  const fotos = [];
+  for (let i = 0; i < files.length; i++) {
+    try {
+      fotos.push(files[i].size > 400 * 1024 ? await comprimirImagen(files[i], 900) : await leerArchivoBase64(files[i]));
+    } catch (e) {}
   }
-  const link = $('#muroLink').value.trim();
-  const vfile = $('#muroVideo').files && $('#muroVideo').files[0];
+  const link = elLink ? elLink.value.trim() : '';
+  const vfile = elVideo && elVideo.files ? elVideo.files[0] : null;
   let video = null;
   if (link && vfile) { toast('Elegí una sola lucha: link de YouTube O archivo'); return; }
   if (link) video = { link };
@@ -3369,12 +3365,21 @@ async function publicarMuro() {
       video = { archivo: dataUrl };
     } catch (e) { toast('No se pudo leer el video'); return; }
   }
-  if (!texto && !foto && !video) { toast('Escribí algo, subí una foto o un video'); return; }
+  if (!texto && !fotos.length && !video) { toast('Escribí algo, subí una foto o un video'); return; }
   try {
-    await api('/api/muro', { method: 'POST', body: { texto, fotos: foto ? [foto] : [], video } });
+    await api('/api/muro', { method: 'POST', body: { texto, fotos, video } });
     toast('Publicado ✓');
-    renderMuro($('#sec-muro'));
+    if (elTexto) elTexto.value = '';
+    if (elFotos) elFotos.value = '';
+    if (elLink) elLink.value = '';
+    if (elVideo) elVideo.value = '';
+    await refrescarMuro();
   } catch (e) { toast(e.message); }
+}
+async function refrescarMuro() {
+  const d = await api('/api/muro').catch(() => ({ muro: [] }));
+  const feed = $('#muroFeed');
+  if (feed) feed.outerHTML = muroFeedHTML(d.muro);
 }
 function leerArchivoBase64(file) {
   return new Promise((res, rej) => {
@@ -3411,7 +3416,7 @@ function verFoto(src) {
 }
 async function borrarMuro(id) {
   if (!confirm('¿Eliminar esta publicación?')) return;
-  try { await api('/api/muro/' + id, { method: 'DELETE' }); renderMuro($('#sec-muro')); }
+  try { await api('/api/muro/' + id, { method: 'DELETE' }); await refrescarMuro(); }
   catch (e) { toast(e.message); }
 }
 
@@ -3426,7 +3431,7 @@ async function renderGaleria(el) {
     ${secHeader('🖼️ Galería de fotos')}
     <div class="card">${fotos.length
       ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">${fotos.map(x => `<div style="position:relative"><img loading="lazy" decoding="async" src="${esc(x.f)}" style="width:100%;height:120px;object-fit:cover;border-radius:10px;cursor:pointer" onclick="verFoto(this.src)"><span class="small" style="position:absolute;bottom:4px;left:6px;color:#fff;text-shadow:0 1px 2px #000">${esc(x.n)}</span></div>`).join('')}</div>`
-      : '<div class="empty">Aún no hay fotos. Publicá una en el Muro 🖼️</div>'}</div>`;
+      : '<div class="empty">Aún no hay fotos. Publicá una desde Inicio 📸</div>'}</div>`;
 }
 
 /* =====================================================================

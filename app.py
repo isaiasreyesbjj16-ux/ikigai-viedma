@@ -160,9 +160,6 @@ METODOS_PAGO = ['Efectivo', 'Transferencia', 'Débito', 'Crédito', 'Otro']
 DIAS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
 MESES_NOMBRE = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-# Link de pago online de la academia. Se puede overridear en Ajustes > pago_link.
-PAGO_LINK_DEFAULT = 'https://link.mercadopago.com.ar/bjjviedma'
-
 VAPID_PRIVATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vapid_private.pem')
 VAPID_PUBLIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vapid_public.pem')
 
@@ -683,7 +680,6 @@ def _init_db_body(db):
         'mp_access_token': '',
         'wp_numero': '',
         'public_url': '',
-        'pago_link': PAGO_LINK_DEFAULT,
         'pago_alias': '',
     }
     for k, v in defaults.items():
@@ -1969,7 +1965,6 @@ def api_me():
     d = user_public(u)
     if u['role'] == 'alumno':
         d['cuota'] = cuota_status(u)
-    d['pago_link'] = url_http_valida(get_setting('pago_link', '')) or PAGO_LINK_DEFAULT
     d['pago_alias'] = get_setting('pago_alias', '')
     d['mp_habilitado'] = bool((get_setting('mp_access_token', '') or '').strip())
     d['wp_numero'] = get_setting('wp_numero', '')
@@ -5260,14 +5255,14 @@ def api_torneo_post_borrar(pid):
 def api_settings_get():
     u = current_user()
     if u['role'] == 'admin':
-        keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_link', 'pago_alias',
+        keys = ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'pago_alias',
                 'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
                 'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar',
                 'desc_familiar2', 'desc_familiar3', 'desc_familiar4', 'tz_offset', 'public_url', 'academy_color']
         return jsonify({k: get_setting(k) for k in keys})
     # Alumno/profesor: solo lo publicable. academy_code permite registrarse como
     # profesor y mp_access_token es una credencial de MercadoPago: no se exponen.
-    pub = ['academy_name', 'pago_link', 'pago_alias', 'logro_asist', 'logro_videos',
+    pub = ['academy_name', 'pago_alias', 'logro_asist', 'logro_videos',
            'desc_familiar', 'desc_familiar2', 'desc_familiar3', 'desc_familiar4']
     return jsonify({k: get_setting(k) for k in pub})
 
@@ -5297,14 +5292,7 @@ def api_settings_put():
             return jsonify({'error': 'Valor inválido para %s (debe ir de %s a %s)' % (k, lo, hi)}), 400
         data[k] = int(n) if k in ('due_day', 'auto_inact_dias', 'auto_deuda_dias',
                                   'logro_asist', 'logro_videos', 'asis_min_examen', 'tz_offset') else n
-    if 'pago_link' in data and data['pago_link'] not in (None, ''):
-        link = url_http_valida(data['pago_link'])
-        if not link:
-            return jsonify({'error': 'El link de pago debe ser una URL http/https válida'}), 400
-        data['pago_link'] = link
-    if 'pago_link' in data:
-        data['pago_link'] = url_http_valida(data['pago_link'])
-    for k in ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'academy_color', 'pago_link', 'pago_alias',
+    for k in ['academy_name', 'default_cuota', 'due_day', 'cargo_demora_pct', 'academy_code', 'academy_color', 'pago_alias',
               'auto_mensaje', 'auto_inact_dias', 'auto_deuda_dias', 'auto_mensaje_activo', 'logro_asist', 'logro_videos',
               'asis_min_examen', 'mp_access_token', 'wp_numero', 'desc_familiar', 'public_url',
               'desc_familiar2', 'desc_familiar3', 'desc_familiar4', 'tz_offset']:
