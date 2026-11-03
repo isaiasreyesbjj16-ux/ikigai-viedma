@@ -303,6 +303,39 @@ check('el torneo en Eventos trae su link y la cantidad de competidores',
       bool(ev_t) and ev_t[0].get('link') == 'https://ejemplo.com/inscripcion'
       and ev_t[0].get('participantes') == 1,
       json.dumps(ev_t[0])[:200] if ev_t else 'sin torneo')
+# fotos del torneo (flyer, fotos del viaje, podio)
+r = c.post('/api/torneos/%d/fotos' % tid2, json={'fotos': [COMP]})
+check('el staff sube una foto al torneo',
+      r.status_code == 200 and r.get_json().get('agregadas') == 1,
+      'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:120]))
+fotos_t2 = [t for t in c.get('/api/torneos').get_json()['torneos'] if t['id'] == tid2][0]['fotos']
+check('la foto del torneo vuelve con id y datos',
+      bool(fotos_t2) and fotos_t2[0].get('id') and fotos_t2[0].get('data') == COMP,
+      json.dumps(fotos_t2)[:160])
+ev_f = [e for e in c.get('/api/eventos').get_json()['eventos']
+        if e.get('es_torneo') and e.get('torneo_id') == tid2]
+check('las fotos del torneo tambien salen en Eventos',
+      bool(ev_f) and len(ev_f[0].get('fotos') or []) == 1 and ev_f[0]['fotos'][0] == COMP,
+      json.dumps(ev_f[0])[:200] if ev_f else 'sin torneo')
+r = c.post('/api/torneos/%d/fotos' % tid2, json={'fotos': [COMP] * 5})
+check('el torneo acepta hasta 5 fotos en total',
+      r.status_code == 200 and r.get_json().get('agregadas') == 4,
+      'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:120]))
+total_t2 = [t for t in c.get('/api/torneos').get_json()['torneos'] if t['id'] == tid2][0]['fotos']
+check('el torneo queda con 5 fotos y no mas', len(total_t2) == 5, 'n=%s' % len(total_t2))
+r = c.post('/api/torneos/%d/fotos' % tid2, json={'fotos': [COMP]})
+check('una sexta foto se rechaza -> 400', r.status_code == 400, 'r=%s' % r.status_code)
+r = c.post('/api/torneos/%d/fotos' % tid1, json={'fotos': ['data:text/html,<script>x</script>']})
+check('una foto que no es imagen se rechaza -> 400', r.status_code == 400, 'r=%s' % r.status_code)
+r = cf.post('/api/torneos/%d/fotos' % tid1, json={'fotos': [COMP]})
+check('cualquier alumno puede sumar fotos al torneo', r.status_code == 200, 'r=%s' % r.status_code)
+foto_t1 = [t for t in c.get('/api/torneos').get_json()['torneos'] if t['id'] == tid1][0]['fotos'][0]
+r = cf.delete('/api/torneos/%d/fotos/%d' % (tid1, foto_t1['id']))
+check('el alumno NO puede borrar fotos del torneo -> 403', r.status_code == 403, 'r=%s' % r.status_code)
+r = c.delete('/api/torneos/%d/fotos/%d' % (tid1, foto_t1['id']))
+check('el staff borra la foto del torneo', r.status_code == 200, 'r=%s' % r.status_code)
+check('la foto borrada ya no esta',
+      [t for t in c.get('/api/torneos').get_json()['torneos'] if t['id'] == tid1][0]['fotos'] == [])
 r = c.post('/api/eventos', json={'titulo': 'Seminario de la academia', 'fecha_evento': f_pasado})
 check('se crea un evento real de la academia', r.status_code == 200, 'r=%s' % r.status_code)
 evs2 = c.get('/api/eventos').get_json()['eventos']

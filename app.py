@@ -544,6 +544,12 @@ CREATE TABLE IF NOT EXISTS torneo_posts (
     fecha TEXT
 );
 
+CREATE TABLE IF NOT EXISTS torneo_fotos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    torneo_id INTEGER NOT NULL REFERENCES torneos(id) ON DELETE CASCADE,
+    data TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_pagos_alumno ON pagos(alumno_id);
 CREATE INDEX IF NOT EXISTS idx_pagos_mes_anio ON pagos(mes, anio);
 CREATE INDEX IF NOT EXISTS idx_asistencia_alumno ON asistencia(alumno_id);
@@ -561,6 +567,7 @@ CREATE INDEX IF NOT EXISTS idx_torneos_fecha ON torneos(fecha);
 CREATE INDEX IF NOT EXISTS idx_tp_torneo ON torneo_participantes(torneo_id);
 CREATE INDEX IF NOT EXISTS idx_tp_alumno ON torneo_participantes(alumno_id);
 CREATE INDEX IF NOT EXISTS idx_tposts_torneo ON torneo_posts(torneo_id);
+CREATE INDEX IF NOT EXISTS idx_tfotos_torneo ON torneo_fotos(torneo_id);
 """
 
 
@@ -4596,6 +4603,9 @@ def api_eventos():
                     'voy': 1 if voy else 0, 'fotos': fotos})
     # Los torneos también se muestran en Eventos (ítems sintéticos, no se
     # duplican en la tabla eventos). Se marcan con es_torneo y su torneo_id.
+    fotos_torneos = {}
+    for f in db.execute('SELECT torneo_id, data FROM torneo_fotos ORDER BY id').fetchall():
+        fotos_torneos.setdefault(f['torneo_id'], []).append(f['data'])
     torneos = db.execute('SELECT * FROM torneos ORDER BY fecha ASC, id ASC').fetchall()
     for t in torneos:
         n = db.execute('SELECT COUNT(*) AS n FROM torneo_participantes WHERE torneo_id=?',
@@ -4605,7 +4615,8 @@ def api_eventos():
             'titulo': t['nombre'], 'descripcion': t['descripcion'],
             'fecha_evento': t['fecha'], 'hora': None, 'lugar': t['ciudad'],
             'link': t['link'] if 'link' in t.keys() else None,
-            'asisten_conf': n, 'participantes': n, 'voy': 0, 'fotos': [],
+            'asisten_conf': n, 'participantes': n, 'voy': 0,
+            'fotos': fotos_torneos.get(t['id'], []),
         })
     out.sort(key=lambda e: str(e.get('fecha_evento') or '9999-99-99'))
     return jsonify({'eventos': out})
@@ -5080,6 +5091,10 @@ def api_torneos():
         d['foto'] = f['foto'] if f else None
         d['soy_yo'] = (d['user_id'] == u['id'])
         posts.setdefault(d['torneo_id'], []).append(d)
+    # fotos del torneo (flyer, fotos del viaje, podios...)
+    fotos_por = {}
+    for f in db.execute('SELECT id, torneo_id, data FROM torneo_fotos ORDER BY id').fetchall():
+        fotos_por.setdefault(f['torneo_id'], []).append({'id': f['id'], 'data': f['data']})
     soy_alumno = u['role'] == 'alumno'
     torneos = []
     for r in rows:
@@ -5093,7 +5108,8 @@ def api_torneos():
                      'participo': (any(p['alumno_id'] == u['id'] for p in lista) if soy_alumno else None),
                      'creado_nombre': (fichas[r['creado_por']]['nombre'] if r['creado_por'] in fichas else None),
                      'participantes_detalle': lista,
-                     'posts': posts.get(r['id'], [])})
+                     'posts': posts.get(r['id'], []),
+                     'fotos': fotos_por.get(r['id'], [])})
         torneos.append(item)
     ranking, medallero = _torneos_stats(db)
     return jsonify({'torneos': torneos, 'ranking': ranking, 'medallero': medallero,
@@ -5125,8 +5141,15 @@ def api_torneos_crear():
         (nombre, fecha[:10], txt_str(data.get('ciudad')), tipo, estado,
          txt_str(data.get('descripcion')), link, current_user()['id'],
          datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    tid = cur.lastrowid
+    # fotos del torneo (max 5, imagenes raster validas; nada de SVG ni PDF)
+    fotos = data.get('fotos')
+    fotos = fotos if isinstance(fotos, list) else []
+    for f in fotos[:5]:
+        if imagen_valida(f, max_bytes=6 * 1024 * 1024):
+            db.execute('INSERT INTO torneo_fotos(torneo_id, data) VALUES(?,?)', (tid, f))
     db.commit()
-    return jsonify({'ok': True, 'id': cur.lastrowid})
+    return jsonify({'ok': True, 'id': tid})
 
 
 @app.route('/api/torneos/<int:tid>', methods=['PUT'])
@@ -5163,7 +5186,42 @@ def api_torneos_delete(tid):
     if not db.execute('SELECT 1 FROM torneos WHERE id=?', (tid,)).fetchone():
         return jsonify({'error': 'Torneo no encontrado'}), 404
     db.execute('DELETE FROM torneo_participantes WHERE torneo_id=?', (tid,))
+    db.execute('DELETE FROM torneo_posts WHERE torneo_id=?', (tid,))
+    db.execute('DELETE FROM torneo_fotos WHERE torneo_id=?', (tid,))
     db.execute('DELETE FROM torneos WHERE id=?', (tid,))
+    db.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/torneos/<int:tid>/fotos', methods=['POST'])
+@login_required
+def api_torneos_fotos_agregar(tid):
+    """Cualquier socio puede sumar fotos al torneo (hasta 5 en total)."""
+    db = get_db()
+    if not db.execute('SELECT 1 FROM torneos WHERE id=?', (tid,)).fetchone():
+        return jsonify({'error': 'Torneo no encontrado'}), 404
+    data = parse_json()
+    fotos = data.get('fotos')
+    fotos = fotos if isinstance(fotos, list) else []
+    existentes = db.execute('SELECT COUNT(*) AS n FROM torneo_fotos WHERE torneo_id=?',
+                            (tid,)).fetchone()['n']
+    margen = max(0, 5 - existentes)
+    nuevas = 0
+    for f in fotos[:margen]:
+        if imagen_valida(f, max_bytes=6 * 1024 * 1024):
+            db.execute('INSERT INTO torneo_fotos(torneo_id, data) VALUES(?,?)', (tid, f))
+            nuevas += 1
+    db.commit()
+    if not nuevas:
+        return jsonify({'error': 'No se agregó ninguna foto (máximo 5 por torneo)'}), 400
+    return jsonify({'ok': True, 'agregadas': nuevas})
+
+
+@app.route('/api/torneos/<int:tid>/fotos/<int:fid>', methods=['DELETE'])
+@role_required('admin', 'profesor')
+def api_torneos_fotos_borrar(tid, fid):
+    db = get_db()
+    db.execute('DELETE FROM torneo_fotos WHERE id=? AND torneo_id=?', (fid, tid))
     db.commit()
     return jsonify({'ok': True})
 

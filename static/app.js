@@ -3577,6 +3577,7 @@ async function renderEventosPanel(el) {
             <span class="tag" style="margin-left:6px">Torneo</span>
             <div class="small" style="color:var(--muted)">${esc(fechaTorta(ev.fecha_evento))}${ev.lugar ? ' · 📍 ' + esc(ev.lugar) : ''}</div>
             ${ev.descripcion ? `<div class="small">${esc(ev.descripcion)}</div>` : ''}
+            ${ev.fotos && ev.fotos.length ? `<div class="flex wrap mt" style="gap:6px">${ev.fotos.map(f => `<img src="${esc(f)}" onclick="verFoto(this.src)" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer" title="Ver foto">`).join('')}</div>` : ''}
             <div class="small" style="color:var(--muted)">👥 ${ev.participantes} ${ev.participantes === 1 ? 'competidor' : 'competidores'}</div>
           </div>
           <span style="text-align:right;flex-shrink:0">
@@ -4079,6 +4080,13 @@ async function renderTorneosPanel(el) {
       </div>
       ${t.descripcion ? `<p class="small" style="margin:8px 0 0;color:var(--muted)">${esc(t.descripcion)}</p>` : ''}
       ${t.link ? `<a class="btn ghost small" style="margin-top:8px" href="${esc(t.link)}" target="_blank" rel="noopener noreferrer">🔗 Link del torneo / inscripción</a>` : ''}
+      ${(t.fotos || []).length ? `<div class="flex wrap" style="gap:6px;margin-top:8px">
+        ${t.fotos.map(f => `<div style="position:relative">
+          <img src="${esc(f.data)}" onclick="verFoto(this.src)" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer" title="Ver foto">
+          ${esStaff ? `<button class="btn bad small" style="position:absolute;top:-7px;right:-7px;padding:0 5px;line-height:1.2" onclick="borrarFotoTorneo(${t.id}, ${f.id})">✕</button>` : ''}
+        </div>`).join('')}
+      </div>` : ''}
+      <button class="btn ghost small" style="margin-top:8px" onclick="formFotosTorneo(${t.id})">📷 ${(t.fotos || []).length ? 'Sumar fotos' : 'Subir fotos'}</button>
       ${(t.participantes_detalle || []).length ? `<div style="margin-top:10px;border-top:1px dashed var(--line);padding-top:8px">
         ${t.participantes_detalle.map(p => `<div class="flex space-between" style="font-size:13px;padding:2px 0">
           <span>${avatarHTML(p.foto, p.nombre, 'sm')} ${esc(p.nombre)}${p.cinturon ? ' ' + beltHTML(p.cinturon) : ''}</span>
@@ -4177,14 +4185,35 @@ function formTorneo(id) {
       <div class="field" style="grid-column:1/-1"><label>Link del torneo / inscripción (opcional)</label>
         <input id="toLink" type="url" value="${t ? esc(t.link || '') : ''}" placeholder="https://...">
         <small class="hint">Ej: la página del torneo o el formulario de inscripción. Queda visible para todos.</small></div>
+      ${!t ? `<div class="field" style="grid-column:1/-1"><label>Fotos (opcional, hasta 5)</label>
+        <input type="file" id="toFotos" accept="image/*" multiple>
+        <small class="hint">Flyer, fotos del viaje o del podio. Después podés sumar más desde la tarjeta del torneo.</small>
+        <div id="toFotosPre" class="flex wrap mt" style="gap:6px"></div></div>` : ''}
       <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar</button></div>
     </form>
     <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+  let fotosNuevas = [];
+  if (!t) {
+    $('#toFotos').addEventListener('change', async (e) => {
+      fotosNuevas = [];
+      $('#toFotosPre').innerHTML = '';
+      const files = Array.from(e.target.files || []).slice(0, 5);
+      for (const f of files) {
+        try {
+          const dataUrl = await comprimirImagen(f, 1200);
+          fotosNuevas.push(dataUrl);
+          $('#toFotosPre').insertAdjacentHTML('beforeend',
+            `<img src="${esc(dataUrl)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)">`);
+        } catch (err) { toast('No se pudo leer ' + f.name); }
+      }
+    });
+  }
   $('#toForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const body = { nombre: $('#toNombre').value, fecha: $('#toFecha').value, ciudad: $('#toCiudad').value,
       tipo: $('#toTipo').value, estado: $('#toEstado').value, descripcion: $('#toNota').value,
       link: $('#toLink') ? $('#toLink').value : '' };
+    if (!t && fotosNuevas.length) body.fotos = fotosNuevas;
     try {
       if (t) await api('/api/torneos/' + t.id, { method: 'PUT', body });
       else await api('/api/torneos', { method: 'POST', body });
@@ -4192,6 +4221,54 @@ function formTorneo(id) {
       refrescarTorneos();
     } catch (err) { toast(err.message); }
   });
+}
+// Fotos pendientes de subir desde el modal de un torneo.
+let FOTOS_TORNEO_PEND = [];
+async function formFotosTorneo(tid) {
+  const t = (TORNEOS_CACHE.torneos || []).find(x => x.id === tid);
+  const actuales = (t && t.fotos) || [];
+  const libres = Math.max(0, 5 - actuales.length);
+  FOTOS_TORNEO_PEND = [];
+  openModal(`
+    <h3>📷 Fotos · ${esc(t ? t.nombre : 'Torneo')}</h3>
+    <p class="small" style="color:var(--muted);margin:0">Hasta 5 fotos por torneo. ${libres ? `Podés subir ${libres} más.` : 'Ya está completo.'}</p>
+    ${actuales.length ? `<div class="flex wrap mt" style="gap:6px">${actuales.map(f => `<img src="${esc(f.data)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)">`).join('')}</div>` : ''}
+    <div class="field mt"><label>Elegir fotos</label>
+      <input type="file" id="tfFotos" accept="image/*" multiple ${libres ? '' : 'disabled'}>
+      <div id="tfPre" class="flex wrap mt" style="gap:6px"></div></div>
+    <button class="btn primary btn-block mt" onclick="subirFotosTorneo(${tid})" ${libres ? '' : 'disabled'}>Subir fotos</button>
+    <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
+  const input = $('#tfFotos');
+  if (!input) return;
+  input.addEventListener('change', async (e) => {
+    FOTOS_TORNEO_PEND = [];
+    $('#tfPre').innerHTML = '';
+    const files = Array.from(e.target.files || []).slice(0, libres);
+    for (const f of files) {
+      try {
+        const dataUrl = await comprimirImagen(f, 1200);
+        FOTOS_TORNEO_PEND.push(dataUrl);
+        $('#tfPre').insertAdjacentHTML('beforeend',
+          `<img src="${esc(dataUrl)}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)">`);
+      } catch (err) { toast('No se pudo leer ' + f.name); }
+    }
+  });
+}
+async function subirFotosTorneo(tid) {
+  if (!FOTOS_TORNEO_PEND.length) { toast('Elegí al menos una foto'); return; }
+  try {
+    await api('/api/torneos/' + tid + '/fotos', { method: 'POST', body: { fotos: FOTOS_TORNEO_PEND } });
+    FOTOS_TORNEO_PEND = [];
+    closeModal(); toast('Fotos subidas ✓');
+    refrescarTorneos();
+  } catch (e) { toast(e.message); }
+}
+async function borrarFotoTorneo(tid, fid) {
+  if (!confirm('¿Borrar esta foto del torneo?')) return;
+  try {
+    await api('/api/torneos/' + tid + '/fotos/' + fid, { method: 'DELETE' });
+    toast('Foto borrada'); refrescarTorneos();
+  } catch (e) { toast(e.message); }
 }
 async function borrarTorneo(id) {
   if (!confirm('¿Eliminar este torneo y todos sus resultados?')) return;
