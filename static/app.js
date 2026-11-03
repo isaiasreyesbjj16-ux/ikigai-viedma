@@ -1,4 +1,6 @@
 /* Academia BJJ - app.js */
+let EVENTOS_TAB = 'eventos'; // pestaña activa de la sección unificada Eventos y torneos
+let EVENTOS_CACHE = {};
 const BELTS_ADULT = window.BELTS_ADULT || ['Blanco', 'Azul', 'Púrpura', 'Marrón', 'Negro'];
 const BELTS_KIDS = window.BELTS_KIDS || ['Gris', 'Amarillo', 'Naranja', 'Verde', 'Blanco'];
 const BELTS_JUV = window.BELTS_JUV || ['Blanco', 'Gris', 'Amarillo', 'Naranja', 'Verde'];
@@ -495,6 +497,10 @@ function initDashboard() {
 }
 
 function showSec(name) {
+  // Torneos vive dentro de la sección única de Eventos: ambos abren la misma
+  // ventana, cambiando solo la pestaña activa.
+  if (name === 'torneos') { EVENTOS_TAB = 'torneos'; name = 'eventos'; }
+  else if (name === 'eventos') { EVENTOS_TAB = 'eventos'; }
   if (name !== 'chat' && CHAT_TIMER) { clearInterval(CHAT_TIMER); CHAT_TIMER = null; CHAT_ACTIVO = null; }
   $$('.sec').forEach(s => s.classList.remove('active'));
   let el = $('#sec-' + name);
@@ -519,7 +525,6 @@ function showSec(name) {
     eventos: renderEventos, historial: renderHistorial,
     familias: renderFamilias, diario: renderDiario,
     planes: renderPlanes, estadisticas: renderEstadisticas,
-    torneos: renderTorneos,
   };
   if (renderers[name]) renderers[name](el);
 }
@@ -1326,8 +1331,7 @@ async function renderInicio(el) {
           <button class="chip" onclick="showSec('planes')">📋 Planes</button>
           <button class="chip" onclick="showSec('metas')">🎯 Mis metas</button>
           <button class="chip" onclick="showSec('chat')">💬 Chat</button>
-<button class="chip" onclick="showSec('eventos')">🗓️ Eventos</button>
-          <button class="chip" onclick="showSec('torneos')">🏆 Torneos</button>
+<button class="chip" onclick="showSec('eventos')">🗓️ Eventos y torneos</button>
           <button class="chip" onclick="showSec('encuestas')">📊 Encuestas</button>
           <button class="chip" onclick="showSec('diario')">📓 Diario</button>
           <button class="chip" onclick="abrirScannerQR()">📷 Escanear QR</button>
@@ -1360,8 +1364,7 @@ async function renderInicio(el) {
     chips.push(`<button class="chip" onclick="showSec('diario')">📓 Diario</button>`);
     chips.push(`<button class="chip" onclick="showSec('chat')">💬 Chat</button>`);
     chips.push(`<button class="chip" onclick="showSec('ranking')">🏆 Ranking</button>`);
-    chips.push(`<button class="chip" onclick="showSec('eventos')">🗓️ Eventos</button>`);
-    chips.push(`<button class="chip" onclick="showSec('torneos')">🏆 Torneos</button>`);
+    chips.push(`<button class="chip" onclick="showSec('eventos')">🗓️ Eventos y torneos</button>`);
     chips.push(`<button class="chip" onclick="showSec('encuestas')">📊 Encuestas</button>`);
     chips.push(`<button class="chip" onclick="showSec('historial')">📈 Historial</button>`);
     chips.push(`<button class="chip" onclick="showSec('galeria')">🖼️ Galería</button>`);
@@ -3545,13 +3548,11 @@ async function votarEncuesta(id, op) {
 /* =====================================================================
    EVENTOS Y ACTIVIDADES
    ===================================================================== */
-let EVENTOS_CACHE = {};
-async function renderEventos(el) {
+async function renderEventosPanel(el) {
   const d = await api('/api/eventos').catch(() => ({ eventos: [] }));
   const esStaff = USER.role !== 'alumno';
   EVENTOS_CACHE = {};
   el.innerHTML = `
-    ${secHeader('🗓️ Eventos y actividades')}
     ${esStaff ? `<div class="card">
       <h3>Crear evento</h3>
       <form id="evForm" class="grid2">
@@ -3625,6 +3626,27 @@ async function renderEventos(el) {
       } catch (err) { toast(err.message); }
     });
   }
+}
+/* Sección única: Eventos y torneos comparten una sola ventana con dos pestañas. */
+async function renderEventos(el) {
+  el.innerHTML = `
+    ${secHeader('🗓️ Eventos y torneos', 'Eventos de la academia y calendario de competencias en un solo lugar')}
+    <div class="tabs" id="evTabs">
+      <button class="tab ${EVENTOS_TAB === 'eventos' ? 'active' : ''}" onclick="cambiarTabEventos('eventos')">🗓️ Eventos</button>
+      <button class="tab ${EVENTOS_TAB === 'torneos' ? 'active' : ''}" onclick="cambiarTabEventos('torneos')">🏆 Torneos</button>
+    </div>
+    <div id="evPanelEventos" class="tabpanel ${EVENTOS_TAB === 'eventos' ? 'active' : ''}"></div>
+    <div id="evPanelTorneos" class="tabpanel ${EVENTOS_TAB === 'torneos' ? 'active' : ''}"></div>`;
+  await Promise.all([
+    renderEventosPanel($('#evPanelEventos')),
+    renderTorneosPanel($('#evPanelTorneos'))]);
+}
+function cambiarTabEventos(tab) {
+  EVENTOS_TAB = tab === 'torneos' ? 'torneos' : 'eventos';
+  $$('#evTabs .tab').forEach((b, i) => b.classList.toggle('active', (i === 1) === (EVENTOS_TAB === 'torneos')));
+  const pe = $('#evPanelEventos'), pt = $('#evPanelTorneos');
+  if (pe) pe.classList.toggle('active', EVENTOS_TAB === 'eventos');
+  if (pt) pt.classList.toggle('active', EVENTOS_TAB === 'torneos');
 }
 // El src se lee del DOM y se resuelve via el cache, en vez de interpolarse dentro
 // del atributo onclick: asi la data-URL nunca queda en el HTML.
@@ -4013,7 +4035,7 @@ function emojisMedalla(o, p, b) {
   if (b) parts.push('🥉'.repeat(Math.min(b, 5)));
   return parts.join(' ');
 }
-async function renderTorneos(el) {
+async function renderTorneosPanel(el) {
   const R = USER.role;
   const esStaff = R === 'admin' || R === 'profesor';
   const d = await api('/api/torneos').catch(() => ({ torneos: [], ranking: [], medallero: {} }));
@@ -4088,7 +4110,6 @@ async function renderTorneos(el) {
   const md = d.medallero || {};
   const top = (d.ranking || []).slice(0, 15);
   el.innerHTML = `
-    ${secHeader('🏆 Torneos', 'Calendario de competencias, ranking de quienes compiten más y el medallero de la academia')}
     <div class="card"><div class="flex space-between">
       <span class="small">${esStaff ? 'Cargá los torneos y después los resultados de cada alumno.' : '¿Viste una competition? Sumala al calendario para que la vea todo el grupo.'}</span>
       <button class="btn primary small" onclick="formTorneo()">+ Cargar torneo</button>
@@ -4130,6 +4151,12 @@ async function renderTorneos(el) {
       </table></div>` : '<div class="empty">Cuando carguen los resultados vas a ver el ranking acá.</div>'}
     </div>`;
 }
+// Refresca la ventana de torneos sin salir de la sección unificada.
+async function refrescarTorneos() {
+  const panel = $('#evPanelTorneos');
+  if (panel) { await renderTorneosPanel(panel); return; }
+  showSec('torneos');
+}
 function formTorneo(id) {
   const t = id ? (TORNEOS_CACHE.torneos || []).find(x => x.id === id) : null;
   const tipos = ['Gi', 'NoGi', 'Kids', 'Juveniles', 'Adulto', 'Open'];
@@ -4162,7 +4189,7 @@ function formTorneo(id) {
       if (t) await api('/api/torneos/' + t.id, { method: 'PUT', body });
       else await api('/api/torneos', { method: 'POST', body });
       closeModal(); toast(t ? 'Torneo actualizado ✓' : 'Torneo cargado ✓');
-      renderTorneos($('#sec-torneos'));
+      refrescarTorneos();
     } catch (err) { toast(err.message); }
   });
 }
@@ -4170,7 +4197,7 @@ async function borrarTorneo(id) {
   if (!confirm('¿Eliminar este torneo y todos sus resultados?')) return;
   try {
     await api('/api/torneos/' + id, { method: 'DELETE' });
-    toast('Torneo eliminado'); renderTorneos($('#sec-torneos'));
+    toast('Torneo eliminado'); refrescarTorneos();
   } catch (e) { toast(e.message); }
 }
 async function cargarParticipantes(tid) {
@@ -4215,7 +4242,7 @@ async function agregarParticipante(tid) {
       alumno_id, medalla: $('#tpMedalla').value,
       posicion: $('#tpPos').value ? +$('#tpPos').value : null, notas: $('#tpNota').value } });
     toast('Resultado guardado ✓');
-    await renderTorneos($('#sec-torneos'));
+    await refrescarTorneos();
     cargarParticipantes(tid);
   } catch (e) { toast(e.message); }
 }
@@ -4223,7 +4250,7 @@ async function quitarParticipante(tid, pid) {
   try {
     await api('/api/torneos/' + tid + '/participantes/' + pid, { method: 'DELETE' });
     toast('Participante quitado');
-    await renderTorneos($('#sec-torneos'));
+    await refrescarTorneos();
     cargarParticipantes(tid);
   } catch (e) { toast(e.message); }
 }
@@ -4298,7 +4325,7 @@ async function publicarPostTorneo(tid) {
       foto: foto } });
     closeModal();
     toast(res.anotado ? `¡Publicado! Sumamos tu ${MEDALLAS_T[res.medalla]} al medallero 🥳` : '¡Publicado! Gracias por contar 🎽');
-    renderTorneos($('#sec-torneos'));
+    refrescarTorneos();
   } catch (e) { toast(e.message); }
 }
 async function borrarPostTorneo(tid, pid) {
@@ -4306,7 +4333,7 @@ async function borrarPostTorneo(tid, pid) {
   try {
     await api('/api/torneos/posts/' + pid, { method: 'DELETE' });
     toast('Comentario borrado');
-    renderTorneos($('#sec-torneos'));
+    refrescarTorneos();
   } catch (e) { toast(e.message); }
 }
 
