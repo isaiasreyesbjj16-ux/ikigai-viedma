@@ -3569,7 +3569,20 @@ async function renderEventos(el) {
       </form>
     </div>` : ''}
     <div class="card"><h3>Próximos eventos</h3>
-      ${d.eventos.length ? d.eventos.map(ev => `
+      ${d.eventos.length ? d.eventos.map(ev => ev.es_torneo ? `
+        <div class="flex space-between" style="padding:10px 0;border-bottom:1px solid var(--line);gap:8px">
+          <div style="min-width:0">
+            <b>🏆 ${esc(ev.titulo)}</b>
+            <span class="tag" style="margin-left:6px">Torneo</span>
+            <div class="small" style="color:var(--muted)">${esc(fechaTorta(ev.fecha_evento))}${ev.lugar ? ' · 📍 ' + esc(ev.lugar) : ''}</div>
+            ${ev.descripcion ? `<div class="small">${esc(ev.descripcion)}</div>` : ''}
+            <div class="small" style="color:var(--muted)">👥 ${ev.participantes} ${ev.participantes === 1 ? 'competidor' : 'competidores'}</div>
+          </div>
+          <span style="text-align:right;flex-shrink:0">
+            ${ev.link ? `<a class="btn ghost small" href="${esc(ev.link)}" target="_blank" rel="noopener noreferrer">🔗 Inscripción</a>` : ''}
+            <button class="btn primary small" onclick="showSec('torneos')">Ver torneo</button>
+          </span>
+        </div>` : `
         <div class="flex space-between" style="padding:10px 0;border-bottom:1px solid var(--line)">
           <div>
             <b>${esc(ev.titulo)}</b>
@@ -3584,7 +3597,7 @@ async function renderEventos(el) {
           </span>
         </div>`).join('') : '<div class="empty">No hay eventos próximos.</div>'}
       </div>`;
-  d.eventos.forEach(ev => { EVENTOS_CACHE[ev.id] = ev; });
+  d.eventos.forEach(ev => { if (!ev.es_torneo) EVENTOS_CACHE[ev.id] = ev; });
   if (esStaff) {
     let fotos = [];
     $('#vFotos').addEventListener('change', async (e) => {
@@ -4043,6 +4056,7 @@ async function renderTorneos(el) {
         </div>
       </div>
       ${t.descripcion ? `<p class="small" style="margin:8px 0 0;color:var(--muted)">${esc(t.descripcion)}</p>` : ''}
+      ${t.link ? `<a class="btn ghost small" style="margin-top:8px" href="${esc(t.link)}" target="_blank" rel="noopener noreferrer">🔗 Link del torneo / inscripción</a>` : ''}
       ${(t.participantes_detalle || []).length ? `<div style="margin-top:10px;border-top:1px dashed var(--line);padding-top:8px">
         ${t.participantes_detalle.map(p => `<div class="flex space-between" style="font-size:13px;padding:2px 0">
           <span>${avatarHTML(p.foto, p.nombre, 'sm')} ${esc(p.nombre)}${p.cinturon ? ' ' + beltHTML(p.cinturon) : ''}</span>
@@ -4133,13 +4147,17 @@ function formTorneo(id) {
         ${estados.map(([v, l]) => `<option value="${v}" ${t && t.estado === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       <div class="field" style="grid-column:1/-1"><label>Nota (opcional)</label>
         <input id="toNota" value="${t ? esc(t.descripcion || '') : ''}" placeholder="Ej: inscripción por WhatsApp, categorías..."></div>
+      <div class="field" style="grid-column:1/-1"><label>Link del torneo / inscripción (opcional)</label>
+        <input id="toLink" type="url" value="${t ? esc(t.link || '') : ''}" placeholder="https://...">
+        <small class="hint">Ej: la página del torneo o el formulario de inscripción. Queda visible para todos.</small></div>
       <div class="field" style="grid-column:1/-1"><button class="btn primary btn-block" type="submit">Guardar</button></div>
     </form>
     <button class="btn ghost btn-block mt" onclick="closeModal()">Cerrar</button>`);
   $('#toForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const body = { nombre: $('#toNombre').value, fecha: $('#toFecha').value, ciudad: $('#toCiudad').value,
-      tipo: $('#toTipo').value, estado: $('#toEstado').value, descripcion: $('#toNota').value };
+      tipo: $('#toTipo').value, estado: $('#toEstado').value, descripcion: $('#toNota').value,
+      link: $('#toLink') ? $('#toLink').value : '' };
     try {
       if (t) await api('/api/torneos/' + t.id, { method: 'PUT', body });
       else await api('/api/torneos', { method: 'POST', body });

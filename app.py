@@ -517,6 +517,7 @@ CREATE TABLE IF NOT EXISTS torneos (
     tipo TEXT DEFAULT 'Gi',
     estado TEXT DEFAULT 'inscripcion',
     descripcion TEXT,
+    link TEXT,
     creado_por INTEGER REFERENCES users(id) ON DELETE SET NULL,
     creado TEXT
 );
@@ -663,6 +664,16 @@ def _init_db_body(db):
         n_cols = [r[1] for r in c.execute('PRAGMA table_info(notificaciones)').fetchall()]
     if 'link' not in n_cols:
         c.execute('ALTER TABLE notificaciones ADD COLUMN link TEXT DEFAULT \'\'')
+    if DB_MODE == 'postgres':
+        t_cols = [r[0] for r in c.execute(
+            "SELECT column_name AS name FROM information_schema.columns "
+            "WHERE table_schema=current_schema() AND table_name='torneos'").fetchall()]
+    elif DB_MODE == 'mysql':
+        t_cols = [r[0] for r in c.execute('SHOW COLUMNS FROM torneos').fetchall()]
+    else:
+        t_cols = [r[1] for r in c.execute('PRAGMA table_info(torneos)').fetchall()]
+    if 'link' not in t_cols:
+        c.execute('ALTER TABLE torneos ADD COLUMN link TEXT')
     defaults = {
         'academy_name': 'IKIGAI VIEDMA',
         'academy_code': 'BJJ2026',
@@ -4572,16 +4583,31 @@ def api_encuesta_votar(eid):
 @app.route('/api/eventos')
 @login_required
 def api_eventos():
-    filas = get_db().execute('SELECT * FROM eventos ORDER BY fecha_evento ASC').fetchall()
     db = get_db()
     u = current_user()
+    filas = db.execute('SELECT * FROM eventos ORDER BY fecha_evento ASC').fetchall()
     out = []
     for r in filas:
         asisten = db.execute('SELECT COUNT(*) AS n FROM evento_asistencias WHERE evento_id=?', (r['id'],)).fetchone()['n']
         voy = db.execute('SELECT 1 FROM evento_asistencias WHERE evento_id=? AND user_id=?', (r['id'], u['id'])).fetchone()
         fotos = [f['data'] for f in db.execute(
             'SELECT data FROM evento_fotos WHERE evento_id=? ORDER BY id', (r['id'],)).fetchall()]
-        out.append({**dict(r), 'asisten_conf': asisten, 'voy': 1 if voy else 0, 'fotos': fotos})
+        out.append({**dict(r), 'es_torneo': False, 'asisten_conf': asisten,
+                    'voy': 1 if voy else 0, 'fotos': fotos})
+    # Los torneos también se muestran en Eventos (ítems sintéticos, no se
+    # duplican en la tabla eventos). Se marcan con es_torneo y su torneo_id.
+    torneos = db.execute('SELECT * FROM torneos ORDER BY fecha ASC, id ASC').fetchall()
+    for t in torneos:
+        n = db.execute('SELECT COUNT(*) AS n FROM torneo_participantes WHERE torneo_id=?',
+                       (t['id'],)).fetchone()['n']
+        out.append({
+            'id': None, 'es_torneo': True, 'torneo_id': t['id'],
+            'titulo': t['nombre'], 'descripcion': t['descripcion'],
+            'fecha_evento': t['fecha'], 'hora': None, 'lugar': t['ciudad'],
+            'link': t['link'] if 'link' in t.keys() else None,
+            'asisten_conf': n, 'participantes': n, 'voy': 0, 'fotos': [],
+        })
+    out.sort(key=lambda e: str(e.get('fecha_evento') or '9999-99-99'))
     return jsonify({'eventos': out})
 
 
@@ -5088,12 +5114,16 @@ def api_torneos_crear():
         return jsonify({'error': 'Poné la fecha del torneo'}), 400
     tipo = data.get('tipo') if data.get('tipo') in TIPOS_TORNEO else 'Gi'
     estado = data.get('estado') if data.get('estado') in ESTADOS_TORNEO else 'inscripcion'
+    link_bruto = txt_str(data.get('link'))
+    link = url_http_valida(link_bruto) if link_bruto else None
+    if link_bruto and not link:
+        return jsonify({'error': 'El link del torneo debe ser una dirección http/https válida'}), 400
     db = get_db()
     cur = db.execute(
-        'INSERT INTO torneos(nombre, fecha, ciudad, tipo, estado, descripcion, creado_por, creado)'
-        ' VALUES(?,?,?,?,?,?,?,?)',
+        'INSERT INTO torneos(nombre, fecha, ciudad, tipo, estado, descripcion, link, creado_por, creado)'
+        ' VALUES(?,?,?,?,?,?,?,?,?)',
         (nombre, fecha[:10], txt_str(data.get('ciudad')), tipo, estado,
-         txt_str(data.get('descripcion')), current_user()['id'],
+         txt_str(data.get('descripcion')), link, current_user()['id'],
          datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     db.commit()
     return jsonify({'ok': True, 'id': cur.lastrowid})
@@ -5111,10 +5141,17 @@ def api_torneos_update(tid):
     fecha = (txt_str(data.get('fecha')) or t['fecha'])[:10]
     tipo = data.get('tipo') if data.get('tipo') in TIPOS_TORNEO else t['tipo']
     estado = data.get('estado') if data.get('estado') in ESTADOS_TORNEO else t['estado']
+    if 'link' in data:
+        link_bruto = txt_str(data.get('link'))
+        link = url_http_valida(link_bruto) if link_bruto else None
+        if link_bruto and not link:
+            return jsonify({'error': 'El link del torneo debe ser una dirección http/https válida'}), 400
+    else:
+        link = t['link'] if 'link' in t.keys() else None
     db.execute(
-        'UPDATE torneos SET nombre=?, fecha=?, ciudad=?, tipo=?, estado=?, descripcion=? WHERE id=?',
+        'UPDATE torneos SET nombre=?, fecha=?, ciudad=?, tipo=?, estado=?, descripcion=?, link=? WHERE id=?',
         (nombre, fecha, txt_str(data.get('ciudad')) or t['ciudad'], tipo, estado,
-         data.get('descripcion', t['descripcion']), tid))
+         data.get('descripcion', t['descripcion']), link, tid))
     db.commit()
     return jsonify({'ok': True})
 

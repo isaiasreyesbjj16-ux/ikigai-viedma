@@ -285,6 +285,34 @@ r = c.post('/api/torneos', json={'nombre': ''})
 check('torneo sin nombre se rechaza -> 400', r.status_code == 400, 'r=%s' % r.status_code)
 r = c.post('/api/torneos', json={'nombre': 'X', 'fecha': f_futuro})
 tid3 = r.get_json().get('id')
+# link del torneo (inscripcion) y union con la seccion Eventos
+r = c.put('/api/torneos/%d' % tid2, json={'link': 'https://ejemplo.com/inscripcion'})
+check('el staff guarda el link del torneo', r.status_code == 200, 'r=%s' % r.status_code)
+t_link = [t for t in c.get('/api/torneos').get_json()['torneos'] if t['id'] == tid2][0]
+check('el link del torneo queda en el calendario',
+      t_link.get('link') == 'https://ejemplo.com/inscripcion', 'link=%s' % t_link.get('link'))
+r = c.put('/api/torneos/%d' % tid2, json={'link': 'javascript:alert(1)'})
+check('un link de torneo invalido se rechaza -> 400', r.status_code == 400, 'r=%s' % r.status_code)
+r = c.post('/api/torneos', json={'nombre': 'Link malo', 'fecha': f_futuro, 'link': 'data:text/html,x'})
+check('crear torneo con link invalido se rechaza -> 400', r.status_code == 400, 'r=%s' % r.status_code)
+c.post('/api/torneos/%d/participantes' % tid2, json={'alumno_id': alu[0]})
+evs = c.get('/api/eventos').get_json()['eventos']
+ev_t = [e for e in evs if e.get('es_torneo') and e.get('torneo_id') == tid2]
+check('los torneos aparecen unidos en Eventos', bool(ev_t), 'eventos=%s' % len(evs))
+check('el torneo en Eventos trae su link y la cantidad de competidores',
+      bool(ev_t) and ev_t[0].get('link') == 'https://ejemplo.com/inscripcion'
+      and ev_t[0].get('participantes') == 1,
+      json.dumps(ev_t[0])[:200] if ev_t else 'sin torneo')
+r = c.post('/api/eventos', json={'titulo': 'Seminario de la academia', 'fecha_evento': f_pasado})
+check('se crea un evento real de la academia', r.status_code == 200, 'r=%s' % r.status_code)
+evs2 = c.get('/api/eventos').get_json()['eventos']
+reales = [e for e in evs2 if not e.get('es_torneo')]
+sint = [e for e in evs2 if e.get('es_torneo')]
+check('Eventos mezcla eventos reales y torneos', bool(reales) and len(sint) == 3,
+      'reales=%s torneos=%s' % (len(reales), len(sint)))
+fechas_ev = [e.get('fecha_evento') or '' for e in evs2]
+check('los eventos y torneos quedan ordenados por fecha', fechas_ev == sorted(fechas_ev),
+      str(fechas_ev))
 # resultados: alu[0] oro, alu[1] plata; alu[0] repite en el segundo torneo
 r = c.post('/api/torneos/%d/participantes' % tid1, json={'alumno_id': alu[0], 'posicion': 1})
 check('cargar participant con puesto 1 = oro', r.status_code == 200 and r.get_json().get('medalla') == 'oro',
