@@ -5,6 +5,7 @@ import base64
 import json
 import secrets
 import time
+import unicodedata
 import zipfile
 import threading
 import urllib.request
@@ -234,6 +235,7 @@ CREATE TABLE IF NOT EXISTS users (
     medic_info TEXT,
     emergency_contact TEXT,
     activo INTEGER DEFAULT 1,
+    admin_extra INTEGER DEFAULT 0,
     security_q TEXT,
     security_a TEXT,
     tel_tutor TEXT,
@@ -589,6 +591,39 @@ def init_db():
             pass
 
 
+def _norm_persona(valor):
+    """Normaliza nombres/usuarios: minusculas, sin tildes y sin espacios extra."""
+    s = unicodedata.normalize('NFKD', str(valor or ''))
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    return ' '.join(s.lower().split())
+
+
+# Profesor(es) que reciben permisos de administrador sin perder su rol base.
+# Se puede ampliar con ADMIN_EXTRA="Nombre,usuario" en el entorno.
+ADMIN_EXTRA = tuple(
+    _norm_persona(x) for x in os.environ.get('ADMIN_EXTRA', 'silvio lucero').split(',')
+    if x.strip()
+)
+
+
+def marcar_admin_extra(db):
+    """Marca una sola vez al profesor que debe tener permisos de admin.
+
+    Se ejecuta al iniciar la app. Si ya hay alguien marcado no toca nada, asi
+    que un registro nuevo con el mismo nombre no hereda permisos.
+    """
+    try:
+        if db.execute('SELECT id FROM users WHERE admin_extra=1 LIMIT 1').fetchone():
+            return
+        for r in db.execute("SELECT id, nombre, username FROM users WHERE role='profesor'").fetchall():
+            claves = {_norm_persona(r['nombre']), _norm_persona(r['username'])}
+            if any(obj in claves for obj in ADMIN_EXTRA):
+                db.execute('UPDATE users SET admin_extra=1 WHERE id=?', (r['id'],))
+                return
+    except Exception:
+        pass
+
+
 def _init_db_body(db):
     db.executescript(SCHEMA)
     c = db.cursor()
@@ -610,7 +645,8 @@ def _init_db_body(db):
                      ('medic_enfermedades', 'TEXT'), ('medic_alergias', 'TEXT'), ('medic_medicacion', 'TEXT'),
                      ('medic_lesiones', 'TEXT'), ('ficha_fecha', 'TEXT'),
                      ('firma_tyc', 'TEXT'), ('firma_foto', 'TEXT'), ('firma_fecha', 'TEXT'),
-                     ('pausa_desde', 'TEXT'), ('pausa_hasta', 'TEXT'), ('beca', 'INTEGER DEFAULT 0')]:
+                     ('pausa_desde', 'TEXT'), ('pausa_hasta', 'TEXT'), ('beca', 'INTEGER DEFAULT 0'),
+                     ('admin_extra', 'INTEGER DEFAULT 0')]:
         if col not in cols:
             c.execute('ALTER TABLE users ADD COLUMN %s %s' % (col, ddl))
     try:
@@ -712,6 +748,7 @@ def _init_db_body(db):
         print('  ADMIN CREADO ->  usuario: admin   contrasena: admin123')
         print('  CAMBIA LA CONTRASENA EN MI PERFIL cuando puedas.')
         print('=' * 60)
+    marcar_admin_extra(db)
     db.commit()
 
 
@@ -1113,10 +1150,37 @@ def _ya_logro(user_id, tipo, valor):
 # Utilidades de sesion / auth
 # ---------------------------------------------------------------------------
 
+def es_admin_extra(u):
+    """True si el usuario fue marcado como admin extra en la base."""
+    if not u:
+        return False
+    return bool(u['admin_extra']) if 'admin_extra' in u.keys() else False
+
+
+def con_rol_efectivo(u):
+    """Devuelve el usuario con el rol efectivo para la app.
+
+    Silvio Lucero sigue siendo 'profesor' en la base (por eso aparece en el
+    listado de profesores y en el sitio publico), pero aca se le entrega el rol
+    'admin' y se guarda su rol base para que la pantalla no le quite las
+    funciones de profesor.
+    """
+    if not u or not es_admin_extra(u):
+        return u
+    base = u['role'] if 'role' in u.keys() else 'profesor'
+    d = dict(u)
+    d['rol_base'] = base
+    d['admin_extra'] = True
+    if base != 'admin':
+        d['role'] = 'admin'
+    return d
+
+
 def current_user():
     if 'user_id' not in session:
         return None
-    return get_db().execute('SELECT * FROM users WHERE id=?', (session['user_id'],)).fetchone()
+    u = get_db().execute('SELECT * FROM users WHERE id=?', (session['user_id'],)).fetchone()
+    return con_rol_efectivo(u)
 
 
 def login_required(f):
@@ -1259,6 +1323,8 @@ def user_public(u):
         'id': u['id'],
         'username': u['username'],
         'role': u['role'],
+        'rol_base': u['rol_base'] if 'rol_base' in u.keys() else u['role'],
+        'admin_extra': bool(u['admin_extra']) if 'admin_extra' in u.keys() else False,
         'nombre': u['nombre'],
         'edad': u['edad'],
         'peso': u['peso'],
@@ -1782,7 +1848,7 @@ def api_login():
         return jsonify({'error': 'Tu cuenta esta desactivada. Contacta al administrador.'}), 403
     session.clear()
     session['user_id'] = u['id']
-    return jsonify({'ok': True, 'user': user_public(u)})
+    return jsonify({'ok': True, 'user': user_public(current_user())})
 
 
 # ---------------------------------------------------------------------------
@@ -1966,8 +2032,7 @@ def api_register():
     notify(1, 'Nuevo registro', f'Se registro un nuevo {role}: {nombre}')
     session.clear()
     session['user_id'] = new_id
-    return jsonify({'ok': True, 'user': user_public(
-        get_db().execute('SELECT * FROM users WHERE id=?', (new_id,)).fetchone())})
+    return jsonify({'ok': True, 'user': user_public(current_user())})
 
 
 @app.route('/api/logout', methods=['POST'])

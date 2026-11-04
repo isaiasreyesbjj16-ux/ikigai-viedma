@@ -446,6 +446,61 @@ check('y el alumno queda en el ranking con esa medalla',
       'el alumno ya tenia 1 plata de antes')
 
 # ===========================================================================
+print('== PROFESOR CON PERMISOS DE ADMIN (Silvio Lucero) ==')
+r = c.post('/api/profesores', json={'nombre': 'Silvio Lucero',
+                                    'username': 'silviolucero', 'password': '1234'})
+check('el admin crea al profesor Silvio Lucero',
+      r.status_code == 200 and r.get_json().get('id'),
+      'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:120]))
+silvio_id = (r.get_json() or {}).get('id')
+# Simula el arranque de la app con Silvio ya existente en la base.
+with A.app.app_context():
+    A.marcar_admin_extra(A.get_db())
+    A.get_db().commit()
+cs = A.app.test_client()
+r = login(cs, 'silviolucero', '1234')
+check('Silvio puede entrar con su cuenta de profesor', r.status_code == 200, 'r=%s' % r.status_code)
+me = cs.get('/api/me').get_json()
+check('Silvio conserva su rol base de profesor',
+      me.get('rol_base') == 'profesor' and me.get('role') == 'admin',
+      json.dumps(me)[:220])
+check('Silvio recibe la marca de permisos extra de admin',
+      me.get('admin_extra') is True, json.dumps(me)[:220])
+r = cs.post('/api/profesores', json={'nombre': 'Profe Temporal',
+                                     'username': 'profetemp', 'password': '1234'})
+check('Silvio puede crear profesores (accion solo de admin)',
+      r.status_code == 200 and r.get_json().get('id'),
+      'r=%s %s' % (r.status_code, r.get_data(as_text=True)[:120]))
+temp_id = (r.get_json() or {}).get('id')
+r = cs.delete('/api/profesores/%d' % temp_id)
+check('Silvio puede borrar profesores (accion solo de admin)',
+      r.status_code == 200, 'r=%s' % r.status_code)
+r = c.get('/api/profesores')
+check('Silvio sigue figurando en el listado de profesores',
+      any(p.get('nombre') == 'Silvio Lucero' for p in r.get_json()['profesores']),
+      'no aparece en el listado')
+# un registro nuevo con el mismo nombre no hereda los permisos
+r = c.post('/api/profesores', json={'nombre': 'Silvio Lucero',
+                                    'username': 'silviofake', 'password': '1234'})
+fake_id = (r.get_json() or {}).get('id')
+with A.app.app_context():
+    A.marcar_admin_extra(A.get_db())
+    A.get_db().commit()
+cfake = A.app.test_client()
+login(cfake, 'silviofake', '1234')
+fake_me = cfake.get('/api/me').get_json()
+check('un registro nuevo con el mismo nombre NO hereda admin',
+      fake_me.get('role') == 'profesor' and fake_me.get('admin_extra') is False,
+      json.dumps(fake_me)[:200])
+c.delete('/api/profesores/%d' % fake_id)
+r = prof.post('/api/profesores', json={'nombre': 'No Permitido',
+                                       'username': 'nopermitido', 'password': '1234'})
+check('un profesor normal NO puede crear profesores -> 403', r.status_code == 403, 'r=%s' % r.status_code)
+r = cs.get('/api/settings')
+check('Silvio ve la configuracion completa (solo admin)',
+      r.status_code == 200 and 'academy_code' in r.get_json(), 'r=%s' % r.status_code)
+
+# ===========================================================================
 print('== SITIO WEB (/web) ==')
 PAGINAS = ['/web', '/web/profesores', '/web/horarios', '/web/contacto']
 h_ini = h_pro = h_hor = h_con = ''

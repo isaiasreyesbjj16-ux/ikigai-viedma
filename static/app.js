@@ -4,6 +4,11 @@ let EVENTOS_CACHE = {};
 const BELTS_ADULT = window.BELTS_ADULT || ['Blanco', 'Azul', 'Púrpura', 'Marrón', 'Negro'];
 const BELTS_KIDS = window.BELTS_KIDS || ['Gris', 'Amarillo', 'Naranja', 'Verde', 'Blanco'];
 const BELTS_JUV = window.BELTS_JUV || ['Blanco', 'Gris', 'Amarillo', 'Naranja', 'Verde'];
+// Silvio Lucero conserva su rol de profesor y además tiene permisos de admin
+// (el backend le entrega role='admin' y rol_base='profesor').
+function esProfesor() {
+  return !!window.USER && (window.USER.role === 'profesor' || window.USER.rol_base === 'profesor');
+}
 const catLabel = (c) => esc({ adulto: 'Adulto', juveniles: 'Juveniles', kids: 'Kids' })[c] || esc(c);
 let filtroAlumnosCat = 'todos';
 const BELTS_POR_CAT = { kids: BELTS_KIDS, juveniles: BELTS_JUV, adulto: BELTS_ADULT };
@@ -491,7 +496,7 @@ function initDashboard() {
   } catch (e) {}
 
   // QR auto-asistencia: si la URL tiene ?qr=1, marcar presente automáticamente
-  if (new URLSearchParams(location.search).get('qr') === '1' && (R === 'alumno' || R === 'profesor')) {
+  if (new URLSearchParams(location.search).get('qr') === '1' && (R === 'alumno' || esProfesor())) {
     marcarAsistenciaQR();
   }
 }
@@ -1343,10 +1348,10 @@ async function renderInicio(el) {
     const promesas = [
       api('/api/estadisticas'), api('/api/horarios'), api('/api/videos'), api('/api/cumpleanios'),
       api('/api/muro').catch(() => ({ muro: [] })),
-      ...(R === 'profesor' ? [api('/api/mi_asistencia')] : [])];
+      ...(esProfesor() ? [api('/api/mi_asistencia')] : [])];
     const r = await Promise.all(promesas);
     const stats = r[0], horarios = r[1], vids = r[2], cums = r[3], muro = r[4];
-    const asis = R === 'profesor' ? r[5] : null;
+    const asis = esProfesor() ? r[5] : null;
     const hoyIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
     const hoyClases = horarios.horarios.filter(h => h.dia === hoyIdx);
     const videos = vids.videos.slice(0, 3);
@@ -1370,7 +1375,7 @@ async function renderInicio(el) {
     chips.push(`<button class="chip" onclick="showSec('galeria')">🖼️ Galería</button>`);
     chips.push(`<button class="chip" onclick="abrirMensajeMasivo()">📣 Mandar mensaje</button>`);
     chips.push(`<button class="chip" onclick="window.open('/qr_print','_blank')">📱 QR de asistencia</button>`);
-    if (R === 'profesor') chips.push(`<button class="chip" onclick="showSec('mi_asistencia')">✅ Mi asistencia</button>`, `<button class="chip" onclick="abrirScannerQR()">📷 Escanear QR</button>`);
+    if (esProfesor()) chips.push(`<button class="chip" onclick="showSec('mi_asistencia')">✅ Mi asistencia</button>`, `<button class="chip" onclick="abrirScannerQR()">📷 Escanear QR</button>`);
     el.innerHTML = `
       <div class="feed">
         ${secHeader('Inicio')}
@@ -1378,7 +1383,7 @@ async function renderInicio(el) {
           <div class="stat-card"><div class="num">${stats.total_alumnos}</div><div class="lbl">Activos</div></div>
           <div class="stat-card"><div class="num">$${num(stats.ingresos_mes)}</div><div class="lbl">Cobrado este mes</div></div>
           <div class="stat-card"><div class="num">${stats.clases}</div><div class="lbl">Clases/semana</div></div>
-          ${R === 'profesor' ? `<div class="stat-card"><div class="num" style="color:var(--good)">$${num(stats.mi_ingreso_mes)}</div><div class="lbl">Tu dinero este mes</div></div>
+          ${esProfesor() ? `<div class="stat-card"><div class="num" style="color:var(--good)">$${num(stats.mi_ingreso_mes)}</div><div class="lbl">Tu dinero este mes</div></div>
           <div class="stat-card"><div class="num" style="color:var(--good)">$${num(stats.mi_ingreso_total)}</div><div class="lbl">Tu dinero total</div></div>` : ''}
         </div>
         <div class="chips">${chips.join('')}</div>
@@ -1386,7 +1391,7 @@ async function renderInicio(el) {
         ${muroFeedHTML(muro.muro)}
         <div class="feed-card">
           <div class="small mb">📅 Clases de hoy</div>
-          ${hoyClases.length ? hoyClases.map(h => `<div class="clase-item ${h.tipo.toLowerCase()}"><span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span> · ${esc(h.nivel)} · <span class="profe">${esc(h.profesor_nombre || 'Sin profesor')}</span>${R === 'profesor' ? `<div style="margin-top:6px">${(asis.hoy || []).includes(h.id) ? '<span class="tag tag-al-dia">✓ Asistencia marcada</span>' : `<button class="btn primary small" onclick="abrirScannerQR()">📷 Marcar con QR</button>`}</div>` : ''}</div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas.</div>'}
+          ${hoyClases.length ? hoyClases.map(h => `<div class="clase-item ${h.tipo.toLowerCase()}"><span class="hora">${esc(h.hora)}</span> · <span class="tag ${h.tipo.toLowerCase()}">${esc(h.tipo)}</span> · ${esc(h.nivel)} · <span class="profe">${esc(h.profesor_nombre || 'Sin profesor')}</span>${esProfesor() ? `<div style="margin-top:6px">${(asis.hoy || []).includes(h.id) ? '<span class="tag tag-al-dia">✓ Asistencia marcada</span>' : `<button class="btn primary small" onclick="abrirScannerQR()">📷 Marcar con QR</button>`}</div>` : ''}</div>`).join('') : '<div class="small" style="color:var(--muted)">Hoy no hay clases cargadas.</div>'}
         </div>
         ${cardCumpleanios(cums)}
         ${videos.length ? `<div class="post-card" style="padding:0;overflow:hidden">
